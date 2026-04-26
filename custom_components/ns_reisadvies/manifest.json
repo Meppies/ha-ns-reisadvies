@@ -1,13 +1,13 @@
 {
   "domain": "ns_reisadvies",
   "name": "NS Reisadvies",
-  "config_flow": true,
-  "documentation": "https://github.com/Meppies/ha-ns-reisadvies",
-  "issue_tracker": "https://github.com/Meppies/ha-ns-reisadvies/issues",
-  "dependencies": ["http"],
   "codeowners": ["@Meppies"],
-  "requirements": [],
-  "version": "1.3.0",
+  "config_flow": true,
+  "dependencies": ["http"],
+  "documentation": "https://github.com/Meppies/ha-ns-reisadvies",
+  "integration_type": "service",
   "iot_class": "cloud_polling",
-  "integration_type": "service"
+  "issue_tracker": "https://github.com/Meppies/ha-ns-reisadvies/issues",
+  "requirements": [],
+  "version": "1.3.1"
 }
