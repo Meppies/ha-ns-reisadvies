@@ -1,0 +1,76 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NS Reisadvies",
+        "description": "Configure a route between two Dutch railway stations. You will need a free NS API subscription key from apiportal.ns.nl.",
+        "data": {
+          "api_key": "API key",
+          "act_station": "Departure station",
+          "arr_station": "Arrival station"
+        },
+        "data_description": {
+          "api_key": "Your NS API subscription key. Only required on the first route; subsequent routes reuse it.",
+          "act_station": "The station where the journey starts.",
+          "arr_station": "The station where the journey ends."
+        }
+      }
+    },
+    "error": {
+      "same_station": "The departure and arrival station must be different."
+    },
+    "abort": {
+      "already_configured": "This route is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NS Reisadvies options",
+        "data": {
+          "api_key": "API key",
+          "scan_interval_minuten": "Refresh interval (minutes)",
+          "fav_hours": "Favourite retention (hours)"
+        },
+        "data_description": {
+          "api_key": "Your NS API subscription key. Replace if it has been rotated.",
+          "scan_interval_minuten": "How often the integration polls the NS API. Allowed range: 1 to 60.",
+          "fav_hours": "How long to keep a pinned favourite before it is removed automatically. Set to 0 to disable expiry."
+        }
+      }
+    }
+  },
+  "services": {
+    "track_trip": {
+      "name": "Pin trip as favourite",
+      "description": "Pin a trip on the targeted NS Reisadvies sensor. The trip stays visible until the favourite retention expires or until it is unpinned.",
+      "fields": {
+        "ctx_recon": {
+          "name": "ctxRecon",
+          "description": "The ctxRecon string of the trip to pin. Visible as trip.ctxRecon in the sensor attributes."
+        }
+      }
+    },
+    "untrack_trip": {
+      "name": "Unpin trip",
+      "description": "Remove a previously pinned trip from the favourites list of the targeted sensor.",
+      "fields": {
+        "ctx_recon": {
+          "name": "ctxRecon",
+          "description": "The ctxRecon string of the trip to unpin."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_api_key": {
+      "message": "No NS API key has been configured for this entry."
+    },
+    "api_status": {
+      "message": "The NS travel advice API returned status {status}."
+    },
+    "api_unreachable": {
+      "message": "Could not reach the NS API: {error}."
+    }
+  }
+}

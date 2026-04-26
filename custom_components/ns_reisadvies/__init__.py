@@ -25,12 +25,12 @@ PLATFORMS = [Platform.SENSOR]
 
 
 def _opt(entry: ConfigEntry, key: str, default):
-    """Lees option met fallback naar data en daarna default."""
+    """Read option, fall back to data, then to the supplied default."""
     return entry.options.get(key, entry.data.get(key, default))
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Start de integratie en registreer het pad voor de kaart."""
+    """Set up an NS Reisadvies entry and register the Lovelace card path."""
     hass.data.setdefault(DOMAIN, {})
 
     api_key = _opt(entry, CONF_API_KEY, None)
@@ -52,7 +52,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Registreer het statische pad voor de Lovelace-kaart eenmalig
+    # Register the static path for the Lovelace card once per HA instance.
     if "static_paths_registered" not in hass.data[DOMAIN]:
         path = hass.config.path("custom_components/ns_reisadvies/www")
         if os.path.isdir(path):
@@ -64,23 +64,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             ])
             hass.data[DOMAIN]["static_paths_registered"] = True
-            _LOGGER.info("Pad /ns_reisadvies geregistreerd voor de kaart.")
+            _LOGGER.info("Registered Lovelace card path /ns_reisadvies")
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Reload on options change zodat scan_interval/fav_hours direct werken
+    # Reload the entry whenever the user changes options so that
+    # scan_interval/fav_hours take effect immediately.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload entry wanneer de gebruiker opties wijzigt."""
+    """Reload the config entry when options change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Verwijder de integratie."""
+    """Unload an NS Reisadvies entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)

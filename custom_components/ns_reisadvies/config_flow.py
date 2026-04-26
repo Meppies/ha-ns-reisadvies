@@ -1,4 +1,4 @@
-"""Config + options flow voor NS Reisadvies."""
+"""Config and options flow for the NS Reisadvies integration."""
 from __future__ import annotations
 
 import logging
@@ -21,9 +21,9 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Hardcoded lijst Nederlandse stations (uniek + alfabetisch).
-# Let op: "Buitens" en eventuele typo's kunnen hier nog tussen zitten —
-# zie de README voor instructies om deze lijst te genereren uit de NS-API.
+# Hard-coded list of Dutch railway stations (deduplicated, alphabetical).
+# Long-term this would be better generated from the NS stations API,
+# but a static list keeps the config flow free of network calls.
 _RAW_STATIONS = [
     "'t Harde", "Aalten", "Abcoude", "Akkrum", "Alkmaar", "Alkmaar Noord", "Almelo", "Almelo de Riet",
     "Almere Buiten", "Almere Centrum", "Almere Muziekwijk", "Almere Oostvaarders", "Almere Parkwijk", "Almere Poort",
@@ -90,6 +90,8 @@ STATIONS = sorted(set(_RAW_STATIONS))
 
 
 class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
+    """Options flow — re-uses the existing data keys (do not rename)."""
+
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.entry = config_entry
 
@@ -118,6 +120,8 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
 
 
 class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for NS Reisadvies."""
+
     VERSION = 1
 
     @staticmethod
@@ -126,9 +130,10 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return NSReisadviesOptionsFlowHandler(config_entry)
 
     async def async_step_user(self, user_input=None):
-        """Eerste setup."""
+        """Initial setup: ask for API key, departure and arrival station."""
         existing_entries = self.hass.config_entries.async_entries(DOMAIN)
 
+        # Re-use the API key across multiple route entries.
         stored_api_key = None
         for entry in existing_entries:
             if entry.data.get(CONF_API_KEY):

@@ -1,36 +1,26 @@
+# Service schema only — human-readable text comes from strings.json /
+# translations/<lang>.json. Field names, descriptions and the service
+# titles themselves are localised via the standard Home Assistant
+# translation system.
 track_trip:
-  name: Markeer rit als favoriet
-  description: >
-    Pin een reisadvies (een trip uit de NS API) als favoriet voor een
-    NS Reisadvies sensor. De rit blijft zichtbaar tot fav_hours is verlopen
-    of untrack_trip wordt aangeroepen.
   target:
     entity:
       integration: ns_reisadvies
       domain: sensor
   fields:
     ctx_recon:
-      name: ctxRecon
-      description: >
-        De ctxRecon-string van het reisadvies, zoals teruggegeven door de
-        NS-API en zichtbaar als trip.ctxRecon attribuut van de sensor.
       required: true
       example: "¶HKI¶T¶F=8400621@O=Amsterdam Centraal..."
       selector:
         text:
 
 untrack_trip:
-  name: Verwijder rit uit favorieten
-  description: >
-    Verwijder een eerder gepinde rit uit de favorietenlijst.
   target:
     entity:
       integration: ns_reisadvies
       domain: sensor
   fields:
     ctx_recon:
-      name: ctxRecon
-      description: De ctxRecon-string van de eerder gepinde rit.
       required: true
       example: "¶HKI¶T¶F=8400621@O=Amsterdam Centraal..."
       selector:

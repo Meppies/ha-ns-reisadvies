@@ -1,4 +1,4 @@
-"""NS Reisadvies sensor + track-services."""
+"""NS Reisadvies sensor and tracking services."""
 from __future__ import annotations
 
 import logging
@@ -19,8 +19,9 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
 ) -> bool:
+    """Set up the NS Reisadvies sensor for a config entry."""
     if DOMAIN not in hass.data or entry.entry_id not in hass.data[DOMAIN]:
-        raise ConfigEntryNotReady("Wachten op NS Coordinator")
+        raise ConfigEntryNotReady("Waiting for NS Reisadvies coordinator")
 
     coordinator = hass.data[DOMAIN][entry.entry_id]
     async_add_entities([NSReisadviesSensor(coordinator, entry.title, entry.entry_id)])
@@ -36,6 +37,8 @@ async def async_setup_entry(
 
 
 class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
+    """Sensor entity exposing NS travel advice for a configured route."""
+
     _attr_should_poll = False
 
     def __init__(self, coordinator, name: str, unique_id: str) -> None:
@@ -45,17 +48,20 @@ class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
+        """Return the planned departure time of the next trip."""
         if self.coordinator.data:
             try:
                 return self.coordinator.data[0]["legs"][0]["origin"]["plannedDateTime"]
             except (KeyError, IndexError, TypeError):
-                return "Data aanwezig"
-        return "Geen ritten"
+                return "Data available"
+        return "No trips"
 
     @property
     def extra_state_attributes(self):
+        """Expose trips and tracked-trip ctxRecons to the front end."""
         tracked = getattr(self.coordinator, "tracked_trips", {}) or {}
-        # Backwards compatible naar de card: blijft een lijst van ctxRecons
+        # Backwards compatible with the previous set-based implementation:
+        # the card always gets a list of ctxRecons.
         if isinstance(tracked, dict):
             tracked_list = list(tracked.keys())
         else:
@@ -66,11 +72,13 @@ class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:
+        """Pin a trip on this sensor."""
         if hasattr(self.coordinator, "track_trip"):
             self.coordinator.track_trip(ctx_recon)
             self.async_write_ha_state()
 
     async def async_untrack_trip(self, ctx_recon: str) -> None:
+        """Unpin a trip on this sensor."""
         if hasattr(self.coordinator, "untrack_trip"):
             self.coordinator.untrack_trip(ctx_recon)
             self.async_write_ha_state()

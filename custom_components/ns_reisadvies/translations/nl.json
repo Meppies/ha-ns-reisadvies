@@ -1,0 +1,76 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "NS Reisadvies",
+        "description": "Stel een route in tussen twee NS-stations. Je hebt een gratis NS API-sleutel nodig (apiportal.ns.nl).",
+        "data": {
+          "api_key": "API-sleutel",
+          "act_station": "Vertrekstation",
+          "arr_station": "Aankomststation"
+        },
+        "data_description": {
+          "api_key": "Je NS API-sleutel. Alleen nodig bij de eerste route; daarna wordt hij hergebruikt.",
+          "act_station": "Het station waar de reis begint.",
+          "arr_station": "Het station waar de reis eindigt."
+        }
+      }
+    },
+    "error": {
+      "same_station": "Vertrek- en aankomststation moeten verschillend zijn."
+    },
+    "abort": {
+      "already_configured": "Deze route is al geconfigureerd."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "NS Reisadvies-opties",
+        "data": {
+          "api_key": "API-sleutel",
+          "scan_interval_minuten": "Verversingsinterval (minuten)",
+          "fav_hours": "Favorieten bewaren (uren)"
+        },
+        "data_description": {
+          "api_key": "Je NS API-sleutel. Vervang deze als hij geroteerd is.",
+          "scan_interval_minuten": "Hoe vaak de integratie de NS-API ophaalt. Bereik: 1 tot 60.",
+          "fav_hours": "Hoe lang een gepinde favoriet bewaard blijft voordat hij automatisch verwijderd wordt. Zet op 0 om verlopen uit te schakelen."
+        }
+      }
+    }
+  },
+  "services": {
+    "track_trip": {
+      "name": "Markeer rit als favoriet",
+      "description": "Pin een rit op de geselecteerde NS Reisadvies-sensor. De rit blijft zichtbaar totdat de bewaartijd verloopt of de rit handmatig verwijderd wordt.",
+      "fields": {
+        "ctx_recon": {
+          "name": "ctxRecon",
+          "description": "De ctxRecon-string van de rit. Zichtbaar als trip.ctxRecon in de sensor-attributen."
+        }
+      }
+    },
+    "untrack_trip": {
+      "name": "Verwijder rit uit favorieten",
+      "description": "Verwijder een eerder gepinde rit uit de favorietenlijst van de sensor.",
+      "fields": {
+        "ctx_recon": {
+          "name": "ctxRecon",
+          "description": "De ctxRecon-string van de eerder gepinde rit."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "no_api_key": {
+      "message": "Voor deze integratie is geen NS API-sleutel ingesteld."
+    },
+    "api_status": {
+      "message": "De NS-API gaf statuscode {status} terug."
+    },
+    "api_unreachable": {
+      "message": "Kan de NS-API niet bereiken: {error}."
+    }
+  }
+}

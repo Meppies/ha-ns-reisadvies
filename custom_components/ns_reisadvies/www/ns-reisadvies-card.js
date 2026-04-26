@@ -1,3 +1,86 @@
+// NS Reisadvies — Lovelace card with auto-pin time slots and favourites.
+// Comments and UI strings are in English (UK); user-facing text is
+// localised via the small i18n helper below. Add a new language by
+// adding a translation block to I18N.
+
+const I18N = {
+  en: {
+    select_sensor: "Select a sensor.",
+    loading: "Loading data...",
+    no_trips: "No trips found...",
+    platform: "Platform",
+    direct: "Direct",
+    stop_one: "1 stop",
+    stop_other: "{n} stops",
+    transfer: "Transfer",
+    transfer_n: "{n} min transfer",
+    cancelled: "ATTENTION: TRIP CANCELLED",
+    total_travel: "Total travel time",
+    unknown: "Unknown",
+    minutes_short: "min",
+    hour_short: "hr",
+    hour_minutes: "{h} h {m} m",
+    editor_title: "Title",
+    editor_route_sensor: "Route sensor",
+    editor_number_of_trips: "Number of trips",
+    editor_scale: "Scale",
+    editor_keep_favourites: "Keep favourites (hours)",
+    editor_favourite_times: "Favourite times (pin 1 trip)",
+    editor_time: "Time:",
+    editor_name: "Name",
+    editor_add_slot: "+ Add favourite time",
+    editor_time_slot: "Time slot {n}",
+    weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+  },
+  nl: {
+    select_sensor: "Selecteer een sensor.",
+    loading: "Gegevens laden...",
+    no_trips: "Geen ritten gevonden...",
+    platform: "Spoor",
+    direct: "Direct",
+    stop_one: "1 tussenstop",
+    stop_other: "{n} tussenstops",
+    transfer: "Overstappen",
+    transfer_n: "{n} min overstappen",
+    cancelled: "LET OP: REIS VERVALLEN",
+    total_travel: "Totale reistijd",
+    unknown: "Onbekend",
+    minutes_short: "min",
+    hour_short: "uur",
+    hour_minutes: "{h} u {m} m",
+    editor_title: "Titel",
+    editor_route_sensor: "Route sensor",
+    editor_number_of_trips: "Aantal ritten",
+    editor_scale: "Schaal",
+    editor_keep_favourites: "Favorieten bewaren (uren)",
+    editor_favourite_times: "Favoriete tijden (Pin 1 rit)",
+    editor_time: "Tijd:",
+    editor_name: "Naam",
+    editor_add_slot: "+ Favoriete tijd toevoegen",
+    editor_time_slot: "Tijdslot {n}",
+    weekdays: ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"],
+  },
+};
+
+function _lang(hass) {
+  const raw = (hass && (hass.locale?.language || hass.language)) || "en";
+  return String(raw).slice(0, 2).toLowerCase();
+}
+
+function t(key, hass, vars) {
+  const lang = _lang(hass);
+  const dict = I18N[lang] || I18N.en;
+  let str = dict[key];
+  if (str === undefined) str = I18N.en[key];
+  if (str === undefined) return key;
+  if (vars && typeof str === "string") {
+    Object.entries(vars).forEach(([k, v]) => {
+      str = str.replace(new RegExp(`\\{${k}\\}`, "g"), v);
+    });
+  }
+  return str;
+}
+
 class NSReisadviesCard extends HTMLElement {
   setConfig(config) {
     this._config = {
@@ -9,15 +92,16 @@ class NSReisadviesCard extends HTMLElement {
       ...config,
     };
 
-    // Tijdelijk werkgeheugen voor snelle reacties op kliks
+    // Short-lived working memory for snappy reactions to user clicks.
     this._pendingTrack = new Set();
     this._pendingUntrack = new Set();
     this._autoPinned = new Set();
     this._autoPinnedDay = null;
 
-    // Lokaal logboek puur om de 'leeftijd' van een hartje bij te houden.
-    // Dit is een fallback — de integratie zelf hanteert ook server-side TTL.
-    this.lsKey = `ns_fav_times_${this._config.entity || 'default'}`;
+    // Local log just to track the "age" of a favourite. The integration
+    // also enforces a server-side TTL — this is a fallback for older
+    // installs and for instant client-side feedback.
+    this.lsKey = `ns_fav_times_${this._config.entity || "default"}`;
     try {
       this.favTimestamps = JSON.parse(localStorage.getItem(this.lsKey)) || {};
     } catch (e) {
@@ -29,7 +113,7 @@ class NSReisadviesCard extends HTMLElement {
     try {
       localStorage.setItem(this.lsKey, JSON.stringify(this.favTimestamps));
     } catch (e) {
-      // localStorage kan in sandbox-iframes ontbreken
+      // localStorage may be unavailable in sandboxed iframes.
     }
   }
 
@@ -42,9 +126,9 @@ class NSReisadviesCard extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (!this.content) {
-      const card = document.createElement('ha-card');
-      this.content = document.createElement('div');
-      this.content.style.padding = '0';
+      const card = document.createElement("ha-card");
+      this.content = document.createElement("div");
+      this.content.style.padding = "0";
       card.appendChild(this.content);
       this.appendChild(card);
     }
@@ -54,7 +138,7 @@ class NSReisadviesCard extends HTMLElement {
     }
   }
 
-  // --- HET OPSCHOON PROCES ---
+  // --- expiry / cleanup ----------------------------------------------------
   cleanOldFavorites(serverTracked) {
     if (!this._config.fav_hours) return;
 
@@ -62,22 +146,21 @@ class NSReisadviesCard extends HTMLElement {
     const now = Date.now();
     let changed = false;
 
-    // Snapshot zodat we veilig binnen de loop kunnen muteren
+    // Snapshot of keys so we can mutate this.favTimestamps inside the loop.
     const knownCtx = Object.keys(this.favTimestamps);
 
-    // 1. Loop door ritten die op dit moment 'AAN' staan op de server
+    // 1. Walk through the favourites that are currently active server-side.
     serverTracked.forEach(ctx => {
       if (!this.favTimestamps[ctx]) {
-        // Geen lokale timestamp (ander apparaat, fresh browser, etc.).
-        // BELANGRIJK: niet meer resetten naar `now` — anders verloopt de fav nooit.
-        // We laten de server-side TTL het werk doen; lokaal markeren we 'm
-        // alleen zodat de UI iets weet, maar met een datum in het verleden
-        // zodat hij bij volgende refresh wél meegenomen wordt in de cleanup.
-        this.favTimestamps[ctx] = now - limit + (5 * 60 * 1000); // verloopt over 5 min
+        // No local timestamp (other device, fresh browser, etc.).
+        // IMPORTANT: do not reset to `now` — that would push the TTL out
+        // every time a new device sees the favourite. Instead, mark it
+        // as nearly expired so the next refresh prunes it server-side.
+        this.favTimestamps[ctx] = now - limit + (5 * 60 * 1000); // expires in ~5 min
         changed = true;
       } else if (now - this.favTimestamps[ctx] > limit) {
-        // Verlooptijd bereikt — server-side wordt het ook opgeruimd, maar
-        // we sturen het commando direct zodat het zichtbaar is.
+        // Retention reached — server-side TTL will catch up too, but
+        // call untrack_trip directly so the UI updates straight away.
         this._hass.callService("ns_reisadvies", "untrack_trip", {
           entity_id: this._config.entity,
           ctx_recon: ctx,
@@ -89,7 +172,7 @@ class NSReisadviesCard extends HTMLElement {
       }
     });
 
-    // 2. Ruim ritten op in het lokale logboek die niet meer op de server staan
+    // 2. Drop entries from the local log that the server no longer tracks.
     knownCtx.forEach(ctx => {
       if (!serverTracked.includes(ctx) && !this._pendingTrack.has(ctx)) {
         delete this.favTimestamps[ctx];
@@ -134,8 +217,7 @@ class NSReisadviesCard extends HTMLElement {
     const trackedTrips = stateObj.attributes.tracked_trips || [];
     const dag = new Date().getDay();
 
-    // Reset _autoPinned als de dag is gewisseld zodat de volgende ochtend
-    // wél opnieuw geprikt wordt.
+    // Reset _autoPinned at midnight so the next morning re-pins.
     if (this._autoPinnedDay !== dag) {
       this._autoPinned = new Set();
       this._autoPinnedDay = dag;
@@ -145,7 +227,7 @@ class NSReisadviesCard extends HTMLElement {
       const h = this._config[`auto_hour_${i}`];
       const m = this._config[`auto_min_${i}`];
       const daysStr = this._config[`auto_days_${i}`] || "";
-      const activeDays = daysStr.split(',').filter(x => x !== "").map(Number);
+      const activeDays = daysStr.split(",").filter(x => x !== "").map(Number);
 
       if (h === undefined || m === undefined) continue;
       if (!activeDays.includes(dag)) continue;
@@ -200,16 +282,22 @@ class NSReisadviesCard extends HTMLElement {
   }
 
   formatDuration(minutes) {
-    if (minutes < 60) return `${minutes} min`;
+    const lang = _lang(this._hass);
+    const minShort = (I18N[lang] || I18N.en).minutes_short;
+    if (minutes < 60) return `${minutes} ${minShort}`;
     const hours = Math.floor(minutes / 60);
     const rem = minutes % 60;
-    return rem === 0 ? `${hours} uur` : `${hours} u ${rem} m`;
+    if (rem === 0) {
+      const hourShort = (I18N[lang] || I18N.en).hour_short;
+      return `${hours} ${hourShort}`;
+    }
+    return t("hour_minutes", this._hass, { h: hours, m: rem });
   }
 
   formatTime(ts) {
     if (!ts || String(ts).includes("NaN")) return "--:--";
     const d = new Date(ts);
-    return isNaN(d.getTime()) ? "--:--" : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return isNaN(d.getTime()) ? "--:--" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   }
 
   calculateDelay(p, a) {
@@ -227,28 +315,28 @@ class NSReisadviesCard extends HTMLElement {
   }
 
   getCrowd(c) {
-    const colors = { 'LOW': '#4CAF50', 'MEDIUM': '#FF9800', 'HIGH': '#F44336' };
-    const color = colors[c] || '#888';
-    const n = { 'LOW': 1, 'MEDIUM': 2, 'HIGH': 3 }[c] || 0;
-    let h = '';
-    for (let i = 1; i <= 3; i++) h += `<ha-icon icon="mdi:account" style="--mdc-icon-size:16px; width:16px; color:${i <= n ? color : '#888'}; opacity:${i <= n ? 1 : 0.3}; margin-right:-8px;"></ha-icon>`;
+    const colors = { LOW: "#4CAF50", MEDIUM: "#FF9800", HIGH: "#F44336" };
+    const color = colors[c] || "#888";
+    const n = { LOW: 1, MEDIUM: 2, HIGH: 3 }[c] || 0;
+    let h = "";
+    for (let i = 1; i <= 3; i++) h += `<ha-icon icon="mdi:account" style="--mdc-icon-size:16px; width:16px; color:${i <= n ? color : "#888"}; opacity:${i <= n ? 1 : 0.3}; margin-right:-8px;"></ha-icon>`;
     return `<span style="display:inline-flex; align-items:center; margin-right:8px;">${h}</span>`;
   }
 
   updateContent() {
     if (!this._config || !this._hass) return;
 
-    const card = this.querySelector('ha-card');
+    const card = this.querySelector("ha-card");
     if (card) card.header = this._config.title;
 
     if (!this._config.entity) {
-      this.content.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--primary-text-color);"><b>NS Reisadvies</b><br><br>Selecteer een sensor.</div>`;
+      this.content.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--primary-text-color);"><b>NS Reisadvies</b><br><br>${t("select_sensor", this._hass)}</div>`;
       return;
     }
 
     const stateObj = this._hass.states[this._config.entity];
     if (!stateObj?.attributes?.trips) {
-      this.content.innerHTML = '<div style="padding: 20px; text-align: center;">Gegevens laden...</div>';
+      this.content.innerHTML = `<div style="padding: 20px; text-align: center;">${t("loading", this._hass)}</div>`;
       return;
     }
 
@@ -277,7 +365,7 @@ class NSReisadviesCard extends HTMLElement {
     });
 
     if (tripsToShow.length === 0) {
-      this.content.innerHTML = '<div style="padding: 20px; text-align: center;">Geen ritten gevonden...</div>';
+      this.content.innerHTML = `<div style="padding: 20px; text-align: center;">${t("no_trips", this._hass)}</div>`;
       return;
     }
 
@@ -318,6 +406,9 @@ class NSReisadviesCard extends HTMLElement {
       </style>
       <div class="ns-container">`;
 
+    const unknownLabel = t("unknown", this._hass);
+    const platformLabel = t("platform", this._hass);
+
     tripsToShow.forEach((trip, tIdx) => {
       const ctx = trip.ctxRecon;
       let isFav = false;
@@ -332,8 +423,8 @@ class NSReisadviesCard extends HTMLElement {
 
       html += `<div class="trip-wrapper">
         <div class="trip-header-bar">
-          <div class="fav-heart ${isFav ? 'heart-red' : 'heart-grey'}" data-idx="${tIdx}" data-ctx="${ctx || ''}" data-fav="${isFav}">
-            <ha-icon icon="${isFav ? 'mdi:heart' : 'mdi:heart-outline'}"></ha-icon>
+          <div class="fav-heart ${isFav ? "heart-red" : "heart-grey"}" data-idx="${tIdx}" data-ctx="${ctx || ""}" data-fav="${isFav}">
+            <ha-icon icon="${isFav ? "mdi:heart" : "mdi:heart-outline"}"></ha-icon>
           </div>
         </div>`;
 
@@ -347,47 +438,56 @@ class NSReisadviesCard extends HTMLElement {
         let legDur = "";
         if (leg.origin.plannedDateTime && leg.destination.plannedDateTime) {
           const diff = Math.round((new Date(leg.destination.plannedDateTime) - new Date(leg.origin.plannedDateTime)) / 60000);
-          legDur = isNaN(diff) ? "" : `${diff} min`;
+          const minLabel = t("minutes_short", this._hass);
+          legDur = isNaN(diff) ? "" : `${diff} ${minLabel}`;
         }
 
-        const pCls = (leg.origin.actualTrack !== leg.origin.plannedTrack && leg.origin.plannedTrack) ? 'tl-platform tl-platform-changed' : 'tl-platform';
-        const pArrCls = (leg.destination.actualTrack !== leg.destination.plannedTrack && leg.destination.plannedTrack) ? 'tl-platform tl-platform-changed' : 'tl-platform';
-        let sCount = leg.stops ? leg.stops.length - 2 : 0;
-        let sText = sCount <= 0 ? `<span class="direct-text">Direct</span>` : `<span>${sCount === 1 ? "1 tussenstop" : `${sCount} tussenstops`}</span>`;
+        const pCls = (leg.origin.actualTrack !== leg.origin.plannedTrack && leg.origin.plannedTrack) ? "tl-platform tl-platform-changed" : "tl-platform";
+        const pArrCls = (leg.destination.actualTrack !== leg.destination.plannedTrack && leg.destination.plannedTrack) ? "tl-platform tl-platform-changed" : "tl-platform";
+        const sCount = leg.stops ? leg.stops.length - 2 : 0;
+        const sText = sCount <= 0
+          ? `<span class="direct-text">${t("direct", this._hass)}</span>`
+          : `<span>${sCount === 1 ? t("stop_one", this._hass) : t("stop_other", this._hass, { n: sCount })}</span>`;
 
         html += `
           <div class="tl-grid">
             <div><div class="tl-time ${cCls}">${tDep}</div>${dDep}</div>
-            <div class="tl-line-col"><div class="tl-dot ${index === 0 ? 'tl-dot-fill' : ''}"></div><div class="tl-line"></div></div>
-            <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.origin.name || "Onbekend"}</span>
-            <span class="${pCls} ${cCls}">Spoor ${leg.origin.actualTrack || leg.origin.plannedTrack || '?'}</span></div></div>
+            <div class="tl-line-col"><div class="tl-dot ${index === 0 ? "tl-dot-fill" : ""}"></div><div class="tl-line"></div></div>
+            <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.origin.name || unknownLabel}</span>
+            <span class="${pCls} ${cCls}">${platformLabel} ${leg.origin.actualTrack || leg.origin.plannedTrack || "?"}</span></div></div>
           </div>
           <div class="tl-grid">
             <div class="tl-duration-small ${cCls}">${legDur}</div>
             <div class="tl-line-col"><div class="tl-line"></div></div>
-            <div class="tl-travel-info ${cCls}"><span class="tl-direction-main ${cCls}">${leg.direction || "Onbekend"}</span>
+            <div class="tl-travel-info ${cCls}"><span class="tl-direction-main ${cCls}">${leg.direction || unknownLabel}</span>
               <div class="tl-train-details">${sText}<span class="detail-separator">•</span>
-              <ha-icon icon="${this.getIcon(leg.product)}" style="--mdc-icon-size:16px; margin-right:4px;"></ha-icon>${(leg.product && leg.product.displayName) || "Onbekend"}
+              <ha-icon icon="${this.getIcon(leg.product)}" style="--mdc-icon-size:16px; margin-right:4px;"></ha-icon>${(leg.product && leg.product.displayName) || unknownLabel}
               <span class="detail-separator">•</span>${this.getCrowd(leg.crowdForecast)}</div>
-              <div class="tl-train-meta">${leg.name || "Onbekend"}</div>
+              <div class="tl-train-meta">${leg.name || unknownLabel}</div>
             </div>
           </div>
           <div class="tl-grid">
             <div><div class="tl-time ${cCls}">${tArr}</div>${dArr}</div>
-            <div class="tl-line-col"><div class="tl-dot ${index === trip.legs.length - 1 ? 'tl-dot-fill' : ''}"></div></div>
-            <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.destination.name || "Onbekend"}</span>
-            <span class="${pArrCls} ${cCls}">Spoor ${leg.destination.actualTrack || leg.destination.plannedTrack || '?'}</span></div></div>
+            <div class="tl-line-col"><div class="tl-dot ${index === trip.legs.length - 1 ? "tl-dot-fill" : ""}"></div></div>
+            <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.destination.name || unknownLabel}</span>
+            <span class="${pArrCls} ${cCls}">${platformLabel} ${leg.destination.actualTrack || leg.destination.plannedTrack || "?"}</span></div></div>
           </div>`;
 
         if (index < trip.legs.length - 1) {
           const nextLeg = trip.legs[index + 1];
-          let wMin = Math.round((new Date(nextLeg.origin.actualDateTime) - new Date(leg.destination.actualDateTime)) / 60000);
+          const wMin = Math.round((new Date(nextLeg.origin.actualDateTime) - new Date(leg.destination.actualDateTime)) / 60000);
+          const transferText = isNaN(wMin)
+            ? t("transfer", this._hass)
+            : t("transfer_n", this._hass, { n: wMin });
           html += `<div class="tl-wait-row"><div></div><div class="tl-wait-line-col"><ha-icon icon="mdi:walk" style="--mdc-icon-size:16px; color:#888;"></ha-icon></div>
-          <div class="tl-wait-text ${cCls}">${isNaN(wMin) ? "Overstappen" : wMin + " min overstappen"}</div></div>`;
+          <div class="tl-wait-text ${cCls}">${transferText}</div></div>`;
         }
       });
-      if (isCancelled) html += `<div class="warning-msg">LET OP: REIS VERVALLEN</div>`;
-      else html += `<div class="trip-footer">Totale reistijd: ${this.formatDuration(trip.actualDurationInMinutes || 0)}${dist > 0 ? ` • ${Math.round(dist / 1000)} km` : ""}</div>`;
+      if (isCancelled) {
+        html += `<div class="warning-msg">${t("cancelled", this._hass)}</div>`;
+      } else {
+        html += `<div class="trip-footer">${t("total_travel", this._hass)}: ${this.formatDuration(trip.actualDurationInMinutes || 0)}${dist > 0 ? ` • ${Math.round(dist / 1000)} km` : ""}</div>`;
+      }
 
       html += `</div>`;
     });
@@ -395,9 +495,9 @@ class NSReisadviesCard extends HTMLElement {
 
     const hearts = this.content.querySelectorAll(`.fav-heart`);
     hearts.forEach(btn => {
-      const ctxRecon = btn.getAttribute('data-ctx');
-      const isFav = btn.getAttribute('data-fav') === 'true';
-      btn.addEventListener('click', (e) => this.toggleFavorite(ctxRecon, isFav, e));
+      const ctxRecon = btn.getAttribute("data-ctx");
+      const isFav = btn.getAttribute("data-fav") === "true";
+      btn.addEventListener("click", (e) => this.toggleFavorite(ctxRecon, isFav, e));
     });
   }
 }
@@ -415,10 +515,18 @@ class NSReisadviesEditor extends HTMLElement {
 
   render() {
     if (!this._hass || !this._config) return;
-    const entities = Object.keys(this._hass.states).filter(e => e.startsWith('sensor.ns_')).sort();
+    const entities = Object.keys(this._hass.states).filter(e => e.startsWith("sensor.ns_")).sort();
+    const lang = _lang(this._hass);
+    const dict = I18N[lang] || I18N.en;
+    const labels = dict.weekdays;
     const weekDays = [
-      { label: "Ma", val: 1 }, { label: "Di", val: 2 }, { label: "Wo", val: 3 },
-      { label: "Do", val: 4 }, { label: "Vr", val: 5 }, { label: "Za", val: 6 }, { label: "Zo", val: 0 }
+      { label: labels[0], val: 1 },
+      { label: labels[1], val: 2 },
+      { label: labels[2], val: 3 },
+      { label: labels[3], val: 4 },
+      { label: labels[4], val: 5 },
+      { label: labels[5], val: 6 },
+      { label: labels[6], val: 0 },
     ];
     const slots = this._config.fav_slots || 1;
     const curRows = this._config.max_rows || 5;
@@ -439,92 +547,94 @@ class NSReisadviesEditor extends HTMLElement {
         .val-span { font-weight: bold; float: right; color: #3b82f6; }
       </style>
       <div style="padding: 10px;">
-        <ha-textfield label="Titel" id="title" style="width:100%; margin-bottom:20px;"></ha-textfield>
-        <label style="margin-bottom: 5px; display: block; font-size: 0.9em; opacity: 0.8;">Route Sensor</label>
+        <ha-textfield label="${t("editor_title", this._hass)}" id="title" style="width:100%; margin-bottom:20px;"></ha-textfield>
+        <label style="margin-bottom: 5px; display: block; font-size: 0.9em; opacity: 0.8;">${t("editor_route_sensor", this._hass)}</label>
         <select id="entity" style="width:100%; padding:10px; background:var(--card-background-color); color:inherit; margin-bottom:20px; border:1px solid var(--divider-color); border-radius: 6px;">
-          ${entities.map(e => `<option value="${e}" ${e === this._config.entity ? "selected" : ""}>${e}</option>`).join('')}
+          ${entities.map(e => `<option value="${e}" ${e === this._config.entity ? "selected" : ""}>${e}</option>`).join("")}
         </select>
-        <div class="slider-row"><label class="slider-label">Aantal ritten <span class="val-span" id="val-rows">${curRows}</span></label><input type="range" id="max_rows" min="1" max="15" value="${curRows}" style="width:100%;"></div>
-        <div class="slider-row"><label class="slider-label">Schaal <span class="val-span" id="val-scale">${curScale}%</span></label><input type="range" id="scale" min="50" max="150" value="${curScale}" style="width:100%;"></div>
+        <div class="slider-row"><label class="slider-label">${t("editor_number_of_trips", this._hass)} <span class="val-span" id="val-rows">${curRows}</span></label><input type="range" id="max_rows" min="1" max="15" value="${curRows}" style="width:100%;"></div>
+        <div class="slider-row"><label class="slider-label">${t("editor_scale", this._hass)} <span class="val-span" id="val-scale">${curScale}%</span></label><input type="range" id="scale" min="50" max="150" value="${curScale}" style="width:100%;"></div>
 
         <div class="slider-row" style="margin-bottom: 25px;">
-           <label class="slider-label">Favorieten bewaren (uren) <span class="val-span" id="val-fav">${curFavH}</span></label>
+           <label class="slider-label">${t("editor_keep_favourites", this._hass)} <span class="val-span" id="val-fav">${curFavH}</span></label>
            <input type="range" id="fav_hours" min="0" max="48" value="${curFavH}" style="width:100%;">
         </div>
 
-        <h3 style="margin-bottom: 12px; font-size: 1.1em;">Favoriete tijden (Pin 1 rit)</h3>`;
+        <h3 style="margin-bottom: 12px; font-size: 1.1em;">${t("editor_favourite_times", this._hass)}</h3>`;
 
     for (let i = 1; i <= slots; i++) {
-      const activeDays = (this._config[`auto_days_${i}`] || "").split(',').filter(x => x !== "");
+      const activeDays = (this._config[`auto_days_${i}`] || "").split(",").filter(x => x !== "");
       const curHour = this._config[`auto_hour_${i}`] !== undefined
-        ? String(this._config[`auto_hour_${i}`]).padStart(2, '0')
+        ? String(this._config[`auto_hour_${i}`]).padStart(2, "0")
         : "08";
       const curMin = this._config[`auto_min_${i}`] !== undefined
-        ? String(this._config[`auto_min_${i}`]).padStart(2, '0')
+        ? String(this._config[`auto_min_${i}`]).padStart(2, "0")
         : "00";
       html += `
         <div class="box">
           <ha-icon icon="mdi:delete" class="delete-slot" data-index="${i}" style="position: absolute; right: 10px; top: 10px; color: #ff5252; cursor: pointer; opacity: 0.7;"></ha-icon>
-          <ha-textfield label="Naam" id="auto_name_${i}" style="width: calc(100% - 30px); margin-bottom: 5px;"></ha-textfield>
+          <ha-textfield label="${t("editor_name", this._hass)}" id="auto_name_${i}" style="width: calc(100% - 30px); margin-bottom: 5px;"></ha-textfield>
           <div class="time-row">
-            <span>Tijd:</span>
-            <select class="select-styled" id="auto_hour_${i}">${Array.from({ length: 24 }, (_, n) => `<option value="${n.toString().padStart(2, '0')}" ${curHour === n.toString().padStart(2, '0') ? 'selected' : ''}>${n.toString().padStart(2, '0')}</option>`).join('')}</select>
+            <span>${t("editor_time", this._hass)}</span>
+            <select class="select-styled" id="auto_hour_${i}">${Array.from({ length: 24 }, (_, n) => `<option value="${n.toString().padStart(2, "0")}" ${curHour === n.toString().padStart(2, "0") ? "selected" : ""}>${n.toString().padStart(2, "0")}</option>`).join("")}</select>
             <span>:</span>
-            <select class="select-styled" id="auto_min_${i}">${Array.from({ length: 60 }, (_, n) => `<option value="${n.toString().padStart(2, '0')}" ${curMin === n.toString().padStart(2, '0') ? 'selected' : ''}>${n.toString().padStart(2, '0')}</option>`).join('')}</select>
+            <select class="select-styled" id="auto_min_${i}">${Array.from({ length: 60 }, (_, n) => `<option value="${n.toString().padStart(2, "0")}" ${curMin === n.toString().padStart(2, "0") ? "selected" : ""}>${n.toString().padStart(2, "0")}</option>`).join("")}</select>
           </div>
           <div class="day-grid">
-            ${weekDays.map(day => `<label class="day-unit"><span>${day.label}</span><input type="checkbox" class="chk" data-index="${i}" data-day="${day.val}" ${activeDays.includes(day.val.toString()) ? 'checked' : ''}></label>`).join('')}
+            ${weekDays.map(day => `<label class="day-unit"><span>${day.label}</span><input type="checkbox" class="chk" data-index="${i}" data-day="${day.val}" ${activeDays.includes(day.val.toString()) ? "checked" : ""}></label>`).join("")}
           </div>
         </div>`;
     }
 
-    html += `<button id="add-slot" style="width:100%; padding: 12px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 5px;">+ Favoriete tijd toevoegen</button></div>`;
+    html += `<button id="add-slot" style="width:100%; padding: 12px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 5px;">${t("editor_add_slot", this._hass)}</button></div>`;
 
     this.innerHTML = html;
 
-    // Properties op custom-elements moeten ná innerHTML gezet worden
-    const titleField = this.querySelector('#title');
+    // Custom-element properties must be set after innerHTML.
+    const titleField = this.querySelector("#title");
     if (titleField) {
       titleField.value = curTitle;
-      titleField.addEventListener('change', (ev) => this._fire({ title: ev.target.value }));
+      titleField.addEventListener("change", (ev) => this._fire({ title: ev.target.value }));
     }
 
     for (let i = 1; i <= slots; i++) {
       const nameField = this.querySelector(`#auto_name_${i}`);
       if (nameField) {
-        nameField.value = this._config[`auto_name_${i}`] || `Tijdslot ${i}`;
+        const fallback = t("editor_time_slot", this._hass, { n: i });
+        nameField.value = this._config[`auto_name_${i}`] || fallback;
       }
     }
 
-    this.querySelector('#add-slot').addEventListener('click', () => {
+    this.querySelector("#add-slot").addEventListener("click", () => {
       const newIdx = slots + 1;
-      // Belangrijk: defaults direct opslaan, anders wordt het tijdslot
-      // genegeerd door processAutoFavs (die undefined-uren overslaat).
+      // Important: persist the defaults straight away. Otherwise
+      // processAutoFavs would skip this slot because auto_hour/auto_min
+      // would be undefined.
       this._fire({
         fav_slots: newIdx,
         [`auto_hour_${newIdx}`]: "08",
         [`auto_min_${newIdx}`]: "00",
         [`auto_days_${newIdx}`]: "",
-        [`auto_name_${newIdx}`]: `Tijdslot ${newIdx}`,
+        [`auto_name_${newIdx}`]: t("editor_time_slot", this._hass, { n: newIdx }),
       });
       this.render();
     });
-    this.querySelector('#max_rows').addEventListener('input', (e) => {
-      this.querySelector('#val-rows').innerText = e.target.value;
+    this.querySelector("#max_rows").addEventListener("input", (e) => {
+      this.querySelector("#val-rows").innerText = e.target.value;
       this._fire({ max_rows: parseInt(e.target.value, 10) });
     });
-    this.querySelector('#scale').addEventListener('input', (e) => {
-      this.querySelector('#val-scale').innerText = e.target.value + "%";
+    this.querySelector("#scale").addEventListener("input", (e) => {
+      this.querySelector("#val-scale").innerText = e.target.value + "%";
       this._fire({ scale: parseInt(e.target.value, 10) });
     });
 
-    this.querySelector('#fav_hours').addEventListener('input', (e) => {
-      this.querySelector('#val-fav').innerText = e.target.value;
+    this.querySelector("#fav_hours").addEventListener("input", (e) => {
+      this.querySelector("#val-fav").innerText = e.target.value;
       this._fire({ fav_hours: parseInt(e.target.value, 10) });
     });
 
-    this.querySelectorAll('.delete-slot').forEach(btn => {
-      btn.addEventListener('click', () => {
+    this.querySelectorAll(".delete-slot").forEach(btn => {
+      btn.addEventListener("click", () => {
         const idx = parseInt(btn.dataset.index, 10);
         let newConfig = { ...this._config };
         for (let j = idx; j < slots; j++) {
@@ -544,17 +654,17 @@ class NSReisadviesEditor extends HTMLElement {
       });
     });
 
-    this.querySelectorAll('.chk').forEach(chk => {
-      chk.addEventListener('change', () => {
+    this.querySelectorAll(".chk").forEach(chk => {
+      chk.addEventListener("change", () => {
         const idx = chk.dataset.index;
         const checks = this.querySelectorAll(`.chk[data-index="${idx}"]:checked`);
-        const val = Array.from(checks).map(c => c.dataset.day).join(',');
+        const val = Array.from(checks).map(c => c.dataset.day).join(",");
         this._fire({ [`auto_days_${idx}`]: val });
       });
     });
 
-    this.querySelectorAll('select, ha-textfield:not(#title)').forEach(el => {
-      el.addEventListener('change', (ev) => this._fire({ [ev.target.id]: ev.target.value }));
+    this.querySelectorAll("select, ha-textfield:not(#title)").forEach(el => {
+      el.addEventListener("change", (ev) => this._fire({ [ev.target.id]: ev.target.value }));
     });
   }
 
@@ -568,20 +678,20 @@ class NSReisadviesEditor extends HTMLElement {
 customElements.define("ns-reisadvies-editor", NSReisadviesEditor);
 customElements.define("ns-reisadvies-card", NSReisadviesCard);
 
-// Registreer de kaart bij Home Assistant zodat hij in de "Add card"-picker
-// verschijnt. Zonder deze regel laadt het JS bestand wel, maar zie je de
-// kaart niet meer in het menu.
+// Register the card with Home Assistant so it shows up in the
+// "Add card" picker. Without this entry the JS file still loads,
+// but the picker has no idea the card exists.
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "ns-reisadvies-card",
   name: "NS Reisadvies",
-  description: "NS reisadvies met favorieten en automatische tijdslots",
+  description: "NS travel advice with favourites and automatic time slots",
   preview: false,
-  documentationURL: "https://github.com/Meppies/fun-things-to-share/tree/main/home-assist/ns-reisadvies",
+  documentationURL: "https://github.com/Meppies/ha-ns-reisadvies",
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v1.3.0 ",
+  "%c NS-REISADVIES-CARD %c v1.4.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
