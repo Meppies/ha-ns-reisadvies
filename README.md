@@ -6,6 +6,7 @@ matching Lovelace card with favourites and auto-pin time slots.
 
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
 ![GitHub release](https://img.shields.io/github/v/release/Meppies/ha-ns-reisadvies?display_name=tag)
+[![Validate](https://github.com/Meppies/ha-ns-reisadvies/actions/workflows/validate.yml/badge.svg)](https://github.com/Meppies/ha-ns-reisadvies/actions/workflows/validate.yml)
 
 ## Features
 
