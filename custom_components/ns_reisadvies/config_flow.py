@@ -148,12 +148,26 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            new_act = (user_input.get(CONF_FROM_STATION) or "").lower()
-            new_arr = (user_input.get(CONF_TO_STATION) or "").lower()
+            raw_act = user_input.get(CONF_FROM_STATION) or ""
+            raw_arr = user_input.get(CONF_TO_STATION) or ""
+            new_act = raw_act.lower()
+            new_arr = raw_arr.lower()
 
-            if new_act and new_arr and new_act == new_arr:
+            # custom_value=True on the selector means the user can type
+            # anything — validate against the canonical list here.
+            station_lookup = {s.lower(): s for s in STATIONS}
+            if new_act and new_act not in station_lookup:
+                errors[CONF_FROM_STATION] = "unknown_station"
+            if new_arr and new_arr not in station_lookup:
+                errors[CONF_TO_STATION] = "unknown_station"
+
+            if not errors and new_act and new_arr and new_act == new_arr:
                 errors["base"] = "same_station"
-            else:
+
+            if not errors:
+                # Normalise to the canonical casing from the list
+                user_input[CONF_FROM_STATION] = station_lookup[new_act]
+                user_input[CONF_TO_STATION] = station_lookup[new_arr]
                 for entry in existing_entries:
                     existing_act = (entry.data.get(CONF_FROM_STATION, "") or "").lower()
                     existing_arr = (entry.data.get(CONF_TO_STATION, "") or "").lower()
@@ -174,16 +188,16 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema: dict = {}
         if not stored_api_key:
             schema[vol.Required(CONF_API_KEY)] = str
-        # SelectSelector with mode=DROPDOWN renders a type-to-filter
-        # combobox in the HA UI. sort= is intentionally NOT set — the
-        # source list is already alphabetical via sorted(set(...)) and
-        # some HA frontend versions render the selector incorrectly
-        # (non-typeable) when sort is supplied.
+        # IMPORTANT: ha-selector-select only renders ha-combo-box (with
+        # type-to-filter) when custom_value=True. With custom_value=False
+        # it falls back to the legacy ha-select (scroll-only Material
+        # dropdown), regardless of mode=DROPDOWN. Allow custom values so
+        # the user can type, and validate against STATIONS below.
         station_selector = SelectSelector(
             SelectSelectorConfig(
                 options=STATIONS,
                 mode=SelectSelectorMode.DROPDOWN,
-                custom_value=False,
+                custom_value=True,
             )
         )
         schema[vol.Required(CONF_FROM_STATION)] = station_selector

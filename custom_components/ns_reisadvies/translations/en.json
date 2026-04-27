@@ -17,7 +17,8 @@
       }
     },
     "error": {
-      "same_station": "The departure and arrival station must be different."
+      "same_station": "The departure and arrival station must be different.",
+      "unknown_station": "That is not a recognised Dutch railway station — pick one from the list."
     },
     "abort": {
       "already_configured": "This route is already configured."

@@ -17,7 +17,8 @@
       }
     },
     "error": {
-      "same_station": "Vertrek- en aankomststation moeten verschillend zijn."
+      "same_station": "Vertrek- en aankomststation moeten verschillend zijn.",
+      "unknown_station": "Geen geldig NS-station — kies er een uit de lijst."
     },
     "abort": {
       "already_configured": "Deze route is al geconfigureerd."
