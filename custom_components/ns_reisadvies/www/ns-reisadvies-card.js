@@ -67,6 +67,21 @@ function _lang(hass) {
   return String(raw).slice(0, 2).toLowerCase();
 }
 
+// Resolve which IANA time zone to use for rendering departure / arrival
+// times. The user's Lovelace setting `locale.time_zone` is either
+// "local" (use browser zone) or "server" (use HA server zone).
+// Prefer the explicit HA-server zone whenever available so trains
+// rendered for a Dutch route do not shift when the browser is in
+// another time zone (e.g. a Mac mini set to America/Los_Angeles).
+function _tz(hass) {
+  if (!hass) return undefined;
+  const pref = hass.locale?.time_zone;
+  const serverTz = hass.config?.time_zone;
+  if (pref === "server" && serverTz) return serverTz;
+  if (pref && pref !== "local") return pref;
+  return serverTz || undefined;
+}
+
 function t(key, hass, vars) {
   const lang = _lang(hass);
   const dict = I18N[lang] || I18N.en;
@@ -297,7 +312,11 @@ class NSReisadviesCard extends HTMLElement {
   formatTime(ts) {
     if (!ts || String(ts).includes("NaN")) return "--:--";
     const d = new Date(ts);
-    return isNaN(d.getTime()) ? "--:--" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (isNaN(d.getTime())) return "--:--";
+    const tz = _tz(this._hass);
+    const opts = { hour: "2-digit", minute: "2-digit" };
+    if (tz) opts.timeZone = tz;
+    return d.toLocaleTimeString([], opts);
   }
 
   calculateDelay(p, a) {
@@ -691,7 +710,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v1.4.4 ",
+  "%c NS-REISADVIES-CARD %c v1.4.5 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
