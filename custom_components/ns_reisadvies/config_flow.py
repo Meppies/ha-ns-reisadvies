@@ -175,14 +175,15 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not stored_api_key:
             schema[vol.Required(CONF_API_KEY)] = str
         # SelectSelector with mode=DROPDOWN renders a type-to-filter
-        # combobox in the HA UI — much friendlier than scrolling 370+
-        # entries. sort=True keeps the rendered list alphabetical even
-        # if the source list ever falls out of order.
+        # combobox in the HA UI. sort= is intentionally NOT set — the
+        # source list is already alphabetical via sorted(set(...)) and
+        # some HA frontend versions render the selector incorrectly
+        # (non-typeable) when sort is supplied.
         station_selector = SelectSelector(
             SelectSelectorConfig(
                 options=STATIONS,
                 mode=SelectSelectorMode.DROPDOWN,
-                sort=True,
+                custom_value=False,
             )
         )
         schema[vol.Required(CONF_FROM_STATION)] = station_selector
