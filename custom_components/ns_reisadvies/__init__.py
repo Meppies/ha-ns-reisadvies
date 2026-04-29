@@ -31,20 +31,59 @@ CARD_URL = "/ns_reisadvies/ns-reisadvies-card.js"
 
 
 def _opt(entry: ConfigEntry, key: str, default):
-    """Read option, fall back to data, then to the supplied default."""
-    return entry.options.get(key, entry.data.get(key, default))
+    """Read option from a single entry, fall back to data, then to the default."""
+    if entry.options and key in entry.options:
+        return entry.options[key]
+    if key in entry.data:
+        return entry.data[key]
+    return default
+
+
+def _get_primary_entry(hass: HomeAssistant) -> ConfigEntry | None:
+    """Return the entry that holds the canonical, integration-wide options.
+
+    All entries share api_key, scan_interval, fav_hours and
+    fetch_composition. The primary entry is simply the lowest-id entry;
+    when its options change, every other entry is reloaded so they pick
+    up the new values.
+    """
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        return None
+    return sorted(entries, key=lambda e: e.entry_id)[0]
+
+
+def _global_opt(hass: HomeAssistant, entry: ConfigEntry, key: str, default):
+    """Read an option that is shared across all NS Reisadvies entries.
+
+    Order of precedence:
+      1. Primary entry options
+      2. Primary entry data
+      3. Calling entry's own options
+      4. Calling entry's own data
+      5. Default
+    """
+    primary = _get_primary_entry(hass)
+    if primary is not None:
+        if primary.options and key in primary.options:
+            return primary.options[key]
+        if key in primary.data:
+            return primary.data[key]
+    return _opt(entry, key, default)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up an NS Reisadvies entry and register the Lovelace card path."""
     hass.data.setdefault(DOMAIN, {})
 
-    api_key = _opt(entry, CONF_API_KEY, None)
+    # Globale options: alle entries delen dezelfde api_key, interval,
+    # fav_hours en fetch_composition. Lokale data: from/to station.
+    api_key = _global_opt(hass, entry, CONF_API_KEY, None)
     act_station = entry.data.get(CONF_FROM_STATION)
     arr_station = entry.data.get(CONF_TO_STATION)
-    scan_interval = int(_opt(entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-    fav_hours = int(_opt(entry, CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
-    fetch_composition = bool(_opt(entry, CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
+    scan_interval = int(_global_opt(hass, entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+    fav_hours = int(_global_opt(hass, entry, CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
+    fetch_composition = bool(_global_opt(hass, entry, CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
 
     coordinator = NSUpdateCoordinator(
         hass,

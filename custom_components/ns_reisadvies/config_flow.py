@@ -96,18 +96,54 @@ _RAW_STATIONS = [
 STATIONS = sorted(set(_RAW_STATIONS))
 
 
+def _primary_entry(hass) -> config_entries.ConfigEntry | None:
+    """Lowest-id entry holds the canonical shared options."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        return None
+    return sorted(entries, key=lambda e: e.entry_id)[0]
+
+
 class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
-    """Options flow — re-uses the existing data keys (do not rename)."""
+    """Edit integration-wide settings.
+
+    Even though Home Assistant launches this flow on a specific entry,
+    the values are stored on the *primary* entry (lowest id) and read
+    back by every entry. So whether the user clicks Configure on route
+    Hilversum→Duivendrecht or Emmen→Hilversum, they see and edit the
+    same fields. Saving propagates to all routes via a reload.
+    """
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.entry = config_entry
 
     async def async_step_init(self, user_input=None):
+        primary = _primary_entry(self.hass) or self.entry
+
         if user_input is not None:
+            # Sla globale opties op de primary entry op zodat alle andere
+            # entries ze bij volgende setup kunnen lezen.
+            self.hass.config_entries.async_update_entry(
+                primary, options={**primary.options, **user_input}
+            )
+            # Reload de andere entries handmatig. De primary wordt door
+            # de update_listener gereload, en self.entry door HA wanneer
+            # we async_create_entry returnen.
+            for e in self.hass.config_entries.async_entries(DOMAIN):
+                if e.entry_id not in (primary.entry_id, self.entry.entry_id):
+                    self.hass.async_create_task(
+                        self.hass.config_entries.async_reload(e.entry_id)
+                    )
+            # Eigen entry: schrijf user_input ook naar zijn options zodat
+            # deze entry, mocht de primary verwijderd worden, zijn eigen
+            # globalen kan leveren als fallback.
             return self.async_create_entry(title="", data=user_input)
 
-        opts = self.entry.options
-        data = self.entry.data
+        # Lees default-waarden uit primary (zodat alle entries dezelfde
+        # getallen tonen). Fall back op eigen entry als primary leeg is.
+        source = primary if (primary.options or primary.data) else self.entry
+        opts = source.options
+        data = source.data
         api_val = opts.get(CONF_API_KEY, data.get(CONF_API_KEY, ""))
         int_val = int(opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
         fav_val = int(opts.get(CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
