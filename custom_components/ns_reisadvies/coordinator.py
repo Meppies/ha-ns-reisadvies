@@ -396,123 +396,68 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         return out
 
     async def async_fetch_live_train(self, train_number: str) -> dict | None:
-        """Fetch the live position of a single train.
+        """Return an approximate live position for a single train.
 
-        The per-train endpoint /virtual-train-api/v1/trein/{nr} returns
-        composition + current-station info but NO GPS coordinates. The
-        bulk endpoint /virtual-train-api/v1/trein (no number) returns
-        an array of every currently moving train with lat/lng/speed/
-        heading. We fetch the bulk feed (cached briefly to avoid hitting
-        the API per poll) and filter by ritnummer.
+        The public NS bulk endpoint /virtual-train-api/v1/trein returns
+        HTTP 500 for normal subscription keys (only the internal NS-App
+        version sees real GPS). The per-train endpoint /v1/trein/{nr}
+        DOES work and returns the train's CURRENT STATION code in the
+        ``station`` field. We translate that station code to lat/lng
+        via the cached /v2/stations response.
+
+        Result: position jumps from station to station as the train
+        progresses, rather than smooth GPS interpolation. Adequate for
+        a "where's my train right now" map without paid API tiers.
         """
         if not train_number:
             return None
         if not self.api_key:
             return None
-        all_trains = await self._async_fetch_live_trains_bulk()
-        if not all_trains:
-            return None
-        target = str(train_number)
-        match = next(
-            (
-                t for t in all_trains
-                if str(t.get("ritnummer") or t.get("treinNummer") or "") == target
-            ),
-            None,
-        )
-        if not match:
-            return None
-        lat = match.get("lat") or match.get("latitude")
-        lng = match.get("lng") or match.get("lon") or match.get("longitude")
-        if lat is None or lng is None:
-            return None
-        return {
-            "lat": float(lat),
-            "lng": float(lng),
-            "speed": match.get("snelheid") or match.get("speed"),
-            "heading": match.get("richting") or match.get("heading"),
-            "ts": match.get("tijd") or match.get("time"),
-            "type": match.get("type") or match.get("categorie"),
-        }
-
-    async def _async_fetch_live_trains_bulk(self) -> list[dict]:
-        """Fetch every active train, with a 5s in-memory cache.
-
-        Cache is kept on hass.data so all per-route coordinators share
-        it — a 10s polling interval from the card therefore translates
-        to one bulk API call per ~10s regardless of how many maps are
-        open.
-        """
         bucket = self.hass.data.setdefault(DOMAIN, {})
-        cached = bucket.get("_live_trains_cache")
-        now = time.time()
-        if cached and now - cached.get("ts", 0) < 5:
-            return cached.get("data") or []
-
         warned_once = bool(bucket.get("_live_train_warned"))
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
-        # The NS bulk endpoint requires a bounding box. We request the
-        # whole of NL+near-border so foreign-bound services (Aachen,
-        # Brussel) are also covered.
-        params = {
-            "features": "drukte",
-            "lat": "52.1",
-            "lng": "5.3",
-            "zoomlevel": "9",
-            "southWestLat": "50.65",
-            "southWestLng": "3.20",
-            "northEastLat": "53.70",
-            "northEastLng": "7.40",
-        }
+        url = f"{VIRTUAL_TRAIN_API_URL}/{train_number}"
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(
-                    VIRTUAL_TRAIN_API_URL, headers=headers, params=params,
-                ) as resp:
+                async with self._session.get(url, headers=headers) as resp:
                     if resp.status != 200:
                         body = ""
                         try:
-                            body = (await resp.text())[:400]
+                            body = (await resp.text())[:300]
                         except Exception:  # noqa: BLE001
                             pass
                         if not warned_once:
                             bucket["_live_train_warned"] = True
                             _LOGGER.warning(
-                                "Virtual train bulk fetch returned HTTP %s. "
-                                "Check that your NS API key is subscribed to "
-                                "the 'Ns-App' (Virtual Train API) product. "
-                                "Body: %s",
-                                resp.status, body,
+                                "Virtual train fetch %s -> HTTP %s. Body: %s",
+                                train_number, resp.status, body,
                             )
-                        bucket["_live_trains_cache"] = {"ts": now, "data": []}
-                        return []
+                        return None
                     data = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             if not warned_once:
                 bucket["_live_train_warned"] = True
-                _LOGGER.warning("Virtual train bulk fetch failed: %s", err)
-            return []
+                _LOGGER.warning("Virtual train fetch %s failed: %s", train_number, err)
+            return None
 
-        # Response shape can be either a bare list, {"payload": [...]}
-        # or {"treinen": [...]}. Be liberal.
-        if isinstance(data, list):
-            trains = data
-        elif isinstance(data, dict):
-            trains = (
-                data.get("payload")
-                or data.get("treinen")
-                or data.get("trains")
-                or []
-            )
-        else:
-            trains = []
-        if not trains and not warned_once:
-            bucket["_live_train_warned"] = True
-            snippet = str(data)[:400]
-            _LOGGER.warning(
-                "Virtual train bulk fetch: 200 OK but no train list found. "
-                "Response shape: %s",
-                snippet,
-            )
-        bucket["_live_trains_cache"] = {"ts": now, "data": trains}
-        return trains
+        payload = (data or {}).get("payload") or data or {}
+        station_code = (payload.get("station") or "").upper()
+        if not station_code:
+            return None
+
+        geo = await self.async_fetch_stations_geo()
+        match = geo.get(station_code)
+        if not match:
+            return None
+        return {
+            "lat": match["lat"],
+            "lng": match["lng"],
+            "station_code": station_code,
+            "station_name": match["name"],
+            "spoor": payload.get("spoor"),
+            "ts": payload.get("tijd") or None,
+            # No real speed/heading from this endpoint — leave unset so
+            # the card can decide to hide the metric instead of showing 0.
+            "speed": None,
+            "heading": None,
+        }

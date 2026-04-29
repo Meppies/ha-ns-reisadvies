@@ -291,7 +291,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, _ws_track_train_start)
         websocket_api.async_register_command(hass, _ws_track_train_poll)
         websocket_api.async_register_command(hass, _ws_track_train_stop)
-        websocket_api.async_register_command(hass, _ws_diag_live)
         hass.data[DOMAIN]["_ws_registered"] = True
 
     # Static path + Lovelace card auto-registration (one-shot per HA).
@@ -556,53 +555,6 @@ def _ws_track_train_stop(
     connection.send_result(msg["id"], {"ok": True})
 
 
-@websocket_api.websocket_command(
-    {vol.Required("type"): "ns_reisadvies/diag_live"}
-)
-@websocket_api.async_response
-async def _ws_diag_live(
-    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
-) -> None:
-    """Diagnostic: probe several /v1/trein parameter combinations and
-    return status + first 400 chars of body for each. Helps figure out
-    which shape the user's NS API key actually accepts.
-    """
-    coord = _any_coordinator(hass)
-    if coord is None or not coord.api_key:
-        connection.send_error(msg["id"], "no_hub", "No hub or API key")
-        return
-    import aiohttp  # local import — only used here
-    headers = {"Ocp-Apim-Subscription-Key": coord.api_key}
-    base = "https://gateway.apiportal.ns.nl/virtual-train-api/api/v1/trein"
-    # Different shapes to probe
-    tries = [
-        ("no_params", {}),
-        ("features_only", {"features": "drukte"}),
-        ("nl_bbox", {
-            "features": "drukte",
-            "lat": "52.1", "lng": "5.3", "zoomlevel": "9",
-            "southWestLat": "50.65", "southWestLng": "3.20",
-            "northEastLat": "53.70", "northEastLng": "7.40",
-        }),
-    ]
-    out = []
-    session = coord._session  # noqa: SLF001
-    for label, params in tries:
-        try:
-            async with session.get(base, headers=headers, params=params) as resp:
-                body = (await resp.text())[:400]
-                out.append({"label": label, "status": resp.status, "body": body})
-        except Exception as err:  # noqa: BLE001
-            out.append({"label": label, "error": str(err)})
-    # Also try the "geo" alternative endpoint that NS App uses
-    geo_url = "https://gateway.apiportal.ns.nl/Spoorkaart-API/api/v1/spoorkaart"
-    try:
-        async with session.get(geo_url, headers=headers) as resp:
-            body = (await resp.text())[:200]
-            out.append({"label": "spoorkaart_alt", "status": resp.status, "body": body})
-    except Exception as err:  # noqa: BLE001
-        out.append({"label": "spoorkaart_alt", "error": str(err)})
-    connection.send_result(msg["id"], {"probes": out})
 
 
 def _backfill_entity_subentries(hass: HomeAssistant, entry: ConfigEntry) -> None:
