@@ -21,16 +21,20 @@ CONF_TO_STATION = "arr_station"
 CONF_SCAN_INTERVAL = "scan_interval_minuten"
 CONF_FAV_HOURS = "fav_hours"
 CONF_FETCH_COMPOSITION = "fetch_composition"
+CONF_LIVE_TRAIN_MAP = "live_train_map"
 
 # Defaults
 DEFAULT_SCAN_INTERVAL = 5
 DEFAULT_FAV_HOURS = 6  # 0 disables expiry
 DEFAULT_FETCH_COMPOSITION = False  # extra API calls — opt in
+DEFAULT_LIVE_TRAIN_MAP = False  # on-demand only, but icon is opt-in
 
 # API URLs
 API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips"
 TRIP_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips/trip"
 JOURNEY_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/journey"
+STATIONS_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/stations"
+VIRTUAL_TRAIN_API_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/api/v1/trein"
 
 # Storage
 STORAGE_VERSION = 1

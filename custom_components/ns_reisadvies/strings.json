@@ -69,13 +69,15 @@
           "api_key": "API key",
           "scan_interval_minuten": "Refresh interval (minutes)",
           "fav_hours": "Favourite retention (hours)",
-          "fetch_composition": "Fetch train composition (carriages)"
+          "fetch_composition": "Fetch train composition (carriages)",
+          "live_train_map": "Show live train map (per leg)"
         },
         "data_description": {
           "api_key": "Your NS API subscription key. Replace if it has been rotated.",
           "scan_interval_minuten": "How often the integration polls the NS API. Allowed range: 1 to 60.",
           "fav_hours": "How long to keep a pinned favourite before it is removed automatically. Set to 0 to disable expiry.",
-          "fetch_composition": "Adds an extra NS API call per unique train per refresh to retrieve the actual carriage composition (number of carriages, rolling-stock type, image). Off by default to save API quota."
+          "fetch_composition": "Adds an extra NS API call per unique train per refresh to retrieve the actual carriage composition (number of carriages, rolling-stock type, image). Off by default to save API quota.",
+          "live_train_map": "Adds a small map icon under the departure platform of each leg. Tapping it opens a map showing the route, stops, and the live train position. The position is only fetched while the map is open."
         }
       }
     }

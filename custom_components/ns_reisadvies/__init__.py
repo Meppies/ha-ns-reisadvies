@@ -15,15 +15,19 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 from typing import Any
+
+import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.frontend import add_extra_js_url
-from homeassistant.components import lovelace
+from homeassistant.components import lovelace, websocket_api
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_call_later
 from homeassistant.loader import async_get_integration
 
 from .const import (
@@ -36,9 +40,11 @@ from .const import (
     CONF_SCAN_INTERVAL,
     CONF_FAV_HOURS,
     CONF_FETCH_COMPOSITION,
+    CONF_LIVE_TRAIN_MAP,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
     DEFAULT_FETCH_COMPOSITION,
+    DEFAULT_LIVE_TRAIN_MAP,
 )
 from .coordinator import NSUpdateCoordinator
 
@@ -242,6 +248,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     scan_interval = int(entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
     fav_hours = int(entry.data.get(CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
     fetch_composition = bool(entry.data.get(CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
+    live_train_map = bool(entry.data.get(CONF_LIVE_TRAIN_MAP, DEFAULT_LIVE_TRAIN_MAP))
+
+    # Make live_train_map flag visible to the sensor platform via hass.data
+    # so it can expose it in extra_state_attributes (used by the card to
+    # decide whether to render the map icon).
+    hass.data[DOMAIN]["_live_train_map_enabled"] = live_train_map
 
     # Coordinator per subentry. We store them in hass.data keyed by
     # subentry_id so the sensor platform can pick them up.
@@ -274,6 +286,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # and the entity is shown under the right subentry in the UI.
     _backfill_entity_subentries(hass, entry)
 
+    # WebSocket commands for the live-train map. Registered once per HA.
+    if "_ws_registered" not in hass.data[DOMAIN]:
+        websocket_api.async_register_command(hass, _ws_track_train_start)
+        websocket_api.async_register_command(hass, _ws_track_train_poll)
+        websocket_api.async_register_command(hass, _ws_track_train_stop)
+        hass.data[DOMAIN]["_ws_registered"] = True
+
     # Static path + Lovelace card auto-registration (one-shot per HA).
     if "static_paths_registered" not in hass.data[DOMAIN]:
         path = hass.config.path("custom_components/ns_reisadvies/www")
@@ -300,6 +319,240 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
+
+
+# ---------------------------------------------------------------------------
+# Live-train-map WebSocket commands.
+# ---------------------------------------------------------------------------
+#
+# These commands let the card open a map dialog without polluting the
+# entity registry. We use transient hass.states entries (no registry
+# entry, just state-machine tombstones) so ha-map can plot them. On
+# track_train_stop or session timeout, the states are removed.
+#
+# Session shape (hass.data[DOMAIN]["_live_sessions"][sid]):
+#   {
+#     "train_entity_id": "device_tracker.ns_reisadvies_train_<sid>",
+#     "stop_entity_ids": ["device_tracker.ns_reisadvies_stop_<sid>_0", ...],
+#     "train_number": "5710",
+#     "cleanup": <CALLBACK>,
+#   }
+
+
+def _live_sessions(hass: HomeAssistant) -> dict[str, dict]:
+    return hass.data.setdefault(DOMAIN, {}).setdefault("_live_sessions", {})
+
+
+def _any_coordinator(hass: HomeAssistant) -> NSUpdateCoordinator | None:
+    """Return any per-route coordinator (they all share the api_key)."""
+    bucket = hass.data.get(DOMAIN, {})
+    for value in bucket.values():
+        if isinstance(value, dict):
+            for coord in value.values():
+                if isinstance(coord, NSUpdateCoordinator):
+                    return coord
+    return None
+
+
+def _resolve_stops(stops: list[dict], geo: dict[str, dict]) -> list[dict]:
+    """Resolve a list of {name, uicCode?} stops to {name, lat, lng}.
+
+    Tries uicCode first (NS station code in /v2/stations is `code`,
+    not the UIC code, so we also try matching on name as a fallback).
+    """
+    by_name = {v["name"].casefold(): v for v in geo.values()}
+    out: list[dict] = []
+    for s in stops or []:
+        name = (s.get("name") or "").strip()
+        code = (s.get("uicCode") or s.get("code") or "").upper()
+        match = None
+        if code and code in geo:
+            match = geo[code]
+        if not match and name:
+            match = by_name.get(name.casefold())
+        if match:
+            out.append({"name": match["name"], "lat": match["lat"], "lng": match["lng"]})
+        elif name:
+            out.append({"name": name, "lat": None, "lng": None})
+    return out
+
+
+def _set_train_state(
+    hass: HomeAssistant, entity_id: str, friendly_name: str, pos: dict
+) -> None:
+    """Write a transient state representing the train's live position."""
+    hass.states.async_set(
+        entity_id,
+        "moving",
+        {
+            "latitude": pos["lat"],
+            "longitude": pos["lng"],
+            "source_type": "gps",
+            "gps_accuracy": 50,
+            "icon": "mdi:train",
+            "friendly_name": friendly_name,
+            "speed": pos.get("speed"),
+            "heading": pos.get("heading"),
+            "last_seen": pos.get("ts"),
+        },
+        force_update=True,
+    )
+
+
+def _set_stop_state(
+    hass: HomeAssistant, entity_id: str, name: str, lat: float, lng: float
+) -> None:
+    hass.states.async_set(
+        entity_id,
+        "station",
+        {
+            "latitude": lat,
+            "longitude": lng,
+            "source_type": "gps",
+            "gps_accuracy": 50,
+            "icon": "mdi:circle-medium",
+            "friendly_name": name,
+        },
+    )
+
+
+def _cleanup_session(hass: HomeAssistant, session_id: str) -> None:
+    sessions = _live_sessions(hass)
+    sess = sessions.pop(session_id, None)
+    if not sess:
+        return
+    for ent in [sess.get("train_entity_id")] + (sess.get("stop_entity_ids") or []):
+        if ent:
+            hass.states.async_remove(ent)
+    cancel = sess.get("cleanup")
+    if cancel:
+        try:
+            cancel()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _arm_cleanup(hass: HomeAssistant, session_id: str, seconds: int = 600) -> None:
+    """Schedule auto-cleanup if no poll arrives within `seconds`."""
+    sessions = _live_sessions(hass)
+    sess = sessions.get(session_id)
+    if not sess:
+        return
+    cancel = sess.get("cleanup")
+    if cancel:
+        try:
+            cancel()
+        except Exception:  # noqa: BLE001
+            pass
+
+    @callback
+    def _fire(_now):  # noqa: ANN001
+        _LOGGER.debug("Auto-cleaning live train session %s", session_id)
+        _cleanup_session(hass, session_id)
+
+    sess["cleanup"] = async_call_later(hass, seconds, _fire)
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "ns_reisadvies/track_train_start",
+        vol.Required("train_number"): vol.Any(str, int),
+        vol.Optional("stops", default=[]): list,
+    }
+)
+@websocket_api.async_response
+async def _ws_track_train_start(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    coord = _any_coordinator(hass)
+    if coord is None:
+        connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
+        return
+
+    train_number = str(msg["train_number"])
+    raw_stops: list[dict] = msg.get("stops") or []
+
+    geo = await coord.async_fetch_stations_geo()
+    resolved = _resolve_stops(raw_stops, geo)
+    plotted = [s for s in resolved if s.get("lat") is not None and s.get("lng") is not None]
+
+    pos = await coord.async_fetch_live_train(train_number)
+
+    session_id = secrets.token_hex(6)
+    train_entity_id = f"device_tracker.ns_reisadvies_train_{session_id}"
+    stop_entity_ids: list[str] = []
+
+    if pos:
+        _set_train_state(hass, train_entity_id, f"Trein {train_number}", pos)
+
+    for i, st in enumerate(plotted):
+        eid = f"device_tracker.ns_reisadvies_stop_{session_id}_{i}"
+        _set_stop_state(hass, eid, st["name"], st["lat"], st["lng"])
+        stop_entity_ids.append(eid)
+
+    _live_sessions(hass)[session_id] = {
+        "train_entity_id": train_entity_id,
+        "stop_entity_ids": stop_entity_ids,
+        "train_number": train_number,
+    }
+    _arm_cleanup(hass, session_id)
+
+    connection.send_result(
+        msg["id"],
+        {
+            "session_id": session_id,
+            "train_entity_id": train_entity_id if pos else None,
+            "stop_entity_ids": stop_entity_ids,
+            "stops": resolved,
+            "train_position": pos,
+        },
+    )
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "ns_reisadvies/track_train_poll",
+        vol.Required("session_id"): str,
+    }
+)
+@websocket_api.async_response
+async def _ws_track_train_poll(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    sessions = _live_sessions(hass)
+    sess = sessions.get(msg["session_id"])
+    if not sess:
+        connection.send_error(msg["id"], "unknown_session", "Session not found")
+        return
+    coord = _any_coordinator(hass)
+    if coord is None:
+        connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
+        return
+
+    pos = await coord.async_fetch_live_train(sess["train_number"])
+    if pos:
+        _set_train_state(
+            hass,
+            sess["train_entity_id"],
+            f"Trein {sess['train_number']}",
+            pos,
+        )
+    _arm_cleanup(hass, msg["session_id"])
+    connection.send_result(msg["id"], {"train_position": pos})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "ns_reisadvies/track_train_stop",
+        vol.Required("session_id"): str,
+    }
+)
+@callback
+def _ws_track_train_stop(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    _cleanup_session(hass, msg["session_id"])
+    connection.send_result(msg["id"], {"ok": True})
 
 
 def _backfill_entity_subentries(hass: HomeAssistant, entry: ConfigEntry) -> None:

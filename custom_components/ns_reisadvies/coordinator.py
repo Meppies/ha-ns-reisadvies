@@ -21,9 +21,11 @@ from .const import (
     API_URL,
     DOMAIN,
     JOURNEY_API_URL,
+    STATIONS_API_URL,
     STORAGE_KEY,
     STORAGE_VERSION,
     TRIP_API_URL,
+    VIRTUAL_TRAIN_API_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -345,3 +347,96 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             raise UpdateFailed(f"Could not reach NS API: {err}") from err
+
+    # ---- live train map helpers ----
+    #
+    # These are NOT polled. They are called on-demand by WebSocket
+    # commands when the user opens the map dialog in the card. The
+    # stations geo lookup is cached in hass.data[DOMAIN]["_stations_geo"]
+    # so it is fetched at most once per HA boot.
+
+    async def async_fetch_stations_geo(self) -> dict[str, dict]:
+        """Return a {code: {name, lat, lng}} map. Cached on hass.data."""
+        bucket = self.hass.data.setdefault(DOMAIN, {})
+        cached = bucket.get("_stations_geo")
+        if cached:
+            return cached
+        if not self.api_key:
+            return {}
+        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        try:
+            async with async_timeout.timeout(20):
+                async with self._session.get(STATIONS_API_URL, headers=headers) as resp:
+                    if resp.status != 200:
+                        _LOGGER.warning(
+                            "Stations API returned status %s", resp.status,
+                        )
+                        return {}
+                    data = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.warning("Stations API unreachable: %s", err)
+            return {}
+
+        out: dict[str, dict] = {}
+        # /v2/stations payload shape: {"payload": [ {code, namen:{lang,middel,kort}, land, lat, lng, ...}, ... ]}
+        payload = (data or {}).get("payload") or []
+        for st in payload:
+            code = (st.get("code") or "").upper()
+            if not code:
+                continue
+            namen = st.get("namen") or {}
+            name = namen.get("lang") or namen.get("middel") or namen.get("kort") or code
+            lat = st.get("lat")
+            lng = st.get("lng")
+            if lat is None or lng is None:
+                continue
+            out[code] = {"name": name, "lat": float(lat), "lng": float(lng)}
+        bucket["_stations_geo"] = out
+        _LOGGER.debug("Stations geo cache: %d entries", len(out))
+        return out
+
+    async def async_fetch_live_train(self, train_number: str) -> dict | None:
+        """Fetch the live position of a single train.
+
+        Hits /virtual-train-api/api/v1/trein/{nr}. Returns None on any
+        error so the card can degrade gracefully.
+        """
+        if not train_number:
+            return None
+        if not self.api_key:
+            return None
+        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        url = f"{VIRTUAL_TRAIN_API_URL}/{train_number}"
+        try:
+            async with async_timeout.timeout(15):
+                async with self._session.get(
+                    url,
+                    headers=headers,
+                    params={"features": "drukte"},
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.debug(
+                            "Virtual train fetch %s -> HTTP %s",
+                            train_number, resp.status,
+                        )
+                        return None
+                    data = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Virtual train fetch %s failed: %s", train_number, err)
+            return None
+
+        # Response shapes vary across NS API versions. Be liberal in what
+        # we accept and normalise to {lat, lng, speed, heading, ts}.
+        payload = (data or {}).get("payload") or data or {}
+        lat = payload.get("lat") or payload.get("latitude")
+        lng = payload.get("lng") or payload.get("lon") or payload.get("longitude")
+        if lat is None or lng is None:
+            return None
+        return {
+            "lat": float(lat),
+            "lng": float(lng),
+            "speed": payload.get("snelheid") or payload.get("speed"),
+            "heading": payload.get("richting") or payload.get("heading"),
+            "ts": payload.get("tijd") or payload.get("time"),
+            "type": payload.get("type") or payload.get("categorie"),
+        }

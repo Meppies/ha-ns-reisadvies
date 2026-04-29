@@ -106,9 +106,16 @@ class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
             tracked_list = list(tracked.keys())
         else:
             tracked_list = list(tracked)
+        # Hub-wide flags exposed so the Lovelace card can decide whether
+        # to render optional UI (e.g. the live train map icon) without
+        # having to call extra services.
+        bucket = self.coordinator.hass.data.get(DOMAIN, {})
         return {
             "trips": self.coordinator.data or [],
             "tracked_trips": tracked_list,
+            "live_train_map_enabled": bool(
+                bucket.get("_live_train_map_enabled", False)
+            ),
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:

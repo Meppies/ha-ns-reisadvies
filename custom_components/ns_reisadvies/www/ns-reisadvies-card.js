@@ -38,6 +38,12 @@ const I18N = {
     editor_name: "Name",
     editor_add_slot: "+ Add favourite time",
     editor_time_slot: "Time slot {n}",
+    show_live_map: "Show live train position on a map",
+    live_map_button: "Live map",
+    live_map_title: "Live train position",
+    live_map_loading: "Looking up the train…",
+    live_map_no_data: "No live position available for this train.",
+    live_map_speed: "{n} km/h",
     weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
   },
   nl: {
@@ -74,6 +80,12 @@ const I18N = {
     editor_name: "Naam",
     editor_add_slot: "+ Favoriete tijd toevoegen",
     editor_time_slot: "Tijdslot {n}",
+    show_live_map: "Toon live trein-positie op de kaart",
+    live_map_button: "Live kaart",
+    live_map_title: "Live trein-positie",
+    live_map_loading: "Trein wordt opgezocht…",
+    live_map_no_data: "Geen live-positie beschikbaar voor deze trein.",
+    live_map_speed: "{n} km/u",
     weekdays: ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"],
   },
 };
@@ -496,6 +508,7 @@ class NSReisadviesCard extends HTMLElement {
     }
 
     const serverTracked = stateObj.attributes.tracked_trips || [];
+    this._liveMapEnabled = !!stateObj.attributes.live_train_map_enabled;
 
     this.cleanOldFavorites(serverTracked);
     this.processAutoFavs(stateObj);
@@ -605,6 +618,58 @@ class NSReisadviesCard extends HTMLElement {
         .tl-platform-small { background: #003082; color: white; padding: 1px 6px; border-radius: 3px; font-weight: bold; font-size: 0.78em; white-space: nowrap; flex-shrink: 0; }
         .tl-platform-small.tl-platform-changed { background: #db4437; }
         .stop-row.cancelled .stop-name, .stop-row.cancelled .stop-time-cell { text-decoration: line-through; text-decoration-color: #ff5252; opacity: 0.7; }
+        .tl-map-icon-row { margin-top: 4px; display: flex; justify-content: flex-end; }
+        .tl-map-icon-btn {
+          display: inline-flex; align-items: center; gap: 4px;
+          background: transparent; border: 1px solid var(--divider-color);
+          color: var(--primary-text-color); border-radius: 14px;
+          padding: 2px 8px 2px 6px; cursor: pointer;
+          font-size: 0.78em; opacity: 0.8; transition: opacity .15s, background .15s;
+          line-height: 1; white-space: nowrap;
+        }
+        .tl-map-icon-btn:hover { opacity: 1; background: rgba(255, 107, 0, 0.08); }
+        .tl-map-icon-btn ha-icon { --mdc-icon-size: 16px; color: #FF6B00; }
+        .ns-map-modal {
+          position: fixed; inset: 0; z-index: 9999;
+          background: rgba(0, 0, 0, 0.55);
+          display: flex; align-items: center; justify-content: center;
+          backdrop-filter: blur(2px);
+        }
+        .ns-map-modal .ns-map-card {
+          background: var(--card-background-color, #1a1a1a); color: var(--primary-text-color);
+          border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+          width: min(720px, 92vw); height: min(640px, 86vh);
+          display: flex; flex-direction: column; overflow: hidden;
+        }
+        .ns-map-modal .ns-map-header {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 10px 14px; border-bottom: 1px solid var(--divider-color);
+        }
+        .ns-map-modal .ns-map-header .ns-map-title {
+          font-weight: 600; font-size: 1em; display: flex; align-items: center; gap: 8px;
+        }
+        .ns-map-modal .ns-map-header .ns-map-title .ns-map-train { color: #FF6B00; }
+        .ns-map-modal .ns-map-header .ns-map-meta {
+          font-size: 0.78em; opacity: 0.75; margin-left: 8px; font-weight: 400;
+        }
+        .ns-map-modal .ns-map-close {
+          cursor: pointer; padding: 4px; border-radius: 50%; display: inline-flex;
+        }
+        .ns-map-modal .ns-map-close:hover { background: rgba(255,255,255,0.08); }
+        .ns-map-modal .ns-map-body {
+          flex: 1; min-height: 0; position: relative; background: var(--card-background-color);
+        }
+        .ns-map-modal ha-map {
+          position: absolute; inset: 0; width: 100%; height: 100%;
+        }
+        .ns-map-modal .ns-map-loading {
+          position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+          font-size: 0.9em; opacity: 0.7;
+        }
+        .ns-map-modal .ns-map-empty {
+          position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+          padding: 20px; text-align: center; font-size: 0.95em; color: var(--secondary-text-color);
+        }
       </style>
       <div class="ns-container">`;
 
@@ -659,12 +724,18 @@ class NSReisadviesCard extends HTMLElement {
           ? `<span class="direct-text">${t("direct", this._hass)}</span>`
           : `<span>${stopLabel}</span><span class="stops-toggle ${isExpanded ? "open" : ""}" data-leg-key="${legKey}" title="${toggleLabel}" role="button"><ha-icon icon="mdi:chevron-down"></ha-icon></span>`;
 
+        const trainNum = (leg.product && leg.product.number) ? String(leg.product.number) : "";
+        const showMapIcon = this._liveMapEnabled && trainNum && Array.isArray(leg.stops) && leg.stops.length > 1;
+        const mapIconHtml = showMapIcon
+          ? `<div class="tl-map-icon-row"><button class="tl-map-icon-btn" data-trip-idx="${tIdx}" data-leg-idx="${index}" title="${t("show_live_map", this._hass)}"><ha-icon icon="mdi:map-marker-radius-outline"></ha-icon><span>${t("live_map_button", this._hass)}</span></button></div>`
+          : "";
+
         html += `
           <div class="tl-grid">
             <div><div class="tl-time ${cCls}">${tDep}</div>${dDep}</div>
             <div class="tl-line-col"><div class="tl-dot ${index === 0 ? "tl-dot-fill" : ""}"></div><div class="tl-line"></div></div>
             <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.origin.name || unknownLabel}</span>
-            <span class="${pCls} ${cCls}">${platformLabel} ${leg.origin.actualTrack || leg.origin.plannedTrack || "?"}</span></div></div>
+            <span class="${pCls} ${cCls}">${platformLabel} ${leg.origin.actualTrack || leg.origin.plannedTrack || "?"}</span></div>${mapIconHtml}</div>
           </div>
           <div class="tl-grid">
             <div class="tl-duration-small ${cCls}">${legDur}</div>
@@ -779,6 +850,17 @@ class NSReisadviesCard extends HTMLElement {
       btn.addEventListener("click", (e) => this.toggleStops(key, e));
     });
 
+    const mapBtns = this.content.querySelectorAll(`.tl-map-icon-btn`);
+    mapBtns.forEach(btn => {
+      const tIdx = parseInt(btn.getAttribute("data-trip-idx"), 10);
+      const lIdx = parseInt(btn.getAttribute("data-leg-idx"), 10);
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.openLiveMap(tIdx, lIdx);
+      });
+    });
+
     // Drag-to-scroll for the carriage composition strip on desktop.
     // Touch devices scroll natively via swipe; mouse-wheel works too.
     const scrollers = this.content.querySelectorAll(`.tcomp-images`);
@@ -822,6 +904,182 @@ class NSReisadviesCard extends HTMLElement {
       this._expandedLegs.add(legKey);
     }
     this.updateContent();
+  }
+
+  // ----- Live train map ---------------------------------------------------
+  //
+  // Opens an overlay with HA's <ha-map> showing the train's live position,
+  // the route polyline, and a marker per stop. Position is fetched only
+  // while the dialog is open (start/poll/stop WebSocket commands), so this
+  // imposes zero ongoing API cost when the map is closed.
+
+  async openLiveMap(tripIdx, legIdx) {
+    if (!this._hass || !this._config) return;
+    const stateObj = this._hass.states[this._config.entity];
+    const trips = stateObj && stateObj.attributes && stateObj.attributes.trips || [];
+    const trip = trips[tripIdx];
+    const leg = trip && trip.legs && trip.legs[legIdx];
+    if (!leg) return;
+    const trainNum = (leg.product && leg.product.number) ? String(leg.product.number) : "";
+    if (!trainNum) return;
+
+    // Build the modal scaffolding once per click.
+    this.closeLiveMap();  // safety: clear any stale session
+    const modal = document.createElement("div");
+    modal.className = "ns-map-modal";
+    const titleLabel = t("live_map_title", this._hass);
+    const trainLabel = (leg.product.displayName || leg.product.shortCategoryName || "")
+      + " " + trainNum;
+    modal.innerHTML = `
+      <div class="ns-map-card">
+        <div class="ns-map-header">
+          <div class="ns-map-title">
+            <ha-icon icon="mdi:train"></ha-icon>
+            <span>${titleLabel}</span>
+            <span class="ns-map-meta"><span class="ns-map-train">${trainLabel.trim()}</span> <span class="ns-map-pos"></span></span>
+          </div>
+          <span class="ns-map-close" role="button" title="Close"><ha-icon icon="mdi:close"></ha-icon></span>
+        </div>
+        <div class="ns-map-body">
+          <div class="ns-map-loading">${t("live_map_loading", this._hass)}</div>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    this._activeMap = { modalEl: modal, sessionId: null, pollHandle: null };
+
+    const closeFn = () => this.closeLiveMap();
+    modal.querySelector(".ns-map-close").addEventListener("click", closeFn);
+    // Click outside the inner card closes the modal.
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) closeFn();
+    });
+    this._activeMap.escHandler = (e) => { if (e.key === "Escape") closeFn(); };
+    document.addEventListener("keydown", this._activeMap.escHandler);
+
+    // Build the stops payload (prefer real stops; ensure origin/destination).
+    const rawStops = (Array.isArray(leg.stops) && leg.stops.length > 1)
+      ? leg.stops
+      : [leg.origin, leg.destination].filter(Boolean);
+    const stopsForBackend = rawStops
+      .filter(s => !s.passing)
+      .map(s => ({ name: s.name || "", uicCode: s.uicCode || s.stationCode || "" }));
+
+    // Kick off the backend session.
+    let resp;
+    try {
+      resp = await this._hass.callWS({
+        type: "ns_reisadvies/track_train_start",
+        train_number: trainNum,
+        stops: stopsForBackend,
+      });
+    } catch (err) {
+      this._renderMapEmpty(modal, String((err && err.message) || err));
+      return;
+    }
+    if (!this._activeMap || this._activeMap.modalEl !== modal) return;  // closed during await
+    this._activeMap.sessionId = resp.session_id;
+
+    this._renderMapInto(modal, resp, leg);
+
+    // Begin polling. 10 s while the map is open; safeguard timeout
+    // is set server-side (10 min) but we always send a stop on close.
+    this._activeMap.pollHandle = setInterval(() => this._pollLiveMap(), 10000);
+  }
+
+  _renderMapEmpty(modal, hint) {
+    const body = modal.querySelector(".ns-map-body");
+    if (!body) return;
+    body.innerHTML = `<div class="ns-map-empty">${t("live_map_no_data", this._hass)}${hint ? `<br><small style="opacity:.6">${hint}</small>` : ""}</div>`;
+  }
+
+  _renderMapInto(modal, resp, leg) {
+    const body = modal.querySelector(".ns-map-body");
+    if (!body) return;
+    const stopsWithCoord = (resp.stops || []).filter(s => s.lat != null && s.lng != null);
+    const trainEid = resp.train_entity_id;
+    if (!trainEid && stopsWithCoord.length === 0) {
+      this._renderMapEmpty(modal);
+      return;
+    }
+    body.innerHTML = "";
+    const map = document.createElement("ha-map");
+    map.setAttribute("auto-fit", "");
+    map.setAttribute("zoom", "10");
+    body.appendChild(map);
+    this._activeMap.mapEl = map;
+    this._activeMap.stopEids = resp.stop_entity_ids || [];
+    this._activeMap.trainEid = trainEid;
+    this._activeMap.stopsWithCoord = stopsWithCoord;
+    this._applyMapData();
+    this._updatePosLabel(resp.train_position, leg);
+  }
+
+  _applyMapData() {
+    const ctx = this._activeMap;
+    if (!ctx || !ctx.mapEl) return;
+    const entities = [];
+    if (ctx.trainEid) {
+      entities.push({ entity_id: ctx.trainEid, color: "#FF6B00", focus: true });
+    }
+    (ctx.stopEids || []).forEach((eid) => {
+      entities.push({ entity_id: eid, color: "#FFC917" });
+    });
+    const points = (ctx.stopsWithCoord || []).map(s => [s.lat, s.lng]);
+    const paths = points.length >= 2
+      ? [{ points, color: "#003082", gradualOpacity: false }]
+      : [];
+    ctx.mapEl.hass = this._hass;
+    ctx.mapEl.entities = entities;
+    ctx.mapEl.paths = paths;
+  }
+
+  _updatePosLabel(pos, leg) {
+    if (!this._activeMap || !this._activeMap.modalEl) return;
+    const el = this._activeMap.modalEl.querySelector(".ns-map-pos");
+    if (!el) return;
+    if (!pos) {
+      el.textContent = "";
+      return;
+    }
+    const speed = pos.speed != null ? Math.round(pos.speed) : null;
+    el.textContent = speed != null ? "· " + t("live_map_speed", this._hass, { n: speed }) : "";
+  }
+
+  async _pollLiveMap() {
+    const ctx = this._activeMap;
+    if (!ctx || !ctx.sessionId) return;
+    try {
+      const resp = await this._hass.callWS({
+        type: "ns_reisadvies/track_train_poll",
+        session_id: ctx.sessionId,
+      });
+      this._applyMapData();
+      this._updatePosLabel(resp && resp.train_position);
+    } catch (err) {
+      console.warn("ns_reisadvies live map poll failed", err);
+    }
+  }
+
+  closeLiveMap() {
+    const ctx = this._activeMap;
+    if (!ctx) return;
+    this._activeMap = null;
+    if (ctx.pollHandle) clearInterval(ctx.pollHandle);
+    if (ctx.escHandler) document.removeEventListener("keydown", ctx.escHandler);
+    if (ctx.sessionId && this._hass) {
+      this._hass.callWS({
+        type: "ns_reisadvies/track_train_stop",
+        session_id: ctx.sessionId,
+      }).catch(() => {});
+    }
+    if (ctx.modalEl && ctx.modalEl.parentNode) {
+      ctx.modalEl.parentNode.removeChild(ctx.modalEl);
+    }
+  }
+
+  disconnectedCallback() {
+    this.closeLiveMap();
+    if (super.disconnectedCallback) super.disconnectedCallback();
   }
 }
 
@@ -1040,7 +1298,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.1.1 ",
+  "%c NS-REISADVIES-CARD %c v2.2.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
