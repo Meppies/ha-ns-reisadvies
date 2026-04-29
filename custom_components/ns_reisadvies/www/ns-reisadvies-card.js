@@ -673,7 +673,7 @@ class NSReisadviesCard extends HTMLElement {
               <div class="tl-train-details">${sText}<span class="detail-separator">•</span>
               <ha-icon icon="${this.getIcon(leg.product)}" style="--mdc-icon-size:16px; margin-right:4px;"></ha-icon>${(leg.product && leg.product.displayName) || unknownLabel}
               <span class="detail-separator">•</span>${this.getCrowd(leg.crowdForecast)}</div>
-              <div class="tl-train-meta">${leg.name || unknownLabel}</div>
+              <div class="tl-train-meta">${leg.name || unknownLabel}${leg.composition && leg.composition.trainType ? ' · ' + leg.composition.trainType : ''}</div>
               ${this.renderComposition(leg)}
             </div>
           </div>`;
@@ -1022,7 +1022,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.0.6 ",
+  "%c NS-REISADVIES-CARD %c v2.0.7 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
