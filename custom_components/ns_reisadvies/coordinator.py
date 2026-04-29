@@ -464,6 +464,21 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         else:
             vehicles = []
 
+        # Keep only dict-shaped entries — defensive in case the API
+        # returns a list of strings or other primitives.
+        vehicles = [v for v in vehicles if isinstance(v, dict)]
+
+        if not vehicles:
+            if not warned_once:
+                bucket["_live_train_warned"] = True
+                snippet = str(data)[:500]
+                _LOGGER.warning(
+                    "Live vehicle fetch %s: 200 but no dict-shaped vehicles. "
+                    "Raw response: %s",
+                    train_number, snippet,
+                )
+            return await self._async_station_based_position(train_number)
+
         target = str(train_number)
         match = None
         for v in vehicles:
@@ -478,6 +493,17 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             # API filtered server-side: trust it.
             match = vehicles[0]
         if not match:
+            if not warned_once:
+                bucket["_live_train_warned"] = True
+                # Show what keys are in the first vehicle so we can adapt.
+                sample = vehicles[0] if vehicles else {}
+                _LOGGER.warning(
+                    "Live vehicle fetch %s: route filter found no match. "
+                    "Got %d vehicles; sample keys: %s; sample: %s",
+                    train_number, len(vehicles),
+                    list(sample.keys()),
+                    str(sample)[:400],
+                )
             return await self._async_station_based_position(train_number)
 
         lat = match.get("lat") or match.get("latitude")
