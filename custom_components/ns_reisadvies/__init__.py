@@ -17,8 +17,10 @@ from .const import (
     CONF_TO_STATION,
     CONF_SCAN_INTERVAL,
     CONF_FAV_HOURS,
+    CONF_FETCH_COMPOSITION,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
+    DEFAULT_FETCH_COMPOSITION,
 )
 from .coordinator import NSUpdateCoordinator
 
@@ -42,6 +44,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     arr_station = entry.data.get(CONF_TO_STATION)
     scan_interval = int(_opt(entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
     fav_hours = int(_opt(entry, CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
+    fetch_composition = bool(_opt(entry, CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
 
     coordinator = NSUpdateCoordinator(
         hass,
@@ -50,6 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         to_station=arr_station,
         scan_interval_minutes=scan_interval,
         fav_hours=fav_hours,
+        fetch_composition=fetch_composition,
     )
     await coordinator.async_load_tracked()
     await coordinator.async_config_entry_first_refresh()

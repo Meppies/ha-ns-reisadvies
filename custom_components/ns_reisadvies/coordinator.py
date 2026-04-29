@@ -20,6 +20,7 @@ from homeassistant.helpers.update_coordinator import (
 from .const import (
     API_URL,
     DOMAIN,
+    JOURNEY_API_URL,
     STORAGE_KEY,
     STORAGE_VERSION,
     TRIP_API_URL,
@@ -38,15 +39,22 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         to_station: str,
         scan_interval_minutes: int = 5,
         fav_hours: int = 6,
+        fetch_composition: bool = False,
     ) -> None:
         self.api_key = api_key
         self.from_station = from_station
         self.to_station = to_station
         self.fav_hours = fav_hours
+        self.fetch_composition = fetch_composition
 
         # Central in-memory store for pinned favourites.
         # Mapping: ctx_recon -> epoch seconds at which it was pinned.
         self.tracked_trips: dict[str, float] = {}
+
+        # Train composition cache: train_number -> dict (per refresh).
+        # Cleared at the start of each _async_update_data run so that
+        # the same train fetched twice in one refresh hits the cache.
+        self._composition_cache: dict[str, dict | None] = {}
 
         # Persistent storage so favourites survive a Home Assistant restart.
         self._store = Store(
@@ -112,6 +120,108 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.debug("Removed expired favourites: %s", expired)
             self.hass.async_create_task(self._async_save_tracked())
         return expired
+
+    # ---- composition (train carriages) ----
+
+    async def _fetch_journey_composition(self, train_number: str, headers: dict) -> dict | None:
+        """Fetch carriage composition for a single train number.
+
+        Returns a slim dict suitable for the sensor attributes:
+          {
+            "trainType": "VIRM IV",
+            "numberOfParts": 6,
+            "numberOfSeats": 580,
+            "shorter": false,
+            "parts": [
+              {"image": "https://.../virm-iv.png", "type": "VIRM-IV"},
+              ...
+            ]
+          }
+
+        Cached per train_number for the duration of a single refresh.
+        Returns None on any error so the rest of the trip still renders.
+        """
+        if not train_number:
+            return None
+        if train_number in self._composition_cache:
+            return self._composition_cache[train_number]
+        try:
+            async with self._session.get(
+                JOURNEY_API_URL,
+                headers=headers,
+                params={"train": train_number, "omitCrowdForecast": "true"},
+            ) as resp:
+                if resp.status != 200:
+                    _LOGGER.debug(
+                        "Journey composition fetch %s -> HTTP %s", train_number, resp.status
+                    )
+                    self._composition_cache[train_number] = None
+                    return None
+                data = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Journey composition fetch %s failed: %s", train_number, err)
+            self._composition_cache[train_number] = None
+            return None
+
+        payload = (data or {}).get("payload") or {}
+        stock = payload.get("actualStock") or payload.get("plannedStock") or {}
+        train_parts = stock.get("trainParts") or []
+        slim = {
+            "trainType": stock.get("trainType"),
+            "numberOfParts": stock.get("numberOfParts") or len(train_parts) or None,
+            "numberOfSeats": stock.get("numberOfSeats"),
+            "numberOfFirstClassSeats": stock.get("numberOfFirstClassSeats"),
+            "shorter": bool(stock.get("hasSignificantChange")) or False,
+            "parts": [
+                {
+                    "image": (p.get("image") or {}).get("uri"),
+                    "type": p.get("type") or stock.get("trainType"),
+                    "stockIdentifier": p.get("stockIdentifier"),
+                }
+                for p in train_parts
+                if (p.get("image") or {}).get("uri") or p.get("type")
+            ],
+        }
+        # Drop entirely empty results
+        if not slim["parts"] and not slim["numberOfParts"]:
+            self._composition_cache[train_number] = None
+            return None
+        self._composition_cache[train_number] = slim
+        return slim
+
+    async def _annotate_compositions(self, all_trips: list[dict], headers: dict) -> None:
+        """Add a `composition` field to every leg with a known train number."""
+        if not self.fetch_composition:
+            return
+        # Reset cache at the start of this refresh
+        self._composition_cache = {}
+
+        # Collect unique train numbers across all legs
+        train_numbers: set[str] = set()
+        for trip in all_trips:
+            for leg in trip.get("legs") or []:
+                num = (leg.get("product") or {}).get("number")
+                if num:
+                    train_numbers.add(str(num))
+
+        if not train_numbers:
+            return
+
+        async def _fetch_and_store(num: str):
+            comp = await self._fetch_journey_composition(num, headers)
+            return num, comp
+
+        results = await asyncio.gather(*(_fetch_and_store(n) for n in train_numbers))
+        results_map = {n: c for n, c in results}
+
+        for trip in all_trips:
+            for leg in trip.get("legs") or []:
+                num = (leg.get("product") or {}).get("number")
+                if not num:
+                    continue
+                comp = results_map.get(str(num))
+                if comp:
+                    leg["composition"] = comp
 
     # ---- data fetch ----
 
@@ -192,6 +302,12 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                         x.get("legs") or [{}]
                     )[0].get("origin", {}).get("plannedDateTime", "")
                 )
+
+                # Optional: annotate each leg with carriage composition.
+                # Mutates legs in place by adding a `composition` key.
+                if self.fetch_composition:
+                    await self._annotate_compositions(all_trips, headers)
+
                 return all_trips
 
         except UpdateFailed:

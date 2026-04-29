@@ -20,8 +20,10 @@ from .const import (
     CONF_TO_STATION,
     CONF_SCAN_INTERVAL,
     CONF_FAV_HOURS,
+    CONF_FETCH_COMPOSITION,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
+    DEFAULT_FETCH_COMPOSITION,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -109,6 +111,7 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
         api_val = opts.get(CONF_API_KEY, data.get(CONF_API_KEY, ""))
         int_val = int(opts.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
         fav_val = int(opts.get(CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
+        comp_val = bool(opts.get(CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
 
         return self.async_show_form(
             step_id="init",
@@ -120,6 +123,7 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
                 vol.Required(
                     CONF_FAV_HOURS, default=fav_val
                 ): vol.All(int, vol.Range(min=0, max=72)),
+                vol.Required(CONF_FETCH_COMPOSITION, default=comp_val): bool,
             }),
         )
 

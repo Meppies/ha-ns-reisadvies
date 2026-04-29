@@ -31,12 +31,14 @@
         "data": {
           "api_key": "API-sleutel",
           "scan_interval_minuten": "Verversingsinterval (minuten)",
-          "fav_hours": "Favorieten bewaren (uren)"
+          "fav_hours": "Favorieten bewaren (uren)",
+          "fetch_composition": "Treinsamenstelling ophalen (bakken)"
         },
         "data_description": {
           "api_key": "Je NS API-sleutel. Vervang deze als hij geroteerd is.",
           "scan_interval_minuten": "Hoe vaak de integratie de NS-API ophaalt. Bereik: 1 tot 60.",
-          "fav_hours": "Hoe lang een gepinde favoriet bewaard blijft voordat hij automatisch verwijderd wordt. Zet op 0 om verlopen uit te schakelen."
+          "fav_hours": "Hoe lang een gepinde favoriet bewaard blijft voordat hij automatisch verwijderd wordt. Zet op 0 om verlopen uit te schakelen.",
+          "fetch_composition": "Doet een extra NS-API call per unieke trein per refresh, om de actuele samenstelling op te halen (aantal bakken, materieel-type, plaatje). Standaard uit om API-quota te besparen."
         }
       }
     }

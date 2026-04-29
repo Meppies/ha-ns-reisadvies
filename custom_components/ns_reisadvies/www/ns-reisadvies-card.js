@@ -22,6 +22,8 @@ const I18N = {
     stop_passing: "(does not stop)",
     stop_arrival_short: "A",
     stop_departure_short: "D",
+    carriages_one: "1 carriage",
+    carriages_other: "{n} carriages",
     minutes_short: "min",
     hour_short: "hr",
     hour_minutes: "{h} h {m} m",
@@ -55,6 +57,8 @@ const I18N = {
     stop_passing: "(stopt niet)",
     stop_arrival_short: "A",
     stop_departure_short: "V",
+    carriages_one: "1 bak",
+    carriages_other: "{n} bakken",
     minutes_short: "min",
     hour_short: "uur",
     hour_minutes: "{h} u {m} m",
@@ -414,6 +418,29 @@ class NSReisadviesCard extends HTMLElement {
     return "mdi:train";
   }
 
+  renderComposition(leg) {
+    const c = leg && leg.composition;
+    if (!c) return "";
+    const parts = c.parts || [];
+    const imgs = parts
+      .filter(p => p.image)
+      .map(p => {
+        const alt = (p.type || c.trainType || "").replace(/"/g, "&quot;");
+        return `<img src="${p.image}" alt="${alt}" title="${alt}" loading="lazy">`;
+      })
+      .join("");
+    const num = c.numberOfParts;
+    let numText = "";
+    if (num === 1) numText = t("carriages_one", this._hass);
+    else if (num) numText = t("carriages_other", this._hass, { n: num });
+    const typeText = c.trainType ? `${numText ? " · " : ""}${c.trainType}` : "";
+    const text = (numText + typeText).trim();
+    if (!imgs && !text) return "";
+    return `<div class="tl-train-composition">${
+      imgs ? `<span class="tcomp-images">${imgs}</span>` : ""
+    }${text ? `<span class="tcomp-text">${text}</span>` : ""}</div>`;
+  }
+
   getCrowd(c) {
     const colors = { LOW: "#4CAF50", MEDIUM: "#FF9800", HIGH: "#F44336" };
     const color = colors[c] || "#888";
@@ -496,6 +523,10 @@ class NSReisadviesCard extends HTMLElement {
         .tl-train-details { color: var(--secondary-text-color); display: flex; align-items: center; flex-wrap: wrap; }
         .detail-separator { margin: 0 6px; opacity: 0.5; font-size: 0.8em; }
         .tl-train-meta { font-size: 0.85em; color: var(--secondary-text-color); margin-top: 4px; opacity: 0.8; }
+        .tl-train-composition { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 0.82em; color: var(--secondary-text-color); flex-wrap: wrap; }
+        .tl-train-composition .tcomp-images { display: inline-flex; align-items: center; gap: 2px; }
+        .tl-train-composition .tcomp-images img { height: 28px; width: auto; max-width: 90px; object-fit: contain; display: block; }
+        .tl-train-composition .tcomp-text { white-space: nowrap; opacity: 0.85; }
         .tl-wait-row { display: grid; grid-template-columns: 75px 25px 1fr; height: 30px; align-items: center; }
         .tl-wait-line-col { display: flex; justify-content: center; }
         .tl-wait-text { padding-left: 12px; color: var(--secondary-text-color); font-style: italic; font-size: 0.9em; display: flex; align-items: center; }
@@ -588,6 +619,7 @@ class NSReisadviesCard extends HTMLElement {
               <ha-icon icon="${this.getIcon(leg.product)}" style="--mdc-icon-size:16px; margin-right:4px;"></ha-icon>${(leg.product && leg.product.displayName) || unknownLabel}
               <span class="detail-separator">•</span>${this.getCrowd(leg.crowdForecast)}</div>
               <div class="tl-train-meta">${leg.name || unknownLabel}</div>
+              ${this.renderComposition(leg)}
             </div>
           </div>`;
 
@@ -890,7 +922,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v1.5.2 ",
+  "%c NS-REISADVIES-CARD %c v1.6.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

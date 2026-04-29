@@ -31,12 +31,14 @@
         "data": {
           "api_key": "API key",
           "scan_interval_minuten": "Refresh interval (minutes)",
-          "fav_hours": "Favourite retention (hours)"
+          "fav_hours": "Favourite retention (hours)",
+          "fetch_composition": "Fetch train composition (carriages)"
         },
         "data_description": {
           "api_key": "Your NS API subscription key. Replace if it has been rotated.",
           "scan_interval_minuten": "How often the integration polls the NS API. Allowed range: 1 to 60.",
-          "fav_hours": "How long to keep a pinned favourite before it is removed automatically. Set to 0 to disable expiry."
+          "fav_hours": "How long to keep a pinned favourite before it is removed automatically. Set to 0 to disable expiry.",
+          "fetch_composition": "Adds an extra NS API call per unique train per refresh to retrieve the actual carriage composition (number of carriages, rolling-stock type, image). Off by default to save API quota."
         }
       }
     }
