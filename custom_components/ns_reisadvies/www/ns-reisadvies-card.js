@@ -503,13 +503,16 @@ class NSReisadviesCard extends HTMLElement {
         .stops-toggle:hover { opacity: 1; }
         .stops-toggle ha-icon { --mdc-icon-size: 18px; }
         .stops-toggle.open ha-icon { transform: rotate(180deg); transition: transform 0.2s; }
-        .tl-stops { margin: 0 0 12px 100px; padding: 4px 0 4px 14px; border-left: 2px dashed #3b82f6; font-size: 0.85em; color: var(--secondary-text-color); }
-        .stop-row { display: flex; gap: 10px; padding: 3px 0; align-items: baseline; }
-        .stop-time { min-width: 90px; font-variant-numeric: tabular-nums; color: var(--primary-text-color); white-space: nowrap; }
-        .stop-time .stop-delay { color: #ff5252; font-weight: bold; margin-left: 4px; }
-        .stop-name { flex: 1; }
-        .stop-row.passing .stop-name { opacity: 0.55; font-style: italic; }
-        .stop-row.cancelled .stop-name, .stop-row.cancelled .stop-time { text-decoration: line-through; text-decoration-color: #ff5252; opacity: 0.7; }
+        .stop-row { display: grid; grid-template-columns: 75px 25px 1fr; align-items: center; min-height: 28px; padding: 2px 0; }
+        .stop-row .stop-time-cell { text-align: right; padding-right: 12px; color: var(--primary-text-color); font-size: 0.95em; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .stop-row .stop-time-cell .stop-delay { color: #ff5252; font-weight: bold; margin-left: 4px; }
+        .stop-row .stop-line-col { display: flex; justify-content: center; align-self: stretch; }
+        .stop-row .stop-line-col::before { content: ""; width: 0; border-left: 2px dashed #3b82f6; height: 100%; }
+        .stop-row .stop-info { padding-left: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.95em; color: var(--secondary-text-color); }
+        .stop-row .stop-info .stop-name { flex: 1; word-break: break-word; }
+        .tl-platform-small { background: #003082; color: white; padding: 1px 6px; border-radius: 3px; font-weight: bold; font-size: 0.78em; white-space: nowrap; flex-shrink: 0; }
+        .tl-platform-small.tl-platform-changed { background: #db4437; }
+        .stop-row.cancelled .stop-name, .stop-row.cancelled .stop-time-cell { text-decoration: line-through; text-decoration-color: #ff5252; opacity: 0.7; }
       </style>
       <div class="ns-container">`;
 
@@ -580,23 +583,15 @@ class NSReisadviesCard extends HTMLElement {
               <span class="detail-separator">•</span>${this.getCrowd(leg.crowdForecast)}</div>
               <div class="tl-train-meta">${leg.name || unknownLabel}</div>
             </div>
-          </div>
-          <div class="tl-grid">
-            <div><div class="tl-time ${cCls}">${tArr}</div>${dArr}</div>
-            <div class="tl-line-col"><div class="tl-dot ${index === trip.legs.length - 1 ? "tl-dot-fill" : ""}"></div></div>
-            <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.destination.name || unknownLabel}</span>
-            <span class="${pArrCls} ${cCls}">${platformLabel} ${leg.destination.actualTrack || leg.destination.plannedTrack || "?"}</span></div></div>
           </div>`;
 
-        // Expanded list of intermediate stops, when the user clicked
-        // the chevron next to the stop count.
+        // Expanded intermediate stops — rendered BETWEEN origin/info
+        // and destination so they sit visually inside the leg, not
+        // beneath the next station.
         if (isExpanded && sCount > 0) {
-          html += `<div class="tl-stops">`;
           intermediates.forEach(stop => {
             const arrPlanned = stop.plannedArrivalDateTime || stop.plannedDepartureDateTime;
             const depPlanned = stop.plannedDepartureDateTime || stop.plannedArrivalDateTime;
-            const arrActual = stop.actualArrivalDateTime || arrPlanned;
-            const depActual = stop.actualDepartureDateTime || depPlanned;
             const tArrStop = this.formatTime(arrPlanned);
             const tDepStop = this.formatTime(depPlanned);
             const sameTime = (arrPlanned && depPlanned && arrPlanned === depPlanned) || (tArrStop === tDepStop);
@@ -615,11 +610,32 @@ class NSReisadviesCard extends HTMLElement {
               timeHtml = `${tArrStop}${aDelay} → ${tDepStop}${dDelay}`;
             }
 
+            const stopTrack = stop.actualDepartureTrack || stop.actualArrivalTrack
+              || stop.plannedDepartureTrack || stop.plannedArrivalTrack || "";
+            const plannedStopTrack = stop.plannedDepartureTrack || stop.plannedArrivalTrack;
+            const actualStopTrack = stop.actualDepartureTrack || stop.actualArrivalTrack;
+            const stopTrackChanged = !!(actualStopTrack && plannedStopTrack && actualStopTrack !== plannedStopTrack);
+            const stopPlatformCls = stopTrackChanged ? "tl-platform-small tl-platform-changed" : "tl-platform-small";
+            const platformHtml = stopTrack
+              ? `<span class="${stopPlatformCls}">${platformLabel} ${stopTrack}</span>`
+              : "";
+
             const rowCls = stop.cancelled ? "stop-row cancelled" : "stop-row";
-            html += `<div class="${rowCls}"><span class="stop-time">${timeHtml}</span><span class="stop-name">${stop.name || unknownLabel}</span></div>`;
+            html += `<div class="${rowCls}">
+              <div class="stop-time-cell">${timeHtml}</div>
+              <div class="stop-line-col"></div>
+              <div class="stop-info"><span class="stop-name">${stop.name || unknownLabel}</span>${platformHtml}</div>
+            </div>`;
           });
-          html += `</div>`;
         }
+
+        html += `
+          <div class="tl-grid">
+            <div><div class="tl-time ${cCls}">${tArr}</div>${dArr}</div>
+            <div class="tl-line-col"><div class="tl-dot ${index === trip.legs.length - 1 ? "tl-dot-fill" : ""}"></div></div>
+            <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.destination.name || unknownLabel}</span>
+            <span class="${pArrCls} ${cCls}">${platformLabel} ${leg.destination.actualTrack || leg.destination.plannedTrack || "?"}</span></div></div>
+          </div>`;
 
         if (index < trip.legs.length - 1) {
           const nextLeg = trip.legs[index + 1];
@@ -864,7 +880,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v1.5.0 ",
+  "%c NS-REISADVIES-CARD %c v1.5.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
