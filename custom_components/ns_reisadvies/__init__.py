@@ -7,6 +7,7 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components import lovelace
 from homeassistant.loader import async_get_integration
 
 from .const import (
@@ -56,9 +57,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     # Register the static path for the Lovelace card once per HA instance,
-    # AND auto-register the JS file as an extra dashboard module so users
-    # do not need to add it manually under Settings → Dashboards →
-    # Resources. The integration version is appended as a cache-buster.
+    # AND auto-register the JS file so users do not need to add it
+    # manually under Settings → Dashboards → Resources. The integration
+    # version is appended as a cache-buster.
     if "static_paths_registered" not in hass.data[DOMAIN]:
         path = hass.config.path("custom_components/ns_reisadvies/www")
         if os.path.isdir(path):
@@ -74,12 +75,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
             try:
                 integration = await async_get_integration(hass, DOMAIN)
-                version = integration.version or "0"
+                version = str(integration.version or "0")
             except Exception:  # noqa: BLE001
                 version = "0"
-            add_extra_js_url(hass, f"{CARD_URL}?v={version}")
+            await _async_register_card_resource(hass, version)
             hass.data[DOMAIN]["card_url_registered"] = True
-            _LOGGER.info("Auto-registered Lovelace card v%s", version)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -88,6 +88,59 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
+
+
+async def _async_register_card_resource(hass: HomeAssistant, version: str) -> None:
+    """Auto-register the Lovelace card.
+
+    Tries two routes so the card shows up across all dashboard modes:
+
+    1. ``frontend.add_extra_js_url`` — works for the default Lovelace
+       dashboard and most storage-mode dashboards.
+    2. ``lovelace_resources`` storage collection — needed for custom
+       storage-mode dashboards (``/dashboard-<id>``) which do not pick
+       up extra_module_url. This mirrors what HACS does for plugins.
+
+    Idempotent on both routes: existing entries pointing at our card
+    are updated to the current version rather than duplicated. YAML-mode
+    Lovelace setups are silently skipped — there is no resources
+    collection to write to in that case.
+    """
+    url = f"{CARD_URL}?v={version}"
+
+    try:
+        add_extra_js_url(hass, url)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("add_extra_js_url failed: %s", err)
+
+    try:
+        resources = hass.data.get(lovelace.DOMAIN, {}).get("resources")
+        if resources is None:
+            _LOGGER.debug("Lovelace resources collection not available")
+            return
+        if not resources.loaded:
+            await resources.async_load()
+
+        existing = next(
+            (r for r in resources.async_items() if (r.get("url") or "").split("?")[0] == CARD_URL),
+            None,
+        )
+        if existing:
+            if existing.get("url") != url:
+                await resources.async_update_item(
+                    existing["id"], {"url": url, "res_type": existing.get("type", "module")}
+                )
+                _LOGGER.info("Updated Lovelace resource for NS Reisadvies card to %s", version)
+            else:
+                _LOGGER.debug("Lovelace resource already at %s", version)
+        else:
+            await resources.async_create_item({"url": url, "res_type": "module"})
+            _LOGGER.info("Registered Lovelace resource for NS Reisadvies card v%s", version)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.warning(
+            "Could not auto-register Lovelace resource (you may need to add %s manually): %s",
+            url, err,
+        )
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
