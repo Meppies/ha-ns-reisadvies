@@ -557,10 +557,10 @@ class NSReisadviesCard extends HTMLElement {
         .tl-wait-row { display: grid; grid-template-columns: 75px 25px 1fr; height: 30px; align-items: center; }
         .tl-wait-line-col { display: flex; justify-content: center; }
         .tl-wait-text { padding-left: 12px; color: var(--secondary-text-color); font-style: italic; font-size: 0.9em; display: flex; align-items: center; }
-        .tl-checkout-row { display: grid; grid-template-columns: 75px 25px 1fr; height: 26px; align-items: center; }
+        .tl-checkout-row { display: grid; grid-template-columns: 75px 25px 1fr; min-height: 26px; align-items: center; padding: 2px 0; }
         .tl-checkout-line-col { display: flex; justify-content: center; }
-        .tl-checkout-text { padding-left: 12px; color: #FFC917; font-style: italic; font-size: 0.85em; display: flex; align-items: center; gap: 4px; }
-        .tl-checkout-text ha-icon { --mdc-icon-size: 14px; opacity: 0.85; }
+        .tl-checkout-text { padding-left: 12px; color: #FF6B00; font-weight: 500; font-style: italic; font-size: 0.88em; display: flex; align-items: center; gap: 4px; }
+        .tl-checkout-text ha-icon { --mdc-icon-size: 16px; color: #FF6B00; }
         .cancelled { text-decoration: line-through; text-decoration-color: #ff5252; opacity: 0.7; }
         .warning-msg { color: #ff5252; font-weight: bold; font-size: 0.9em; margin-left: 12px; text-transform: uppercase; margin-top: 8px; }
         .direct-text { color: #4CAF50; font-weight: bold; }
@@ -965,7 +965,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.0.4 ",
+  "%c NS-REISADVIES-CARD %c v2.0.5 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
