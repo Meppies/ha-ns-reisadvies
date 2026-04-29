@@ -1,4 +1,10 @@
-"""NS Reisadvies sensor and tracking services."""
+"""NS Reisadvies sensors and tracking services.
+
+v2: one sensor per route subentry under the hub. The unique_id is
+`f"{from}_{to}".lower()` so it remains stable across HA restarts and
+across the v1→v2 migration (the entity registry is rewritten in
+async_migrate_entry to point at this id).
+"""
 from __future__ import annotations
 
 import logging
@@ -11,7 +17,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, SUBENTRY_TYPE_ROUTE, CONF_FROM_STATION, CONF_TO_STATION
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,12 +25,29 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities
 ) -> bool:
-    """Set up the NS Reisadvies sensor for a config entry."""
-    if DOMAIN not in hass.data or entry.entry_id not in hass.data[DOMAIN]:
-        raise ConfigEntryNotReady("Waiting for NS Reisadvies coordinator")
+    """Set up sensors for every route subentry under the hub."""
+    coordinators = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinators is None:
+        raise ConfigEntryNotReady("Waiting for NS Reisadvies hub")
 
-    coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([NSReisadviesSensor(coordinator, entry.title, entry.entry_id)])
+    sensors: list[NSReisadviesSensor] = []
+    for subentry_id, subentry in (entry.subentries or {}).items():
+        if subentry.subentry_type != SUBENTRY_TYPE_ROUTE:
+            continue
+        coord = coordinators.get(subentry_id)
+        if coord is None:
+            continue
+        from_st = subentry.data.get(CONF_FROM_STATION) or "?"
+        to_st = subentry.data.get(CONF_TO_STATION) or "?"
+        unique_id = f"{from_st}_{to_st}".lower()
+        sensors.append(
+            NSReisadviesSensor(
+                coord,
+                name=subentry.title or f"NS {from_st} -> {to_st}",
+                unique_id=unique_id,
+            )
+        )
+    async_add_entities(sensors)
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -48,7 +71,6 @@ class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        """Return the planned departure time of the next trip."""
         if self.coordinator.data:
             try:
                 return self.coordinator.data[0]["legs"][0]["origin"]["plannedDateTime"]
@@ -58,10 +80,7 @@ class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Expose trips and tracked-trip ctxRecons to the front end."""
         tracked = getattr(self.coordinator, "tracked_trips", {}) or {}
-        # Backwards compatible with the previous set-based implementation:
-        # the card always gets a list of ctxRecons.
         if isinstance(tracked, dict):
             tracked_list = list(tracked.keys())
         else:
@@ -72,13 +91,11 @@ class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:
-        """Pin a trip on this sensor."""
         if hasattr(self.coordinator, "track_trip"):
             self.coordinator.track_trip(ctx_recon)
             self.async_write_ha_state()
 
     async def async_untrack_trip(self, ctx_recon: str) -> None:
-        """Unpin a trip on this sensor."""
         if hasattr(self.coordinator, "untrack_trip"):
             self.coordinator.untrack_trip(ctx_recon)
             self.async_write_ha_state()

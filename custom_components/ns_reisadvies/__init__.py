@@ -1,17 +1,35 @@
-"""NS Reisadvies integration."""
+"""NS Reisadvies integration.
+
+v2 architecture: ONE hub config entry holds the integration-wide
+options (api_key, scan interval, favourite retention, fetch
+composition). Each route lives as a subentry under the hub
+(from_station / to_station). Per-route coordinators are managed
+in async_setup_entry below.
+
+Legacy v1 installs (one ConfigEntry per route) are migrated to
+this hub+subentries layout in async_migrate_entry. The migration
+preserves sensor entity_ids by rewriting unique_id mappings in
+the entity registry.
+"""
+from __future__ import annotations
+
 import logging
 import os
+from typing import Any
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components import lovelace
+from homeassistant.helpers import entity_registry as er
 from homeassistant.loader import async_get_integration
 
 from .const import (
     DOMAIN,
+    CONFIG_ENTRY_VERSION,
+    SUBENTRY_TYPE_ROUTE,
     CONF_API_KEY,
     CONF_FROM_STATION,
     CONF_TO_STATION,
@@ -30,85 +48,163 @@ PLATFORMS = [Platform.SENSOR]
 CARD_URL = "/ns_reisadvies/ns-reisadvies-card.js"
 
 
-def _opt(entry: ConfigEntry, key: str, default):
-    """Read option from a single entry, fall back to data, then to the default."""
-    if entry.options and key in entry.options:
-        return entry.options[key]
-    if key in entry.data:
-        return entry.data[key]
-    return default
+# ---------------------------------------------------------------------------
+# Migration: v1 multi-entry → v2 single hub + subentries.
+# ---------------------------------------------------------------------------
 
 
-def _get_primary_entry(hass: HomeAssistant) -> ConfigEntry | None:
-    """Return the entry that holds the canonical, integration-wide options.
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Lift legacy flat entries into the hub+subentries layout."""
+    if entry.version >= CONFIG_ENTRY_VERSION:
+        return True
 
-    All entries share api_key, scan_interval, fav_hours and
-    fetch_composition. The primary entry is simply the lowest-id entry;
-    when its options change, every other entry is reloaded so they pick
-    up the new values.
-    """
-    entries = hass.config_entries.async_entries(DOMAIN)
-    if not entries:
-        return None
-    return sorted(entries, key=lambda e: e.entry_id)[0]
+    _LOGGER.info("Migrating NS Reisadvies entry %s from v%s to v%s",
+                 entry.entry_id, entry.version, CONFIG_ENTRY_VERSION)
+
+    # Sort all v1 entries: oldest becomes the hub.
+    legacy = [
+        e for e in hass.config_entries.async_entries(DOMAIN)
+        if e.version == 1
+    ]
+    legacy.sort(key=lambda e: e.entry_id)
+
+    if not legacy:
+        # No legacy entries — nothing to migrate.
+        hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
+        return True
+
+    primary = legacy[0]
+
+    # Only the primary actually does the migration. The other legacy
+    # entries simply update their version marker so HA stops calling
+    # async_migrate_entry on them; they will be removed by the primary.
+    if entry.entry_id != primary.entry_id:
+        hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
+        return True
+
+    # Build hub data from primary's options + data
+    def _opt(e: ConfigEntry, key: str, default: Any) -> Any:
+        if e.options and key in e.options:
+            return e.options[key]
+        if key in e.data:
+            return e.data[key]
+        return default
+
+    hub_data = {
+        CONF_API_KEY: _opt(primary, CONF_API_KEY, ""),
+        CONF_SCAN_INTERVAL: int(_opt(primary, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
+        CONF_FAV_HOURS: int(_opt(primary, CONF_FAV_HOURS, DEFAULT_FAV_HOURS)),
+        CONF_FETCH_COMPOSITION: bool(_opt(primary, CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION)),
+    }
+
+    # Build subentries from EVERY legacy entry, including primary
+    subentries = []
+    legacy_id_to_route: dict[str, tuple[str, str]] = {}
+    for legacy_entry in legacy:
+        from_st = legacy_entry.data.get(CONF_FROM_STATION)
+        to_st = legacy_entry.data.get(CONF_TO_STATION)
+        if not from_st or not to_st:
+            continue
+        unique_id = f"{from_st}_{to_st}".lower()
+        subentries.append(
+            ConfigSubentry(
+                data={
+                    CONF_FROM_STATION: from_st,
+                    CONF_TO_STATION: to_st,
+                },
+                subentry_type=SUBENTRY_TYPE_ROUTE,
+                title=f"{from_st} -> {to_st}",
+                unique_id=unique_id,
+            )
+        )
+        legacy_id_to_route[legacy_entry.entry_id] = (from_st, to_st)
+
+    # Update the entity registry: old sensor unique_id was the legacy
+    # entry's entry_id. Map each to the new deterministic id so that
+    # sensor.ns_<from>_<to> entity_ids stay the same.
+    ent_reg = er.async_get(hass)
+    for legacy_entry in legacy:
+        route = legacy_id_to_route.get(legacy_entry.entry_id)
+        if not route:
+            continue
+        new_uid = f"{route[0]}_{route[1]}".lower()
+        for entity in er.async_entries_for_config_entry(ent_reg, legacy_entry.entry_id):
+            try:
+                ent_reg.async_update_entity(
+                    entity.entity_id,
+                    new_unique_id=new_uid,
+                    config_entry_id=primary.entry_id,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("Could not move entity %s to hub: %s", entity.entity_id, err)
+
+    # Update primary into the hub: new title, version, data, subentries
+    hass.config_entries.async_update_entry(
+        primary,
+        title="NS Reisadvies",
+        data=hub_data,
+        options={},
+        version=CONFIG_ENTRY_VERSION,
+    )
+
+    # Add subentries one by one — async_update_entry doesn't take
+    # subentries directly, but async_add_subentry does.
+    for sub in subentries:
+        try:
+            hass.config_entries.async_add_subentry(primary, sub)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not add subentry %s: %s", sub.title, err)
+
+    # Schedule removal of the OTHER legacy entries; primary stays as hub.
+    for legacy_entry in legacy[1:]:
+        hass.async_create_task(
+            hass.config_entries.async_remove(legacy_entry.entry_id)
+        )
+
+    return True
 
 
-def _global_opt(hass: HomeAssistant, entry: ConfigEntry, key: str, default):
-    """Read an option that is shared across all NS Reisadvies entries.
-
-    Order of precedence:
-      1. Primary entry options
-      2. Primary entry data
-      3. Calling entry's own options
-      4. Calling entry's own data
-      5. Default
-    """
-    primary = _get_primary_entry(hass)
-    if primary is not None:
-        if primary.options and key in primary.options:
-            return primary.options[key]
-        if key in primary.data:
-            return primary.data[key]
-    return _opt(entry, key, default)
+# ---------------------------------------------------------------------------
+# Setup / unload.
+# ---------------------------------------------------------------------------
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up an NS Reisadvies entry and register the Lovelace card path."""
+    """Set up the hub: build a coordinator per route subentry."""
     hass.data.setdefault(DOMAIN, {})
 
-    # Allow the static `async_get_options_flow` in config_flow to look
-    # up the running hass instance. Used to hide the gear on every
-    # entry except the primary, since the options are integration-wide.
-    from . import config_flow as _cf  # local import to avoid cycle at module load
-    _cf._set_hass_ref(hass)
+    # Hub-wide config
+    api_key = entry.data.get(CONF_API_KEY)
+    scan_interval = int(entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+    fav_hours = int(entry.data.get(CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
+    fetch_composition = bool(entry.data.get(CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
 
-    # Globale options: alle entries delen dezelfde api_key, interval,
-    # fav_hours en fetch_composition. Lokale data: from/to station.
-    api_key = _global_opt(hass, entry, CONF_API_KEY, None)
-    act_station = entry.data.get(CONF_FROM_STATION)
-    arr_station = entry.data.get(CONF_TO_STATION)
-    scan_interval = int(_global_opt(hass, entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-    fav_hours = int(_global_opt(hass, entry, CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
-    fetch_composition = bool(_global_opt(hass, entry, CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
+    # Coordinator per subentry. We store them in hass.data keyed by
+    # subentry_id so the sensor platform can pick them up.
+    coordinators: dict[str, NSUpdateCoordinator] = {}
+    for subentry_id, subentry in (entry.subentries or {}).items():
+        if subentry.subentry_type != SUBENTRY_TYPE_ROUTE:
+            continue
+        from_st = subentry.data.get(CONF_FROM_STATION)
+        to_st = subentry.data.get(CONF_TO_STATION)
+        if not from_st or not to_st:
+            continue
+        coordinator = NSUpdateCoordinator(
+            hass,
+            api_key=api_key,
+            from_station=from_st,
+            to_station=to_st,
+            scan_interval_minutes=scan_interval,
+            fav_hours=fav_hours,
+            fetch_composition=fetch_composition,
+        )
+        await coordinator.async_load_tracked()
+        await coordinator.async_config_entry_first_refresh()
+        coordinators[subentry_id] = coordinator
 
-    coordinator = NSUpdateCoordinator(
-        hass,
-        api_key=api_key,
-        from_station=act_station,
-        to_station=arr_station,
-        scan_interval_minutes=scan_interval,
-        fav_hours=fav_hours,
-        fetch_composition=fetch_composition,
-    )
-    await coordinator.async_load_tracked()
-    await coordinator.async_config_entry_first_refresh()
+    hass.data[DOMAIN][entry.entry_id] = coordinators
 
-    hass.data[DOMAIN][entry.entry_id] = coordinator
-
-    # Register the static path for the Lovelace card once per HA instance,
-    # AND auto-register the JS file so users do not need to add it
-    # manually under Settings → Dashboards → Resources. The integration
-    # version is appended as a cache-buster.
+    # Static path + Lovelace card auto-registration (one-shot per HA).
     if "static_paths_registered" not in hass.data[DOMAIN]:
         path = hass.config.path("custom_components/ns_reisadvies/www")
         if os.path.isdir(path):
@@ -120,7 +216,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             ])
             hass.data[DOMAIN]["static_paths_registered"] = True
-            _LOGGER.info("Registered Lovelace card path /ns_reisadvies")
 
             try:
                 integration = await async_get_integration(hass, DOMAIN)
@@ -132,49 +227,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    # Reload the entry whenever the user changes options so that
-    # scan_interval/fav_hours take effect immediately.
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
 
 
 async def _async_register_card_resource(hass: HomeAssistant, version: str) -> None:
-    """Auto-register the Lovelace card.
-
-    Tries two routes so the card shows up across all dashboard modes:
-
-    1. ``frontend.add_extra_js_url`` — works for the default Lovelace
-       dashboard and most storage-mode dashboards.
-    2. ``lovelace_resources`` storage collection — needed for custom
-       storage-mode dashboards (``/dashboard-<id>``) which do not pick
-       up extra_module_url. This mirrors what HACS does for plugins.
-
-    Idempotent on both routes: existing entries pointing at our card
-    are updated to the current version rather than duplicated. YAML-mode
-    Lovelace setups are silently skipped — there is no resources
-    collection to write to in that case.
-    """
+    """Register the Lovelace card via add_extra_js_url and Lovelace resources."""
     url = f"{CARD_URL}?v={version}"
-
     try:
         add_extra_js_url(hass, url)
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("add_extra_js_url failed: %s", err)
 
     try:
-        # LovelaceData is a dataclass in modern HA (2024.x+); older
-        # versions stored a plain dict. Try attribute access first, fall
-        # back to dict-style for forward and backward compatibility.
         lov_data = hass.data.get(lovelace.DOMAIN)
         if lov_data is None:
-            _LOGGER.debug("Lovelace data not available; skipping resource registration")
             return
         resources = getattr(lov_data, "resources", None)
         if resources is None and isinstance(lov_data, dict):
             resources = lov_data.get("resources")
         if resources is None:
-            _LOGGER.debug("Lovelace resources collection not available")
             return
         if not resources.loaded:
             await resources.async_load()
@@ -188,12 +261,8 @@ async def _async_register_card_resource(hass: HomeAssistant, version: str) -> No
                 await resources.async_update_item(
                     existing["id"], {"url": url, "res_type": existing.get("type", "module")}
                 )
-                _LOGGER.info("Updated Lovelace resource for NS Reisadvies card to %s", version)
-            else:
-                _LOGGER.debug("Lovelace resource already at %s", version)
         else:
             await resources.async_create_item({"url": url, "res_type": "module"})
-            _LOGGER.info("Registered Lovelace resource for NS Reisadvies card v%s", version)
     except Exception as err:  # noqa: BLE001
         _LOGGER.warning(
             "Could not auto-register Lovelace resource (you may need to add %s manually): %s",
@@ -202,12 +271,12 @@ async def _async_register_card_resource(hass: HomeAssistant, version: str) -> No
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Reload the config entry when options change."""
+    """Reload the hub when global options change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload an NS Reisadvies entry."""
+    """Unload the hub."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)

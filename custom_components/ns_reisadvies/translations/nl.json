@@ -3,14 +3,14 @@
     "step": {
       "user": {
         "title": "NS Reisadvies",
-        "description": "Stel een route in tussen twee NS-stations. Je hebt een gratis NS API-sleutel nodig (apiportal.ns.nl).",
+        "description": "Stel je NS API-sleutel en je eerste route in. Voeg later extra routes toe via de integratietegel.",
         "data": {
           "api_key": "API-sleutel",
           "act_station": "Vertrekstation",
           "arr_station": "Aankomststation"
         },
         "data_description": {
-          "api_key": "Je NS API-sleutel. Alleen nodig bij de eerste route; daarna wordt hij hergebruikt.",
+          "api_key": "Je NS API-sleutel van apiportal.ns.nl.",
           "act_station": "Het station waar de reis begint.",
           "arr_station": "Het station waar de reis eindigt."
         }
@@ -18,16 +18,53 @@
     },
     "error": {
       "same_station": "Vertrek- en aankomststation moeten verschillend zijn.",
-      "unknown_station": "Geen geldig NS-station — kies er een uit de lijst."
+      "unknown_station": "Geen geldig NS-station — kies er een uit de lijst.",
+      "duplicate_route": "Een route met deze stations bestaat al."
     },
     "abort": {
+      "single_instance_allowed": "NS Reisadvies is al geconfigureerd. Voeg extra routes toe via de integratietegel.",
       "already_configured": "Deze route is al geconfigureerd."
+    }
+  },
+  "config_subentries": {
+    "route": {
+      "initiate_flow": {
+        "user": "Route toevoegen",
+        "reconfigure": "Route aanpassen"
+      },
+      "entry_type": "Route",
+      "step": {
+        "user": {
+          "title": "Route toevoegen",
+          "description": "Stel het vertrek- en aankomststation in voor een nieuwe route.",
+          "data": {
+            "act_station": "Vertrekstation",
+            "arr_station": "Aankomststation"
+          }
+        },
+        "reconfigure": {
+          "title": "Route aanpassen",
+          "data": {
+            "act_station": "Vertrekstation",
+            "arr_station": "Aankomststation"
+          }
+        }
+      },
+      "error": {
+        "same_station": "Vertrek- en aankomststation moeten verschillend zijn.",
+        "unknown_station": "Geen geldig NS-station — kies er een uit de lijst.",
+        "duplicate_route": "Een route met deze stations bestaat al."
+      },
+      "abort": {
+        "already_configured": "Deze route is al geconfigureerd."
+      }
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "NS Reisadvies-opties",
+        "description": "Deze instellingen gelden voor elke route onder deze integratie.",
         "data": {
           "api_key": "API-sleutel",
           "scan_interval_minuten": "Verversingsinterval (minuten)",
@@ -46,11 +83,11 @@
   "services": {
     "track_trip": {
       "name": "Markeer rit als favoriet",
-      "description": "Pin een rit op de geselecteerde NS Reisadvies-sensor. De rit blijft zichtbaar totdat de bewaartijd verloopt of de rit handmatig verwijderd wordt.",
+      "description": "Pin een rit op de geselecteerde NS Reisadvies-sensor.",
       "fields": {
         "ctx_recon": {
           "name": "ctxRecon",
-          "description": "De ctxRecon-string van de rit. Zichtbaar als trip.ctxRecon in de sensor-attributen."
+          "description": "De ctxRecon-string van de rit."
         }
       }
     },

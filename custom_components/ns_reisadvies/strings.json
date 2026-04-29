@@ -3,14 +3,14 @@
     "step": {
       "user": {
         "title": "NS Reisadvies",
-        "description": "Configure a route between two Dutch railway stations. You will need a free NS API subscription key from apiportal.ns.nl.",
+        "description": "Configure your NS API key and the first route. Add more routes later via the integration tile.",
         "data": {
           "api_key": "API key",
           "act_station": "Departure station",
           "arr_station": "Arrival station"
         },
         "data_description": {
-          "api_key": "Your NS API subscription key. Only required on the first route; subsequent routes reuse it.",
+          "api_key": "Your NS API subscription key from apiportal.ns.nl.",
           "act_station": "The station where the journey starts.",
           "arr_station": "The station where the journey ends."
         }
@@ -18,16 +18,53 @@
     },
     "error": {
       "same_station": "The departure and arrival station must be different.",
-      "unknown_station": "That is not a recognised Dutch railway station — pick one from the list."
+      "unknown_station": "That is not a recognised Dutch railway station — pick one from the list.",
+      "duplicate_route": "A route with these two stations already exists."
     },
     "abort": {
+      "single_instance_allowed": "NS Reisadvies is already configured. Add more routes via the integration tile.",
       "already_configured": "This route is already configured."
+    }
+  },
+  "config_subentries": {
+    "route": {
+      "initiate_flow": {
+        "user": "Add route",
+        "reconfigure": "Reconfigure route"
+      },
+      "entry_type": "Route",
+      "step": {
+        "user": {
+          "title": "Add a route",
+          "description": "Configure the departure and arrival station for a new route.",
+          "data": {
+            "act_station": "Departure station",
+            "arr_station": "Arrival station"
+          }
+        },
+        "reconfigure": {
+          "title": "Reconfigure route",
+          "data": {
+            "act_station": "Departure station",
+            "arr_station": "Arrival station"
+          }
+        }
+      },
+      "error": {
+        "same_station": "The departure and arrival station must be different.",
+        "unknown_station": "That is not a recognised Dutch railway station — pick one from the list.",
+        "duplicate_route": "A route with these two stations already exists."
+      },
+      "abort": {
+        "already_configured": "This route is already configured."
+      }
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "NS Reisadvies options",
+        "description": "These settings apply to every route under this integration.",
         "data": {
           "api_key": "API key",
           "scan_interval_minuten": "Refresh interval (minutes)",
@@ -46,17 +83,17 @@
   "services": {
     "track_trip": {
       "name": "Pin trip as favourite",
-      "description": "Pin a trip on the targeted NS Reisadvies sensor. The trip stays visible until the favourite retention expires or until it is unpinned.",
+      "description": "Pin a trip on the targeted NS Reisadvies sensor.",
       "fields": {
         "ctx_recon": {
           "name": "ctxRecon",
-          "description": "The ctxRecon string of the trip to pin. Visible as trip.ctxRecon in the sensor attributes."
+          "description": "The ctxRecon string of the trip to pin."
         }
       }
     },
     "untrack_trip": {
       "name": "Unpin trip",
-      "description": "Remove a previously pinned trip from the favourites list of the targeted sensor.",
+      "description": "Remove a previously pinned trip from the favourites list.",
       "fields": {
         "ctx_recon": {
           "name": "ctxRecon",
