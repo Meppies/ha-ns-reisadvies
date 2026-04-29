@@ -17,6 +17,9 @@ const I18N = {
     cancelled: "ATTENTION: TRIP CANCELLED",
     total_travel: "Total travel time",
     unknown: "Unknown",
+    show_stops: "Show stops",
+    hide_stops: "Hide stops",
+    stop_passing: "(does not stop)",
     minutes_short: "min",
     hour_short: "hr",
     hour_minutes: "{h} h {m} m",
@@ -45,6 +48,9 @@ const I18N = {
     cancelled: "LET OP: REIS VERVALLEN",
     total_travel: "Totale reistijd",
     unknown: "Onbekend",
+    show_stops: "Toon tussenstops",
+    hide_stops: "Verberg tussenstops",
+    stop_passing: "(stopt niet)",
     minutes_short: "min",
     hour_short: "uur",
     hour_minutes: "{h} u {m} m",
@@ -110,6 +116,10 @@ class NSReisadviesCard extends HTMLElement {
     // Short-lived working memory for snappy reactions to user clicks.
     this._pendingTrack = new Set();
     this._pendingUntrack = new Set();
+
+    // Track which leg expanders are open. Key: `${tripIdx}_${legIdx}`.
+    // Lives in JS memory only — refreshing the page closes them.
+    this._expandedLegs = new Set();
 
     const entityKey = this._config.entity || "default";
 
@@ -489,6 +499,17 @@ class NSReisadviesCard extends HTMLElement {
         .warning-msg { color: #ff5252; font-weight: bold; font-size: 0.9em; margin-left: 12px; text-transform: uppercase; margin-top: 8px; }
         .direct-text { color: #4CAF50; font-weight: bold; }
         .trip-footer { text-align: right; font-size: 0.85em; color: var(--secondary-text-color); margin-top: 4px; }
+        .stops-toggle { display: inline-flex; align-items: center; cursor: pointer; margin-left: 4px; color: var(--primary-text-color); opacity: 0.7; transition: opacity 0.15s; }
+        .stops-toggle:hover { opacity: 1; }
+        .stops-toggle ha-icon { --mdc-icon-size: 18px; }
+        .stops-toggle.open ha-icon { transform: rotate(180deg); transition: transform 0.2s; }
+        .tl-stops { margin: 0 0 12px 100px; padding: 4px 0 4px 14px; border-left: 2px dashed #3b82f6; font-size: 0.85em; color: var(--secondary-text-color); }
+        .stop-row { display: flex; gap: 10px; padding: 3px 0; align-items: baseline; }
+        .stop-time { min-width: 90px; font-variant-numeric: tabular-nums; color: var(--primary-text-color); white-space: nowrap; }
+        .stop-time .stop-delay { color: #ff5252; font-weight: bold; margin-left: 4px; }
+        .stop-name { flex: 1; }
+        .stop-row.passing .stop-name { opacity: 0.55; font-style: italic; }
+        .stop-row.cancelled .stop-name, .stop-row.cancelled .stop-time { text-decoration: line-through; text-decoration-color: #ff5252; opacity: 0.7; }
       </style>
       <div class="ns-container">`;
 
@@ -530,10 +551,18 @@ class NSReisadviesCard extends HTMLElement {
 
         const pCls = (leg.origin.actualTrack !== leg.origin.plannedTrack && leg.origin.plannedTrack) ? "tl-platform tl-platform-changed" : "tl-platform";
         const pArrCls = (leg.destination.actualTrack !== leg.destination.plannedTrack && leg.destination.plannedTrack) ? "tl-platform tl-platform-changed" : "tl-platform";
-        const sCount = leg.stops ? leg.stops.length - 2 : 0;
+
+        // Count "real" intermediate stops — exclude origin/destination
+        // and stops where the train passes without stopping.
+        const intermediates = (leg.stops || []).slice(1, -1).filter(s => !s.passing);
+        const sCount = intermediates.length;
+        const legKey = `${tIdx}_${index}`;
+        const isExpanded = this._expandedLegs.has(legKey);
+        const stopLabel = sCount === 1 ? t("stop_one", this._hass) : t("stop_other", this._hass, { n: sCount });
+        const toggleLabel = isExpanded ? t("hide_stops", this._hass) : t("show_stops", this._hass);
         const sText = sCount <= 0
           ? `<span class="direct-text">${t("direct", this._hass)}</span>`
-          : `<span>${sCount === 1 ? t("stop_one", this._hass) : t("stop_other", this._hass, { n: sCount })}</span>`;
+          : `<span>${stopLabel}</span><span class="stops-toggle ${isExpanded ? "open" : ""}" data-leg-key="${legKey}" title="${toggleLabel}" role="button"><ha-icon icon="mdi:chevron-down"></ha-icon></span>`;
 
         html += `
           <div class="tl-grid">
@@ -558,6 +587,39 @@ class NSReisadviesCard extends HTMLElement {
             <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.destination.name || unknownLabel}</span>
             <span class="${pArrCls} ${cCls}">${platformLabel} ${leg.destination.actualTrack || leg.destination.plannedTrack || "?"}</span></div></div>
           </div>`;
+
+        // Expanded list of intermediate stops, when the user clicked
+        // the chevron next to the stop count.
+        if (isExpanded && sCount > 0) {
+          html += `<div class="tl-stops">`;
+          intermediates.forEach(stop => {
+            const arrPlanned = stop.plannedArrivalDateTime || stop.plannedDepartureDateTime;
+            const depPlanned = stop.plannedDepartureDateTime || stop.plannedArrivalDateTime;
+            const arrActual = stop.actualArrivalDateTime || arrPlanned;
+            const depActual = stop.actualDepartureDateTime || depPlanned;
+            const tArrStop = this.formatTime(arrPlanned);
+            const tDepStop = this.formatTime(depPlanned);
+            const sameTime = (arrPlanned && depPlanned && arrPlanned === depPlanned) || (tArrStop === tDepStop);
+
+            const arrDelay = stop.arrivalDelayInSeconds ? Math.round(stop.arrivalDelayInSeconds / 60) : 0;
+            const depDelay = stop.departureDelayInSeconds ? Math.round(stop.departureDelayInSeconds / 60) : 0;
+
+            let timeHtml;
+            if (sameTime) {
+              const delay = depDelay || arrDelay;
+              const delayHtml = delay > 0 ? `<span class="stop-delay">+${delay}</span>` : "";
+              timeHtml = `${tDepStop}${delayHtml}`;
+            } else {
+              const aDelay = arrDelay > 0 ? `<span class="stop-delay">+${arrDelay}</span>` : "";
+              const dDelay = depDelay > 0 ? `<span class="stop-delay">+${depDelay}</span>` : "";
+              timeHtml = `${tArrStop}${aDelay} → ${tDepStop}${dDelay}`;
+            }
+
+            const rowCls = stop.cancelled ? "stop-row cancelled" : "stop-row";
+            html += `<div class="${rowCls}"><span class="stop-time">${timeHtml}</span><span class="stop-name">${stop.name || unknownLabel}</span></div>`;
+          });
+          html += `</div>`;
+        }
 
         if (index < trip.legs.length - 1) {
           const nextLeg = trip.legs[index + 1];
@@ -585,6 +647,23 @@ class NSReisadviesCard extends HTMLElement {
       const isFav = btn.getAttribute("data-fav") === "true";
       btn.addEventListener("click", (e) => this.toggleFavorite(ctxRecon, isFav, e));
     });
+
+    const toggles = this.content.querySelectorAll(`.stops-toggle`);
+    toggles.forEach(btn => {
+      const key = btn.getAttribute("data-leg-key");
+      btn.addEventListener("click", (e) => this.toggleStops(key, e));
+    });
+  }
+
+  toggleStops(legKey, event) {
+    if (event) event.stopPropagation();
+    if (!legKey) return;
+    if (this._expandedLegs.has(legKey)) {
+      this._expandedLegs.delete(legKey);
+    } else {
+      this._expandedLegs.add(legKey);
+    }
+    this.updateContent();
   }
 }
 
@@ -785,7 +864,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v1.4.8 ",
+  "%c NS-REISADVIES-CARD %c v1.5.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
