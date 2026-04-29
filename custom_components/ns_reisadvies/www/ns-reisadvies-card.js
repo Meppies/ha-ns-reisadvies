@@ -20,6 +20,8 @@ const I18N = {
     show_stops: "Show stops",
     hide_stops: "Hide stops",
     stop_passing: "(does not stop)",
+    stop_arrival_short: "A",
+    stop_departure_short: "D",
     minutes_short: "min",
     hour_short: "hr",
     hour_minutes: "{h} h {m} m",
@@ -51,6 +53,8 @@ const I18N = {
     show_stops: "Toon tussenstops",
     hide_stops: "Verberg tussenstops",
     stop_passing: "(stopt niet)",
+    stop_arrival_short: "A",
+    stop_departure_short: "V",
     minutes_short: "min",
     hour_short: "uur",
     hour_minutes: "{h} u {m} m",
@@ -504,8 +508,10 @@ class NSReisadviesCard extends HTMLElement {
         .stops-toggle ha-icon { --mdc-icon-size: 18px; }
         .stops-toggle.open ha-icon { transform: rotate(180deg); transition: transform 0.2s; }
         .stop-row { display: grid; grid-template-columns: 75px 25px 1fr; align-items: center; min-height: 28px; padding: 2px 0; }
-        .stop-row .stop-time-cell { text-align: right; padding-right: 12px; color: var(--primary-text-color); font-size: 0.95em; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
-        .stop-row .stop-time-cell .stop-delay { color: #ff5252; font-weight: bold; margin-left: 4px; }
+        .stop-row .stop-time-cell { text-align: right; padding-right: 12px; color: var(--primary-text-color); font-size: 0.95em; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; line-height: 1.2; }
+        .stop-row .stop-time-cell .stop-time-line { display: inline-flex; align-items: baseline; gap: 4px; }
+        .stop-row .stop-time-cell .stop-time-prefix { font-size: 0.75em; opacity: 0.65; font-weight: 700; text-transform: uppercase; }
+        .stop-row .stop-time-cell .stop-delay { color: #ff5252; font-weight: bold; margin-left: 2px; }
         .stop-row .stop-line-col { display: flex; justify-content: center; align-self: stretch; }
         .stop-row .stop-line-col::before { content: ""; width: 0; border-left: 2px dashed #3b82f6; height: 100%; }
         .stop-row .stop-info { padding-left: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.95em; color: var(--secondary-text-color); }
@@ -598,16 +604,20 @@ class NSReisadviesCard extends HTMLElement {
 
             const arrDelay = stop.arrivalDelayInSeconds ? Math.round(stop.arrivalDelayInSeconds / 60) : 0;
             const depDelay = stop.departureDelayInSeconds ? Math.round(stop.departureDelayInSeconds / 60) : 0;
+            const arrLabel = t("stop_arrival_short", this._hass);
+            const depLabel = t("stop_departure_short", this._hass);
 
             let timeHtml;
             if (sameTime) {
               const delay = depDelay || arrDelay;
               const delayHtml = delay > 0 ? `<span class="stop-delay">+${delay}</span>` : "";
-              timeHtml = `${tDepStop}${delayHtml}`;
+              timeHtml = `<span class="stop-time-line"><span>${tDepStop}</span>${delayHtml}</span>`;
             } else {
               const aDelay = arrDelay > 0 ? `<span class="stop-delay">+${arrDelay}</span>` : "";
               const dDelay = depDelay > 0 ? `<span class="stop-delay">+${depDelay}</span>` : "";
-              timeHtml = `${tArrStop}${aDelay} → ${tDepStop}${dDelay}`;
+              timeHtml =
+                `<span class="stop-time-line"><span class="stop-time-prefix">${arrLabel}</span><span>${tArrStop}</span>${aDelay}</span>` +
+                `<span class="stop-time-line"><span class="stop-time-prefix">${depLabel}</span><span>${tDepStop}</span>${dDelay}</span>`;
             }
 
             const stopTrack = stop.actualDepartureTrack || stop.actualArrivalTrack
@@ -880,7 +890,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v1.5.1 ",
+  "%c NS-REISADVIES-CARD %c v1.5.2 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
