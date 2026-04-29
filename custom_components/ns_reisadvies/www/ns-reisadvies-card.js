@@ -546,7 +546,7 @@ class NSReisadviesCard extends HTMLElement {
         .tl-station-name { font-weight: bold; font-size: 1.1em; flex-grow: 1; word-break: break-word; }
         .tl-platform { background: #003082; color: white; padding: 2px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; white-space: nowrap; flex-shrink: 0; }
         .tl-platform-changed { background: #db4437; }
-        .tl-travel-info { padding: 4px 0 12px 12px; font-size: 0.9em; }
+        .tl-travel-info { padding: 4px 0 12px 12px; font-size: 0.9em; min-width: 0; }
         .tl-direction-main { color: #FFC917; font-weight: bold; font-size: 1.05em; display: block; margin-bottom: 4px; }
         .tl-train-details { color: var(--secondary-text-color); display: flex; align-items: center; flex-wrap: wrap; }
         .detail-separator { margin: 0 6px; opacity: 0.5; font-size: 0.8em; }
@@ -565,7 +565,7 @@ class NSReisadviesCard extends HTMLElement {
         }
         .tl-train-composition .tcomp-images.dragging { cursor: grabbing; }
         .tl-train-composition .tcomp-images img {
-          height: 56px;
+          height: 38px;
           width: auto;
           object-fit: contain;
           display: block;
@@ -1022,7 +1022,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.0.7 ",
+  "%c NS-REISADVIES-CARD %c v2.0.8 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
