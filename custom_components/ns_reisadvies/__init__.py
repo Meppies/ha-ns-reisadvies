@@ -114,7 +114,16 @@ async def _async_register_card_resource(hass: HomeAssistant, version: str) -> No
         _LOGGER.debug("add_extra_js_url failed: %s", err)
 
     try:
-        resources = hass.data.get(lovelace.DOMAIN, {}).get("resources")
+        # LovelaceData is a dataclass in modern HA (2024.x+); older
+        # versions stored a plain dict. Try attribute access first, fall
+        # back to dict-style for forward and backward compatibility.
+        lov_data = hass.data.get(lovelace.DOMAIN)
+        if lov_data is None:
+            _LOGGER.debug("Lovelace data not available; skipping resource registration")
+            return
+        resources = getattr(lov_data, "resources", None)
+        if resources is None and isinstance(lov_data, dict):
+            resources = lov_data.get("resources")
         if resources is None:
             _LOGGER.debug("Lovelace resources collection not available")
             return
