@@ -551,9 +551,33 @@ class NSReisadviesCard extends HTMLElement {
         .tl-train-details { color: var(--secondary-text-color); display: flex; align-items: center; flex-wrap: wrap; }
         .detail-separator { margin: 0 6px; opacity: 0.5; font-size: 0.8em; }
         .tl-train-meta { font-size: 0.85em; color: var(--secondary-text-color); margin-top: 4px; opacity: 0.8; }
-        .tl-train-composition { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
-        .tl-train-composition .tcomp-images { display: inline-flex; align-items: center; gap: 3px; }
-        .tl-train-composition .tcomp-images img { height: 48px; width: auto; max-width: 160px; object-fit: contain; display: block; }
+        .tl-train-composition { margin-top: 6px; max-width: 100%; overflow: hidden; }
+        .tl-train-composition .tcomp-images {
+          display: flex;
+          align-items: center;
+          gap: 2px;
+          overflow-x: auto;
+          overflow-y: hidden;
+          scroll-behavior: smooth;
+          -webkit-overflow-scrolling: touch;
+          cursor: grab;
+          padding-bottom: 4px;
+        }
+        .tl-train-composition .tcomp-images.dragging { cursor: grabbing; }
+        .tl-train-composition .tcomp-images img {
+          height: 56px;
+          width: auto;
+          object-fit: contain;
+          display: block;
+          flex-shrink: 0;
+          user-select: none;
+          -webkit-user-drag: none;
+          pointer-events: none;
+        }
+        .tl-train-composition .tcomp-images::-webkit-scrollbar { height: 4px; }
+        .tl-train-composition .tcomp-images::-webkit-scrollbar-track { background: transparent; }
+        .tl-train-composition .tcomp-images::-webkit-scrollbar-thumb { background: var(--divider-color); border-radius: 2px; }
+        .tl-train-composition .tcomp-images::-webkit-scrollbar-thumb:hover { background: var(--secondary-text-color); }
         .tl-wait-row { display: grid; grid-template-columns: 75px 25px 1fr; height: 30px; align-items: center; }
         .tl-wait-line-col { display: flex; justify-content: center; }
         .tl-wait-text { padding-left: 12px; color: var(--secondary-text-color); font-style: italic; font-size: 0.9em; display: flex; align-items: center; }
@@ -753,6 +777,39 @@ class NSReisadviesCard extends HTMLElement {
     toggles.forEach(btn => {
       const key = btn.getAttribute("data-leg-key");
       btn.addEventListener("click", (e) => this.toggleStops(key, e));
+    });
+
+    // Drag-to-scroll for the carriage composition strip on desktop.
+    // Touch devices scroll natively via swipe; mouse-wheel works too.
+    const scrollers = this.content.querySelectorAll(`.tcomp-images`);
+    scrollers.forEach(el => this._wireDragScroll(el));
+  }
+
+  _wireDragScroll(el) {
+    let isDown = false;
+    let startX = 0;
+    let scrollLeft = 0;
+    el.addEventListener("mousedown", (e) => {
+      // Only respond to primary button
+      if (e.button !== 0) return;
+      isDown = true;
+      el.classList.add("dragging");
+      startX = e.pageX - el.offsetLeft;
+      scrollLeft = el.scrollLeft;
+    });
+    const stop = () => {
+      if (!isDown) return;
+      isDown = false;
+      el.classList.remove("dragging");
+    };
+    el.addEventListener("mouseleave", stop);
+    el.addEventListener("mouseup", stop);
+    el.addEventListener("mousemove", (e) => {
+      if (!isDown) return;
+      e.preventDefault();
+      const x = e.pageX - el.offsetLeft;
+      const walk = (x - startX) * 1.4;
+      el.scrollLeft = scrollLeft - walk;
     });
   }
 
@@ -965,7 +1022,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.0.5 ",
+  "%c NS-REISADVIES-CARD %c v2.0.6 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
