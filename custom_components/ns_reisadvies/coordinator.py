@@ -451,10 +451,23 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
 
         warned_once = bool(bucket.get("_live_train_warned"))
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        # The NS bulk endpoint requires a bounding box. We request the
+        # whole of NL+near-border so foreign-bound services (Aachen,
+        # Brussel) are also covered.
+        params = {
+            "features": "drukte",
+            "lat": "52.1",
+            "lng": "5.3",
+            "zoomlevel": "9",
+            "southWestLat": "50.65",
+            "southWestLng": "3.20",
+            "northEastLat": "53.70",
+            "northEastLng": "7.40",
+        }
         try:
             async with async_timeout.timeout(15):
                 async with self._session.get(
-                    VIRTUAL_TRAIN_API_URL, headers=headers
+                    VIRTUAL_TRAIN_API_URL, headers=headers, params=params,
                 ) as resp:
                     if resp.status != 200:
                         body = ""
