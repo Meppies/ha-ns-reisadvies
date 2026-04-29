@@ -26,6 +26,8 @@ from .const import (
     STORAGE_VERSION,
     TRIP_API_URL,
     VIRTUAL_TRAIN_API_URL,
+    VIRTUAL_TRAIN_VEHICLE_URL,
+    VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -396,18 +398,13 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         return out
 
     async def async_fetch_live_train(self, train_number: str) -> dict | None:
-        """Return an approximate live position for a single train.
+        """Return the live GPS position for a single train.
 
-        The public NS bulk endpoint /virtual-train-api/v1/trein returns
-        HTTP 500 for normal subscription keys (only the internal NS-App
-        version sees real GPS). The per-train endpoint /v1/trein/{nr}
-        DOES work and returns the train's CURRENT STATION code in the
-        ``station`` field. We translate that station code to lat/lng
-        via the cached /v2/stations response.
-
-        Result: position jumps from station to station as the train
-        progresses, rather than smooth GPS interpolation. Adequate for
-        a "where's my train right now" map without paid API tiers.
+        Primary: /virtual-train-api/vehicle?route=<ritnummer> — the same
+        feed the NS App uses for the live train map. Returns smooth
+        lat/lng plus speed (km/h) and heading. Falls back to
+        /virtual-train-api/api/vehicle and finally to a station-based
+        lookup via the composition endpoint.
         """
         if not train_number:
             return None
@@ -416,35 +413,107 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         bucket = self.hass.data.setdefault(DOMAIN, {})
         warned_once = bool(bucket.get("_live_train_warned"))
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        params = {
+            "route": str(train_number),
+            "lat": "52.10",
+            "lng": "5.30",
+            "radius": "300",  # km — covers all NL plus near border
+            "limit": "5",
+            "features": "drukte",
+        }
+
+        async def _try(url: str):
+            try:
+                async with async_timeout.timeout(15):
+                    async with self._session.get(
+                        url, headers=headers, params=params,
+                    ) as resp:
+                        if resp.status != 200:
+                            body = ""
+                            try:
+                                body = (await resp.text())[:300]
+                            except Exception:  # noqa: BLE001
+                                pass
+                            return resp.status, body, None
+                        return resp.status, "", await resp.json()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                return 0, str(err), None
+
+        status, body, data = await _try(VIRTUAL_TRAIN_VEHICLE_URL)
+        if data is None:
+            status, body, data = await _try(VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL)
+
+        if data is None:
+            if not warned_once:
+                bucket["_live_train_warned"] = True
+                _LOGGER.warning(
+                    "Live vehicle fetch %s -> HTTP %s. Body: %s",
+                    train_number, status, body,
+                )
+            return await self._async_station_based_position(train_number)
+
+        if isinstance(data, list):
+            vehicles = data
+        elif isinstance(data, dict):
+            vehicles = (
+                data.get("payload")
+                or data.get("vehicles")
+                or data.get("trains")
+                or []
+            )
+        else:
+            vehicles = []
+
+        target = str(train_number)
+        match = None
+        for v in vehicles:
+            ride_id = str(
+                v.get("route") or v.get("ritId") or v.get("ritnummer")
+                or v.get("journeyId") or v.get("trainNumber") or ""
+            )
+            if ride_id == target:
+                match = v
+                break
+        if not match and len(vehicles) == 1:
+            # API filtered server-side: trust it.
+            match = vehicles[0]
+        if not match:
+            return await self._async_station_based_position(train_number)
+
+        lat = match.get("lat") or match.get("latitude")
+        lng = match.get("lng") or match.get("lon") or match.get("longitude")
+        if lat is None or lng is None:
+            return await self._async_station_based_position(train_number)
+        return {
+            "lat": float(lat),
+            "lng": float(lng),
+            "speed": match.get("snelheid") or match.get("speed"),
+            "heading": match.get("richting") or match.get("heading"),
+            "ts": match.get("tijd") or match.get("time"),
+            "type": match.get("type") or match.get("categorie"),
+            "source": "vehicle",
+        }
+
+    async def _async_station_based_position(self, train_number: str) -> dict | None:
+        """Fallback: derive a position from the train's current station
+        via /v1/trein/{nr} (composition endpoint) + cached /v2/stations.
+        """
+        if not self.api_key:
+            return None
+        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
         url = f"{VIRTUAL_TRAIN_API_URL}/{train_number}"
         try:
             async with async_timeout.timeout(15):
                 async with self._session.get(url, headers=headers) as resp:
                     if resp.status != 200:
-                        body = ""
-                        try:
-                            body = (await resp.text())[:300]
-                        except Exception:  # noqa: BLE001
-                            pass
-                        if not warned_once:
-                            bucket["_live_train_warned"] = True
-                            _LOGGER.warning(
-                                "Virtual train fetch %s -> HTTP %s. Body: %s",
-                                train_number, resp.status, body,
-                            )
                         return None
                     data = await resp.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            if not warned_once:
-                bucket["_live_train_warned"] = True
-                _LOGGER.warning("Virtual train fetch %s failed: %s", train_number, err)
+        except (aiohttp.ClientError, asyncio.TimeoutError):
             return None
-
         payload = (data or {}).get("payload") or data or {}
         station_code = (payload.get("station") or "").upper()
         if not station_code:
             return None
-
         geo = await self.async_fetch_stations_geo()
         match = geo.get(station_code)
         if not match:
@@ -455,9 +524,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             "station_code": station_code,
             "station_name": match["name"],
             "spoor": payload.get("spoor"),
-            "ts": payload.get("tijd") or None,
-            # No real speed/heading from this endpoint — leave unset so
-            # the card can decide to hide the metric instead of showing 0.
             "speed": None,
             "heading": None,
+            "source": "station",
         }

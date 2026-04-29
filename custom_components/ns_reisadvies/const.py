@@ -34,7 +34,12 @@ API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips"
 TRIP_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips/trip"
 JOURNEY_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/journey"
 STATIONS_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/stations"
+# Per-train info (composition + current station, no GPS):
 VIRTUAL_TRAIN_API_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/api/v1/trein"
+# Live GPS feed used by the NS app's map view. Filterable by `route`
+# (= ritnummer). Returns lat/lng/snelheid/richting per vehicle.
+VIRTUAL_TRAIN_VEHICLE_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/vehicle"
+VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/api/vehicle"
 
 # Storage
 STORAGE_VERSION = 1
