@@ -69,17 +69,17 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     legacy.sort(key=lambda e: e.entry_id)
 
     if not legacy:
-        # No legacy entries — nothing to migrate.
-        hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
+        # No legacy entries — nothing to migrate. Returning True signals
+        # success and HA stamps the new version automatically.
         return True
 
     primary = legacy[0]
 
-    # Only the primary actually does the migration. The other legacy
-    # entries simply update their version marker so HA stops calling
-    # async_migrate_entry on them; they will be removed by the primary.
+    # Only the primary actually does the migration. For non-primary
+    # legacy entries we just return True and let HA update the
+    # version-marker; the primary will then remove them in its own
+    # migrate_entry call.
     if entry.entry_id != primary.entry_id:
-        hass.config_entries.async_update_entry(entry, version=CONFIG_ENTRY_VERSION)
         return True
 
     # Build hub data from primary's options + data
@@ -138,13 +138,14 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             except Exception as err:  # noqa: BLE001
                 _LOGGER.warning("Could not move entity %s to hub: %s", entity.entity_id, err)
 
-    # Update primary into the hub: new title, version, data, subentries
+    # Update primary into the hub: new title, data, subentries.
+    # The version is stamped automatically when this function returns
+    # True — no need to pass version= here.
     hass.config_entries.async_update_entry(
         primary,
         title="NS Reisadvies",
         data=hub_data,
         options={},
-        version=CONFIG_ENTRY_VERSION,
     )
 
     # Add subentries one by one — async_update_entry doesn't take
@@ -169,9 +170,72 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 # ---------------------------------------------------------------------------
 
 
+async def _recover_subentries_from_storage(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> None:
+    """If the hub has no route subentries (e.g. because a v1->v2
+    migration partially failed) but the per-route Store files are
+    still on disk, reconstruct subentries from those file names.
+    """
+    if entry.subentries:
+        return
+
+    from .stations import STATIONS  # noqa: WPS433 — local import to avoid cycle
+    station_lookup = {s.lower(): s for s in STATIONS}
+    storage_dir = hass.config.path(".storage")
+
+    try:
+        files = await hass.async_add_executor_job(os.listdir, storage_dir)
+    except Exception:  # noqa: BLE001
+        return
+
+    routes: list[tuple[str, str]] = []
+    for fname in files:
+        if not fname.startswith("ns_reisadvies_tracked_trips_"):
+            continue
+        rest = fname[len("ns_reisadvies_tracked_trips_"):]
+        # Try splits matching known station names. Stations may
+        # contain underscores after sanitisation; iterate possible
+        # split points and verify both halves against the lookup.
+        parts = rest.split("_")
+        found = False
+        for i in range(1, len(parts)):
+            fr = "_".join(parts[:i]).replace("_", " ")
+            to = "_".join(parts[i:]).replace("_", " ")
+            if fr.lower() in station_lookup and to.lower() in station_lookup:
+                routes.append((station_lookup[fr.lower()], station_lookup[to.lower()]))
+                found = True
+                break
+        if not found and len(parts) == 2:
+            # Last-resort: assume the simple two-part case
+            routes.append((parts[0], parts[1]))
+
+    if not routes:
+        return
+
+    _LOGGER.warning(
+        "Hub has no subentries; reconstructing %d route(s) from storage", len(routes)
+    )
+    for fr, to in routes:
+        try:
+            sub = ConfigSubentry(
+                data={CONF_FROM_STATION: fr, CONF_TO_STATION: to},
+                subentry_type=SUBENTRY_TYPE_ROUTE,
+                title=f"{fr} -> {to}",
+                unique_id=f"{fr}_{to}".lower(),
+            )
+            hass.config_entries.async_add_subentry(entry, sub)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not recover subentry %s -> %s: %s", fr, to, err)
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the hub: build a coordinator per route subentry."""
     hass.data.setdefault(DOMAIN, {})
+
+    # Self-heal: if a previous (failed) migration left the hub without
+    # subentries, try to rebuild them from the per-route Store files.
+    await _recover_subentries_from_storage(hass, entry)
 
     # Hub-wide config
     api_key = entry.data.get(CONF_API_KEY)
