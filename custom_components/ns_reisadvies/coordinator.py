@@ -413,20 +413,24 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         bucket = self.hass.data.setdefault(DOMAIN, {})
         warned_once = bool(bucket.get("_live_train_warned"))
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
-        params = {
-            "route": str(train_number),
+        # First try with `route` filter (ritnummer); if the result is empty,
+        # we'll retry without the filter so we can match client-side. The
+        # bbox + radius are kept reasonable so we get a manageable response.
+        base_params = {
             "lat": "52.10",
             "lng": "5.30",
             "radius": "300",  # km — covers all NL plus near border
-            "limit": "5",
+            "limit": "100",
             "features": "drukte",
         }
+        params = dict(base_params)
+        params["route"] = str(train_number)
 
-        async def _try(url: str):
+        async def _try(url: str, q: dict):
             try:
                 async with async_timeout.timeout(15):
                     async with self._session.get(
-                        url, headers=headers, params=params,
+                        url, headers=headers, params=q,
                     ) as resp:
                         if resp.status != 200:
                             body = ""
@@ -439,9 +443,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 return 0, str(err), None
 
-        status, body, data = await _try(VIRTUAL_TRAIN_VEHICLE_URL)
+        status, body, data = await _try(VIRTUAL_TRAIN_VEHICLE_URL, params)
         if data is None:
-            status, body, data = await _try(VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL)
+            status, body, data = await _try(VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL, params)
 
         if data is None:
             if not warned_once:
@@ -455,12 +459,25 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         if isinstance(data, list):
             vehicles = data
         elif isinstance(data, dict):
-            vehicles = (
-                data.get("payload")
-                or data.get("vehicles")
-                or data.get("trains")
-                or []
-            )
+            payload = data.get("payload")
+            if isinstance(payload, dict):
+                # Real shape from /virtual-train-api/vehicle:
+                # {"payload": {"treinen": [...]}}
+                vehicles = (
+                    payload.get("treinen")
+                    or payload.get("trains")
+                    or payload.get("vehicles")
+                    or []
+                )
+            elif isinstance(payload, list):
+                vehicles = payload
+            else:
+                vehicles = (
+                    data.get("treinen")
+                    or data.get("vehicles")
+                    or data.get("trains")
+                    or []
+                )
         else:
             vehicles = []
 
@@ -469,12 +486,37 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         vehicles = [v for v in vehicles if isinstance(v, dict)]
 
         if not vehicles:
+            # Empty with route filter — retry WITHOUT filter and match
+            # client-side. Some NS API tiers return all trains; the
+            # `route` param is then a no-op.
+            status2, body2, data2 = await _try(
+                VIRTUAL_TRAIN_VEHICLE_URL, base_params,
+            )
+            if data2 is None:
+                status2, body2, data2 = await _try(
+                    VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL, base_params,
+                )
+            if isinstance(data2, dict):
+                payload2 = data2.get("payload")
+                if isinstance(payload2, dict):
+                    vehicles = (
+                        payload2.get("treinen")
+                        or payload2.get("trains")
+                        or payload2.get("vehicles")
+                        or []
+                    )
+                elif isinstance(payload2, list):
+                    vehicles = payload2
+            elif isinstance(data2, list):
+                vehicles = data2
+            vehicles = [v for v in vehicles if isinstance(v, dict)]
+
+        if not vehicles:
             if not warned_once:
                 bucket["_live_train_warned"] = True
-                snippet = str(data)[:500]
+                snippet = str(data)[:400]
                 _LOGGER.warning(
-                    "Live vehicle fetch %s: 200 but no dict-shaped vehicles. "
-                    "Raw response: %s",
+                    "Live vehicle fetch %s: empty. Raw response: %s",
                     train_number, snippet,
                 )
             return await self._async_station_based_position(train_number)
