@@ -399,12 +399,16 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         """Fetch the live position of a single train.
 
         Hits /virtual-train-api/api/v1/trein/{nr}. Returns None on any
-        error so the card can degrade gracefully.
+        error so the card can degrade gracefully. The first failure per
+        HA boot is logged at WARNING with HTTP status + truncated body
+        so users can spot a missing API subscription.
         """
         if not train_number:
             return None
         if not self.api_key:
             return None
+        bucket = self.hass.data.setdefault(DOMAIN, {})
+        warned_once = bool(bucket.get("_live_train_warned"))
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
         url = f"{VIRTUAL_TRAIN_API_URL}/{train_number}"
         try:
@@ -415,14 +419,33 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                     params={"features": "drukte"},
                 ) as resp:
                     if resp.status != 200:
-                        _LOGGER.debug(
-                            "Virtual train fetch %s -> HTTP %s",
-                            train_number, resp.status,
-                        )
+                        body = ""
+                        try:
+                            body = (await resp.text())[:400]
+                        except Exception:  # noqa: BLE001
+                            pass
+                        if not warned_once:
+                            bucket["_live_train_warned"] = True
+                            _LOGGER.warning(
+                                "Virtual train fetch %s returned HTTP %s. "
+                                "Check that your NS API key has the "
+                                "'Ns-App' (or equivalent virtual-train) "
+                                "subscription. Body: %s",
+                                train_number, resp.status, body,
+                            )
+                        else:
+                            _LOGGER.debug(
+                                "Virtual train fetch %s -> HTTP %s body=%s",
+                                train_number, resp.status, body,
+                            )
                         return None
                     data = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            _LOGGER.debug("Virtual train fetch %s failed: %s", train_number, err)
+            if not warned_once:
+                bucket["_live_train_warned"] = True
+                _LOGGER.warning("Virtual train fetch %s failed: %s", train_number, err)
+            else:
+                _LOGGER.debug("Virtual train fetch %s failed: %s", train_number, err)
             return None
 
         # Response shapes vary across NS API versions. Be liberal in what
