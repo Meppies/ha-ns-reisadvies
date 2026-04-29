@@ -221,9 +221,19 @@ class NSReisadviesCard extends HTMLElement {
       this.appendChild(card);
     }
 
-    if (this._config && this._config.entity) {
-      this.updateContent();
+    if (!this._config || !this._config.entity) return;
+
+    // Skip the re-render if our own sensor's state object did not
+    // change reference. HA emits a hass-update on every entity change
+    // in the system, but our card only cares about its own sensor.
+    // Without this gate the entire DOM is rewritten dozens of times
+    // per minute, causing the timeline line to visibly flicker.
+    const newState = hass.states[this._config.entity];
+    if (this._lastStateObj === newState) {
+      return;
     }
+    this._lastStateObj = newState;
+    this.updateContent();
   }
 
   // --- expiry / cleanup ----------------------------------------------------
@@ -444,23 +454,19 @@ class NSReisadviesCard extends HTMLElement {
     const c = leg && leg.composition;
     if (!c) return "";
     const parts = c.parts || [];
+    const num = c.numberOfParts;
+    // Tooltip: type + carriage count (zichtbaar bij hover)
+    const numLabel = num
+      ? (num === 1 ? t("carriages_one", this._hass) : t("carriages_other", this._hass, { n: num }))
+      : "";
+    const typeLabel = c.trainType || "";
+    const tooltip = [typeLabel, numLabel].filter(Boolean).join(" · ").replace(/"/g, "&quot;");
     const imgs = parts
       .filter(p => p.image)
-      .map(p => {
-        const alt = (p.type || c.trainType || "").replace(/"/g, "&quot;");
-        return `<img src="${p.image}" alt="${alt}" title="${alt}" loading="lazy">`;
-      })
+      .map(p => `<img src="${p.image}" alt="${tooltip}" title="${tooltip}" loading="lazy">`)
       .join("");
-    const num = c.numberOfParts;
-    let numText = "";
-    if (num === 1) numText = t("carriages_one", this._hass);
-    else if (num) numText = t("carriages_other", this._hass, { n: num });
-    const typeText = c.trainType ? `${numText ? " · " : ""}${c.trainType}` : "";
-    const text = (numText + typeText).trim();
-    if (!imgs && !text) return "";
-    return `<div class="tl-train-composition">${
-      imgs ? `<span class="tcomp-images">${imgs}</span>` : ""
-    }${text ? `<span class="tcomp-text">${text}</span>` : ""}</div>`;
+    if (!imgs) return "";
+    return `<div class="tl-train-composition"><span class="tcomp-images">${imgs}</span></div>`;
   }
 
   getCrowd(c) {
@@ -545,10 +551,9 @@ class NSReisadviesCard extends HTMLElement {
         .tl-train-details { color: var(--secondary-text-color); display: flex; align-items: center; flex-wrap: wrap; }
         .detail-separator { margin: 0 6px; opacity: 0.5; font-size: 0.8em; }
         .tl-train-meta { font-size: 0.85em; color: var(--secondary-text-color); margin-top: 4px; opacity: 0.8; }
-        .tl-train-composition { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 0.82em; color: var(--secondary-text-color); flex-wrap: wrap; }
-        .tl-train-composition .tcomp-images { display: inline-flex; align-items: center; gap: 2px; }
-        .tl-train-composition .tcomp-images img { height: 28px; width: auto; max-width: 90px; object-fit: contain; display: block; }
-        .tl-train-composition .tcomp-text { white-space: nowrap; opacity: 0.85; }
+        .tl-train-composition { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+        .tl-train-composition .tcomp-images { display: inline-flex; align-items: center; gap: 3px; }
+        .tl-train-composition .tcomp-images img { height: 48px; width: auto; max-width: 160px; object-fit: contain; display: block; }
         .tl-wait-row { display: grid; grid-template-columns: 75px 25px 1fr; height: 30px; align-items: center; }
         .tl-wait-line-col { display: flex; justify-content: center; }
         .tl-wait-text { padding-left: 12px; color: var(--secondary-text-color); font-style: italic; font-size: 0.9em; display: flex; align-items: center; }
@@ -960,7 +965,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.0.3 ",
+  "%c NS-REISADVIES-CARD %c v2.0.4 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
