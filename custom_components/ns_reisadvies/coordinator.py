@@ -454,6 +454,18 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         lat = payload.get("lat") or payload.get("latitude")
         lng = payload.get("lng") or payload.get("lon") or payload.get("longitude")
         if lat is None or lng is None:
+            # Status was 200 — log the raw payload so we can adapt to the
+            # actual NS response shape. This fires once per HA boot.
+            if not warned_once:
+                bucket["_live_train_warned"] = True
+                snippet = str(data)[:600]
+                _LOGGER.warning(
+                    "Virtual train fetch %s returned 200 but no lat/lng. "
+                    "Response keys=%s. First 600 chars: %s",
+                    train_number,
+                    list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+                    snippet,
+                )
             return None
         return {
             "lat": float(lat),
