@@ -6,12 +6,24 @@ import logging
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
 )
+
+# Module-level reference to the running HA instance, set by
+# async_setup_entry. async_get_options_flow runs in a static context
+# without access to hass; this lets us decide there whether the entry
+# in question is the primary one (i.e. the one that owns the shared
+# global options) so we can hide the gear icon on the others.
+_HASS_REF: HomeAssistant | None = None
+
+
+def _set_hass_ref(hass: HomeAssistant) -> None:
+    global _HASS_REF
+    _HASS_REF = hass
 
 from .const import (
     DOMAIN,
@@ -172,6 +184,17 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
+        # Only the primary entry (lowest entry_id) gets the Configure
+        # button — its options apply globally to every route. Returning
+        # None for the others tells HA there is no options flow, which
+        # hides the gear icon on those rows.
+        hass = _HASS_REF
+        if hass is not None:
+            entries = hass.config_entries.async_entries(DOMAIN)
+            if entries:
+                primary = sorted(entries, key=lambda e: e.entry_id)[0]
+                if primary.entry_id != config_entry.entry_id:
+                    return None
         return NSReisadviesOptionsFlowHandler(config_entry)
 
     async def async_step_user(self, user_input=None):

@@ -76,6 +76,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up an NS Reisadvies entry and register the Lovelace card path."""
     hass.data.setdefault(DOMAIN, {})
 
+    # Allow the static `async_get_options_flow` in config_flow to look
+    # up the running hass instance. Used to hide the gear on every
+    # entry except the primary, since the options are integration-wide.
+    from . import config_flow as _cf  # local import to avoid cycle at module load
+    _cf._set_hass_ref(hass)
+
     # Globale options: alle entries delen dezelfde api_key, interval,
     # fav_hours en fetch_composition. Lokale data: from/to station.
     api_key = _global_opt(hass, entry, CONF_API_KEY, None)
