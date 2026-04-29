@@ -6,6 +6,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.components.http import StaticPathConfig
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.loader import async_get_integration
 
 from .const import (
     DOMAIN,
@@ -22,6 +24,7 @@ from .coordinator import NSUpdateCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR]
+CARD_URL = "/ns_reisadvies/ns-reisadvies-card.js"
 
 
 def _opt(entry: ConfigEntry, key: str, default):
@@ -52,7 +55,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Register the static path for the Lovelace card once per HA instance.
+    # Register the static path for the Lovelace card once per HA instance,
+    # AND auto-register the JS file as an extra dashboard module so users
+    # do not need to add it manually under Settings → Dashboards →
+    # Resources. The integration version is appended as a cache-buster.
     if "static_paths_registered" not in hass.data[DOMAIN]:
         path = hass.config.path("custom_components/ns_reisadvies/www")
         if os.path.isdir(path):
@@ -65,6 +71,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ])
             hass.data[DOMAIN]["static_paths_registered"] = True
             _LOGGER.info("Registered Lovelace card path /ns_reisadvies")
+
+            try:
+                integration = await async_get_integration(hass, DOMAIN)
+                version = integration.version or "0"
+            except Exception:  # noqa: BLE001
+                version = "0"
+            add_extra_js_url(hass, f"{CARD_URL}?v={version}")
+            hass.data[DOMAIN]["card_url_registered"] = True
+            _LOGGER.info("Auto-registered Lovelace card v%s", version)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

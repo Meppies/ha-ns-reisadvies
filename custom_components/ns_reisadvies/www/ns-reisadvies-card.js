@@ -110,18 +110,40 @@ class NSReisadviesCard extends HTMLElement {
     // Short-lived working memory for snappy reactions to user clicks.
     this._pendingTrack = new Set();
     this._pendingUntrack = new Set();
-    this._autoPinned = new Set();
-    this._autoPinnedDay = null;
 
-    // Local log just to track the "age" of a favourite. The integration
-    // also enforces a server-side TTL — this is a fallback for older
-    // installs and for instant client-side feedback.
-    this.lsKey = `ns_fav_times_${this._config.entity || "default"}`;
+    const entityKey = this._config.entity || "default";
+
+    // Local log to track the "age" of a heart. Acts as a fallback —
+    // the integration itself enforces a server-side TTL.
+    this.lsKey = `ns_fav_times_${entityKey}`;
     try {
       this.favTimestamps = JSON.parse(localStorage.getItem(this.lsKey)) || {};
     } catch (e) {
       this.favTimestamps = {};
     }
+
+    // Track which AUTO-PIN SLOTS have already been used today, persisted
+    // in localStorage so a browser refresh does not cause a second
+    // auto-pin for the same slot. Per slot per day, never per ctxRecon —
+    // the NS API rolls trips out of its window during the day, so the
+    // "best match" for a slot can change while the slot is satisfied.
+    this.lsKeyAutoPin = `ns_autopin_${entityKey}`;
+    this._autoPinnedDay = this._dayKey();
+    try {
+      const raw = JSON.parse(localStorage.getItem(this.lsKeyAutoPin)) || {};
+      if (raw.day === this._autoPinnedDay && Array.isArray(raw.slots)) {
+        this._autoPinnedSlots = new Set(raw.slots);
+      } else {
+        this._autoPinnedSlots = new Set();
+      }
+    } catch (e) {
+      this._autoPinnedSlots = new Set();
+    }
+  }
+
+  _dayKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
   }
 
   saveTimestamps() {
@@ -129,6 +151,17 @@ class NSReisadviesCard extends HTMLElement {
       localStorage.setItem(this.lsKey, JSON.stringify(this.favTimestamps));
     } catch (e) {
       // localStorage may be unavailable in sandboxed iframes.
+    }
+  }
+
+  saveAutoPinned() {
+    try {
+      localStorage.setItem(this.lsKeyAutoPin, JSON.stringify({
+        day: this._autoPinnedDay,
+        slots: Array.from(this._autoPinnedSlots),
+      }));
+    } catch (e) {
+      // ignore
     }
   }
 
@@ -182,7 +215,6 @@ class NSReisadviesCard extends HTMLElement {
         }).catch(() => {});
 
         delete this.favTimestamps[ctx];
-        this._autoPinned.delete(ctx);
         changed = true;
       }
     });
@@ -191,7 +223,6 @@ class NSReisadviesCard extends HTMLElement {
     knownCtx.forEach(ctx => {
       if (!serverTracked.includes(ctx) && !this._pendingTrack.has(ctx)) {
         delete this.favTimestamps[ctx];
-        this._autoPinned.delete(ctx);
         changed = true;
       }
     });
@@ -206,7 +237,6 @@ class NSReisadviesCard extends HTMLElement {
     if (isCurrentlyTracked) {
       this._pendingUntrack.add(ctxRecon);
       this._pendingTrack.delete(ctxRecon);
-      this._autoPinned.delete(ctxRecon);
       delete this.favTimestamps[ctxRecon];
 
       this._hass.callService("ns_reisadvies", "untrack_trip", {
@@ -232,13 +262,57 @@ class NSReisadviesCard extends HTMLElement {
     const trackedTrips = stateObj.attributes.tracked_trips || [];
     const dag = new Date().getDay();
 
-    // Reset _autoPinned at midnight so the next morning re-pins.
-    if (this._autoPinnedDay !== dag) {
-      this._autoPinned = new Set();
-      this._autoPinnedDay = dag;
+    // Reset the "already auto-pinned today" set at midnight so that the
+    // next morning's slots can pin again.
+    const todayKey = this._dayKey();
+    if (this._autoPinnedDay !== todayKey) {
+      this._autoPinnedDay = todayKey;
+      this._autoPinnedSlots = new Set();
+      this.saveAutoPinned();
     }
 
+    const tripDuration = (trip) => {
+      // Prefer actualDurationInMinutes, fall back to plannedDuration,
+      // fall back to a computed difference between origin and final
+      // destination plannedDateTime.
+      if (typeof trip.actualDurationInMinutes === "number") return trip.actualDurationInMinutes;
+      if (typeof trip.plannedDurationInMinutes === "number") return trip.plannedDurationInMinutes;
+      try {
+        const o = new Date(trip.legs[0].origin.plannedDateTime);
+        const lastLeg = trip.legs[trip.legs.length - 1];
+        const d = new Date(lastLeg.destination.plannedDateTime);
+        return Math.round((d - o) / 60000);
+      } catch (e) {
+        return 9999;
+      }
+    };
+
+    // Comparator returning the "better" trip per the user's tie-break
+    // rules:
+    //   1. Smallest |diff| (closest to favourite time).
+    //   2. If equal: prefer the one BEFORE the favourite time
+    //      (negative diff wins over positive).
+    //   3. If both on the same side: shortest travel time wins.
+    const isBetter = (cand, candDiff, current, currentDiff) => {
+      if (current === null) return true;
+      const aC = Math.abs(candDiff);
+      const aB = Math.abs(currentDiff);
+      if (aC !== aB) return aC < aB;
+      // Same absolute distance: prefer "before" (negative diff).
+      if (Math.sign(candDiff) !== Math.sign(currentDiff)) {
+        return candDiff < currentDiff;
+      }
+      // Same side: shortest journey wins.
+      return tripDuration(cand) < tripDuration(current);
+    };
+
     for (let i = 1; i <= (this._config.fav_slots || 1); i++) {
+      const slotKey = `slot_${i}`;
+      // Already auto-pinned for this slot today → skip silently. The
+      // pinned trip may have rolled out of the NS window by now, but
+      // that is fine — the user only asked for one per slot per day.
+      if (this._autoPinnedSlots.has(slotKey)) continue;
+
       const h = this._config[`auto_hour_${i}`];
       const m = this._config[`auto_min_${i}`];
       const daysStr = this._config[`auto_days_${i}`] || "";
@@ -247,14 +321,12 @@ class NSReisadviesCard extends HTMLElement {
       if (h === undefined || m === undefined) continue;
       if (!activeDays.includes(dag)) continue;
 
-      let bestTrip = null;
-      let minAbsDiff = Infinity;
-      let bestDiff = Infinity;
       const favMinutes = parseInt(h, 10) * 60 + parseInt(m, 10);
+      let bestTrip = null;
+      let bestDiff = 0;
 
-      stateObj.attributes.trips.forEach(trip => {
+      (stateObj.attributes.trips || []).forEach(trip => {
         if (!trip.legs || !trip.legs[0] || !trip.ctxRecon) return;
-
         const tDate = new Date(trip.legs[0].origin.plannedDateTime);
         if (isNaN(tDate.getTime())) return;
         const tripMinutes = tDate.getHours() * 60 + tDate.getMinutes();
@@ -262,36 +334,31 @@ class NSReisadviesCard extends HTMLElement {
         let diff = tripMinutes - favMinutes;
         if (diff < -720) diff += 1440;
         if (diff > 720) diff -= 1440;
+        if (Math.abs(diff) > 60) return;  // only consider trips within ±1h
 
-        const absDiff = Math.abs(diff);
-
-        if (absDiff <= 60) {
-          if (absDiff < minAbsDiff) {
-            minAbsDiff = absDiff;
-            bestDiff = diff;
-            bestTrip = trip;
-          } else if (absDiff === minAbsDiff && diff < bestDiff) {
-            bestDiff = diff;
-            bestTrip = trip;
-          }
+        if (isBetter(trip, diff, bestTrip, bestDiff)) {
+          bestTrip = trip;
+          bestDiff = diff;
         }
       });
 
-      if (bestTrip) {
-        const ctx = bestTrip.ctxRecon;
-        if (!trackedTrips.includes(ctx) && !this._autoPinned.has(ctx)) {
-          this._autoPinned.add(ctx);
-          this._pendingTrack.add(ctx);
-          this.favTimestamps[ctx] = Date.now();
-          this.saveTimestamps();
+      if (!bestTrip) continue;
 
-          this._hass.callService("ns_reisadvies", "track_trip", {
-            entity_id: this._config.entity,
-            ctx_recon: ctx,
-          }).catch(() => {});
+      const ctx = bestTrip.ctxRecon;
+      // Either pin it ourselves or, if the server already tracks it,
+      // simply mark the slot as satisfied for the day.
+      this._autoPinnedSlots.add(slotKey);
+      this.saveAutoPinned();
 
-          setTimeout(() => this.updateContent(), 50);
-        }
+      if (!trackedTrips.includes(ctx)) {
+        this._pendingTrack.add(ctx);
+        this.favTimestamps[ctx] = Date.now();
+        this.saveTimestamps();
+        this._hass.callService("ns_reisadvies", "track_trip", {
+          entity_id: this._config.entity,
+          ctx_recon: ctx,
+        }).catch(() => {});
+        setTimeout(() => this.updateContent(), 50);
       }
     }
   }
@@ -694,8 +761,16 @@ class NSReisadviesEditor extends HTMLElement {
   }
 }
 
-customElements.define("ns-reisadvies-editor", NSReisadviesEditor);
-customElements.define("ns-reisadvies-card", NSReisadviesCard);
+// Idempotent registration — the integration auto-registers this script
+// via add_extra_js_url, but a user might also have it pinned manually
+// under Settings → Dashboards → Resources. Guarding the define() calls
+// prevents the "already defined" error in that case.
+if (!customElements.get("ns-reisadvies-editor")) {
+  customElements.define("ns-reisadvies-editor", NSReisadviesEditor);
+}
+if (!customElements.get("ns-reisadvies-card")) {
+  customElements.define("ns-reisadvies-card", NSReisadviesCard);
+}
 
 // Register the card with Home Assistant so it shows up in the
 // "Add card" picker. Without this entry the JS file still loads,
@@ -710,7 +785,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v1.4.5 ",
+  "%c NS-REISADVIES-CARD %c v1.4.6 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
