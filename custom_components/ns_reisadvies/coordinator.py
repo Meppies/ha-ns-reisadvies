@@ -55,6 +55,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         # Cleared at the start of each _async_update_data run so that
         # the same train fetched twice in one refresh hits the cache.
         self._composition_cache: dict[str, dict | None] = {}
+        # Whether the first composition error of the current refresh has
+        # already been logged at warning level. Reset per refresh.
+        self._composition_warned: bool = False
 
         # Persistent storage so favourites survive a Home Assistant restart.
         self._store = Store(
@@ -152,14 +155,36 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                 params={"train": train_number, "omitCrowdForecast": "true"},
             ) as resp:
                 if resp.status != 200:
-                    _LOGGER.debug(
-                        "Journey composition fetch %s -> HTTP %s", train_number, resp.status
-                    )
+                    # First failure of the run is logged at warning level
+                    # so the user can see access/rate-limit problems
+                    # without having to enable debug logging.
+                    if not self._composition_warned:
+                        self._composition_warned = True
+                        _LOGGER.warning(
+                            "Journey composition fetch failed: HTTP %s for train %s. "
+                            "Check that your NS API key has access to the "
+                            "/reisinformatie-api/api/v3/journey endpoint.",
+                            resp.status, train_number,
+                        )
+                    else:
+                        _LOGGER.debug(
+                            "Journey composition fetch %s -> HTTP %s",
+                            train_number, resp.status,
+                        )
                     self._composition_cache[train_number] = None
                     return None
                 data = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-            _LOGGER.debug("Journey composition fetch %s failed: %s", train_number, err)
+            if not self._composition_warned:
+                self._composition_warned = True
+                _LOGGER.warning(
+                    "Journey composition fetch failed for train %s: %s",
+                    train_number, err,
+                )
+            else:
+                _LOGGER.debug(
+                    "Journey composition fetch %s failed: %s", train_number, err
+                )
             self._composition_cache[train_number] = None
             return None
 
@@ -193,8 +218,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         """Add a `composition` field to every leg with a known train number."""
         if not self.fetch_composition:
             return
-        # Reset cache at the start of this refresh
+        # Reset cache and warning gate at the start of this refresh
         self._composition_cache = {}
+        self._composition_warned = False
 
         # Collect unique train numbers across all legs
         train_numbers: set[str] = set()

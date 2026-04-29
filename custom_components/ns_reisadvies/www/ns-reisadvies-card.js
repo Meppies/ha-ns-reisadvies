@@ -20,6 +20,7 @@ const I18N = {
     show_stops: "Show stops",
     hide_stops: "Hide stops",
     stop_passing: "(does not stop)",
+    checkout_checkin: "Check out {from}, check in {to}",
     stop_arrival_short: "A",
     stop_departure_short: "D",
     carriages_one: "1 carriage",
@@ -55,6 +56,7 @@ const I18N = {
     show_stops: "Toon tussenstops",
     hide_stops: "Verberg tussenstops",
     stop_passing: "(stopt niet)",
+    checkout_checkin: "Check-uit {from}, check-in {to}",
     stop_arrival_short: "A",
     stop_departure_short: "V",
     carriages_one: "1 bak",
@@ -112,6 +114,26 @@ function t(key, hass, vars) {
 
 class NSReisadviesCard extends HTMLElement {
   setConfig(config) {
+    // Wrap the whole body in a try/catch so an unexpected
+    // localStorage failure or a transient null state during a HA
+    // reload cannot bubble up as a "Configuration error" badge in
+    // Lovelace. Anything that fails here falls back to a default and
+    // the next hass setter call will recover.
+    try {
+      this._setConfigInner(config);
+    } catch (err) {
+      console.warn("ns-reisadvies-card setConfig failed, using defaults:", err);
+      this._config = { title: "NS Reisadvies", max_rows: 5, scale: 100, fav_slots: 1, fav_hours: 6, ...config };
+      this._pendingTrack = new Set();
+      this._pendingUntrack = new Set();
+      this._expandedLegs = new Set();
+      this.favTimestamps = {};
+      this._autoPinnedSlots = new Set();
+      this._autoPinnedDay = null;
+    }
+  }
+
+  _setConfigInner(config) {
     this._config = {
       title: "NS Reisadvies",
       max_rows: 5,
@@ -530,6 +552,10 @@ class NSReisadviesCard extends HTMLElement {
         .tl-wait-row { display: grid; grid-template-columns: 75px 25px 1fr; height: 30px; align-items: center; }
         .tl-wait-line-col { display: flex; justify-content: center; }
         .tl-wait-text { padding-left: 12px; color: var(--secondary-text-color); font-style: italic; font-size: 0.9em; display: flex; align-items: center; }
+        .tl-checkout-row { display: grid; grid-template-columns: 75px 25px 1fr; height: 26px; align-items: center; }
+        .tl-checkout-line-col { display: flex; justify-content: center; }
+        .tl-checkout-text { padding-left: 12px; color: #FFC917; font-style: italic; font-size: 0.85em; display: flex; align-items: center; gap: 4px; }
+        .tl-checkout-text ha-icon { --mdc-icon-size: 14px; opacity: 0.85; }
         .cancelled { text-decoration: line-through; text-decoration-color: #ff5252; opacity: 0.7; }
         .warning-msg { color: #ff5252; font-weight: bold; font-size: 0.9em; margin-left: 12px; text-transform: uppercase; margin-top: 8px; }
         .direct-text { color: #4CAF50; font-weight: bold; }
@@ -687,6 +713,18 @@ class NSReisadviesCard extends HTMLElement {
             : t("transfer_n", this._hass, { n: wMin });
           html += `<div class="tl-wait-row"><div></div><div class="tl-wait-line-col"><ha-icon icon="mdi:walk" style="--mdc-icon-size:16px; color:#888;"></ha-icon></div>
           <div class="tl-wait-text ${cCls}">${transferText}</div></div>`;
+
+          // When the operator changes between legs (e.g. NS Sprinter
+          // to Blauwnet) NS itself shows a check-out / check-in note
+          // because the OV-chipkaart needs separate taps. Mirror that
+          // in the card so travellers do not forget.
+          const fromOp = (leg.product && (leg.product.operatorName || leg.product.operatorCode)) || "";
+          const toOp = (nextLeg.product && (nextLeg.product.operatorName || nextLeg.product.operatorCode)) || "";
+          if (fromOp && toOp && fromOp.toLowerCase() !== toOp.toLowerCase()) {
+            const text = t("checkout_checkin", this._hass, { from: fromOp, to: toOp });
+            html += `<div class="tl-checkout-row"><div></div><div class="tl-checkout-line-col"><ha-icon icon="mdi:contactless-payment-circle-outline"></ha-icon></div>
+            <div class="tl-checkout-text ${cCls}">${text}</div></div>`;
+          }
         }
       });
       if (isCancelled) {
@@ -922,7 +960,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.0.1 ",
+  "%c NS-REISADVIES-CARD %c v2.0.2 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
