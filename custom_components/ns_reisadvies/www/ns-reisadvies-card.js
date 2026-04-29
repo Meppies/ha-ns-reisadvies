@@ -838,7 +838,25 @@ class NSReisadviesEditor extends HTMLElement {
 
   render() {
     if (!this._hass || !this._config) return;
-    const entities = Object.keys(this._hass.states).filter(e => e.startsWith("sensor.ns_")).sort();
+    // Prefer entity registry (hass.entities) so we only show OUR sensors and
+    // exclude unrelated integrations (e.g. nederlandse_spoorwegen) that also
+    // register sensor.ns_* entities. Fall back to the prefix-match if the
+    // registry data isn't available for some reason.
+    const reg = this._hass.entities;
+    let entities;
+    if (reg && typeof reg === "object") {
+      entities = Object.keys(reg)
+        .filter(eid => eid.startsWith("sensor.") && reg[eid] && reg[eid].platform === "ns_reisadvies")
+        .sort();
+    } else {
+      entities = Object.keys(this._hass.states).filter(e => e.startsWith("sensor.ns_")).sort();
+    }
+    // If the configured entity isn't in the list (e.g. user has a stale
+    // config or has a sensor from outside the registry), keep it visible
+    // so the dropdown still reflects current state.
+    if (this._config.entity && !entities.includes(this._config.entity)) {
+      entities = entities.concat([this._config.entity]).sort();
+    }
     const lang = _lang(this._hass);
     const dict = I18N[lang] || I18N.en;
     const labels = dict.weekdays;
@@ -1022,7 +1040,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.1.0 ",
+  "%c NS-REISADVIES-CARD %c v2.1.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

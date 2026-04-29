@@ -268,6 +268,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = coordinators
 
+    # Backfill: link existing entities to their subentry by unique_id.
+    # Entities created before HA's subentry-aware async_add_entities have
+    # config_subentry_id=None; this rewrites them so HA tracks the link
+    # and the entity is shown under the right subentry in the UI.
+    _backfill_entity_subentries(hass, entry)
+
     # Static path + Lovelace card auto-registration (one-shot per HA).
     if "static_paths_registered" not in hass.data[DOMAIN]:
         path = hass.config.path("custom_components/ns_reisadvies/www")
@@ -294,6 +300,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
+
+
+def _backfill_entity_subentries(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Set config_subentry_id on existing entities by matching unique_id.
+
+    Older sensors created before HA's subentry-aware async_add_entities
+    (or added via legacy migration) end up with config_subentry_id=None
+    even though they conceptually belong to a subentry. This function
+    finds them by unique_id and links them to the matching subentry.
+    """
+    ent_reg = er.async_get(hass)
+    # Build a unique_id -> subentry_id map for this hub's route subentries.
+    uid_to_subentry: dict[str, str] = {}
+    for sub_id, sub in (entry.subentries or {}).items():
+        if sub.subentry_type != SUBENTRY_TYPE_ROUTE:
+            continue
+        from_st = sub.data.get(CONF_FROM_STATION)
+        to_st = sub.data.get(CONF_TO_STATION)
+        if not from_st or not to_st:
+            continue
+        uid_to_subentry[f"{from_st}_{to_st}".lower()] = sub_id
+
+    for ent in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+        if ent.config_subentry_id:
+            continue
+        target = uid_to_subentry.get(ent.unique_id)
+        if not target:
+            continue
+        try:
+            ent_reg.async_update_entity(
+                ent.entity_id, config_subentry_id=target
+            )
+            _LOGGER.debug(
+                "Linked %s (uid=%s) to subentry %s",
+                ent.entity_id, ent.unique_id, target,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning(
+                "Could not link %s to subentry %s: %s",
+                ent.entity_id, target, err,
+            )
 
 
 async def _async_register_card_resource(hass: HomeAssistant, version: str) -> None:

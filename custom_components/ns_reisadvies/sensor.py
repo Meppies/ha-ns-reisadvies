@@ -16,6 +16,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .const import DOMAIN, SUBENTRY_TYPE_ROUTE, CONF_FROM_STATION, CONF_TO_STATION
 
@@ -30,7 +31,8 @@ async def async_setup_entry(
     if coordinators is None:
         raise ConfigEntryNotReady("Waiting for NS Reisadvies hub")
 
-    sensors: list[NSReisadviesSensor] = []
+    # Group sensors by subentry so we can pass config_subentry_id per add call
+    by_subentry: dict[str, list[NSReisadviesSensor]] = {}
     for subentry_id, subentry in (entry.subentries or {}).items():
         if subentry.subentry_type != SUBENTRY_TYPE_ROUTE:
             continue
@@ -40,14 +42,25 @@ async def async_setup_entry(
         from_st = subentry.data.get(CONF_FROM_STATION) or "?"
         to_st = subentry.data.get(CONF_TO_STATION) or "?"
         unique_id = f"{from_st}_{to_st}".lower()
-        sensors.append(
+        # Suggested entity_id slug: ns_<from>_<to> with HA slugify (handles spaces,
+        # diacritics, etc). Existing entities keep their registry entity_id; this
+        # only kicks in for newly registered routes.
+        suggested = f"ns_{slugify(from_st)}_{slugify(to_st)}"
+        by_subentry.setdefault(subentry_id, []).append(
             NSReisadviesSensor(
                 coord,
                 name=subentry.title or f"NS {from_st} -> {to_st}",
                 unique_id=unique_id,
+                suggested_object_id=suggested,
             )
         )
-    async_add_entities(sensors)
+
+    for subentry_id, sensors in by_subentry.items():
+        try:
+            async_add_entities(sensors, config_subentry_id=subentry_id)
+        except TypeError:
+            # HA < 2024.11 does not accept config_subentry_id on async_add_entities.
+            async_add_entities(sensors)
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -64,10 +77,18 @@ class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
 
     _attr_should_poll = False
 
-    def __init__(self, coordinator, name: str, unique_id: str) -> None:
+    def __init__(
+        self,
+        coordinator,
+        name: str,
+        unique_id: str,
+        suggested_object_id: str | None = None,
+    ) -> None:
         super().__init__(coordinator)
         self._attr_name = name
         self._attr_unique_id = unique_id
+        if suggested_object_id:
+            self._attr_suggested_object_id = suggested_object_id
 
     @property
     def native_value(self):
