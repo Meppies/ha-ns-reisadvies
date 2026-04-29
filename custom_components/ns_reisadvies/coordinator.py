@@ -188,8 +188,13 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             self._composition_cache[train_number] = None
             return None
 
+        # /v2/journey returns composition per-stop, not at the payload
+        # root. Pick the origin stop (status=ORIGIN, falls back to the
+        # first stop) and read its actualStock or plannedStock.
         payload = (data or {}).get("payload") or {}
-        stock = payload.get("actualStock") or payload.get("plannedStock") or {}
+        stops = payload.get("stops") or []
+        origin_stop = next((s for s in stops if s.get("status") == "ORIGIN"), None) or (stops[0] if stops else {})
+        stock = origin_stop.get("actualStock") or origin_stop.get("plannedStock") or {}
         train_parts = stock.get("trainParts") or []
         slim = {
             "trainType": stock.get("trainType"),

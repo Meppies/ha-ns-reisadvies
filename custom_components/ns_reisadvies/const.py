@@ -30,7 +30,7 @@ DEFAULT_FETCH_COMPOSITION = False  # extra API calls — opt in
 # API URLs
 API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips"
 TRIP_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips/trip"
-JOURNEY_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/journey"
+JOURNEY_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/journey"
 
 # Storage
 STORAGE_VERSION = 1
