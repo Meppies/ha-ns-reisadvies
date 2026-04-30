@@ -1070,9 +1070,12 @@ class NSReisadviesCard extends HTMLElement {
 
     // Anchor: the planned departure of THIS specific train run, used by
     // the backend to pass `dateTime` to /v1/trein/{nr} so NS picks the
-    // right physical rotation. Using planned (not actual) avoids a wild
-    // jump if NS is slow to publish the actual.
-    const anchor = leg.origin?.plannedDepartureDateTime
+    // right physical rotation. NS uses different field names depending
+    // on the response shape: leg.origin uses plannedDateTime/actualDateTime;
+    // leg.stops uses plannedDepartureDateTime/actualDepartureDateTime.
+    const anchor = leg.origin?.plannedDateTime
+      || leg.origin?.actualDateTime
+      || leg.origin?.plannedDepartureDateTime
       || leg.origin?.actualDepartureDateTime
       || null;
 
@@ -1703,7 +1706,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.9 ",
+  "%c NS-REISADVIES-CARD %c v2.3.10 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
