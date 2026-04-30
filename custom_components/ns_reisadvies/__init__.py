@@ -275,7 +275,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             fetch_composition=fetch_composition,
         )
         await coordinator.async_load_tracked()
-        await coordinator.async_config_entry_first_refresh()
+        # Use async_refresh (which never throws) instead of
+        # async_config_entry_first_refresh: a transient NS API outage
+        # (HTTP 5xx) on first boot would otherwise put the WHOLE entry in
+        # setup_retry, so all our sensors disappear and the user's
+        # Lovelace cards show "Configuration error" until NS recovers.
+        # async_refresh logs the failure but keeps coordinator.data=None,
+        # so the sensor exists in "No trips" state and the UI stays alive
+        # while the periodic update retries on its own.
+        await coordinator.async_refresh()
         coordinators[subentry_id] = coordinator
 
     hass.data[DOMAIN][entry.entry_id] = coordinators
