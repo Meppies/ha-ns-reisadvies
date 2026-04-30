@@ -850,16 +850,30 @@ class NSReisadviesCard extends HTMLElement {
       btn.addEventListener("click", (e) => this.toggleStops(key, e));
     });
 
-    const mapBtns = this.content.querySelectorAll(`.tl-map-icon-btn`);
-    mapBtns.forEach(btn => {
-      const tIdx = parseInt(btn.getAttribute("data-trip-idx"), 10);
-      const lIdx = parseInt(btn.getAttribute("data-leg-idx"), 10);
-      btn.addEventListener("click", (e) => {
+    // Event delegation at the card root so the handler survives any
+    // re-render and so the click can't be intercepted by an ancestor
+    // before reaching us. Use capture phase to win against HA's own
+    // click handlers on parent elements.
+    if (!this._mapDelegated) {
+      this._mapDelegated = true;
+      const handler = (e) => {
+        const t = e.target;
+        if (!t || !t.closest) return;
+        const btn = t.closest('.tl-map-icon-btn');
+        if (!btn || !this.contains(btn)) return;
         e.preventDefault();
         e.stopPropagation();
-        this.openLiveMap(tIdx, lIdx);
-      });
-    });
+        const tIdx = parseInt(btn.getAttribute("data-trip-idx"), 10);
+        const lIdx = parseInt(btn.getAttribute("data-leg-idx"), 10);
+        console.info("[ns-reisadvies] live map click", {tIdx, lIdx});
+        try {
+          this.openLiveMap(tIdx, lIdx);
+        } catch (err) {
+          console.error("[ns-reisadvies] openLiveMap threw:", err);
+        }
+      };
+      this.addEventListener("click", handler, true);
+    }
 
     // Drag-to-scroll for the carriage composition strip on desktop.
     // Touch devices scroll natively via swipe; mouse-wheel works too.
@@ -1307,7 +1321,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.2.10 ",
+  "%c NS-REISADVIES-CARD %c v2.2.11 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
