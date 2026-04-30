@@ -1307,7 +1307,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.2.1 ",
+  "%c NS-REISADVIES-CARD %c v2.2.10 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
