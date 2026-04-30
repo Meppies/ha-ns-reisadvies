@@ -540,41 +540,13 @@ async def _ws_track_train_start(
     plotted = [s for s in resolved if s.get("lat") is not None and s.get("lng") is not None]
     journey_stops = resolved
 
-    pos_raw = await coord.async_fetch_live_train(train_number, anchor_iso=anchor_iso)
-
-    # Sanity check: NS' /v1/trein/{ritnummer} reuses ritnummers between
-    # lines, so we can land on a different train with the same number.
-    # If the returned station is more than ~50 km from every known stop
-    # of THIS leg, it is almost certainly a different run — drop it.
-    # Otherwise accept (an exact-UIC-match check rejected too many real
-    # positions, e.g. when NS reports a station that's part of the train
-    # journey but not yet in the user's planning leg).
-    pos = pos_raw
-    if pos_raw and pos_raw.get("lat") is not None and pos_raw.get("lng") is not None:
-        from math import radians, sin, cos, asin, sqrt
-        def _km(a_lat, a_lng, b_lat, b_lng):
-            R = 6371.0
-            la1, lo1, la2, lo2 = map(radians, [a_lat, a_lng, b_lat, b_lng])
-            dla = la2 - la1
-            dlo = lo2 - lo1
-            h = sin(dla / 2) ** 2 + cos(la1) * cos(la2) * sin(dlo / 2) ** 2
-            return 2 * R * asin(sqrt(h))
-        nearest = None
-        for s in resolved:
-            if s.get("lat") is None or s.get("lng") is None:
-                continue
-            d = _km(pos_raw["lat"], pos_raw["lng"], s["lat"], s["lng"])
-            if nearest is None or d < nearest:
-                nearest = d
-        if nearest is not None and nearest > 50:
-            _LOGGER.warning(
-                "Train %s: NS returned station %s (%.4f,%.4f) which is %.1f km "
-                "from the nearest leg stop. Likely a different train run "
-                "sharing the ritnummer; dropping position.",
-                train_number, pos_raw.get("station_code"),
-                pos_raw["lat"], pos_raw["lng"], nearest,
-            )
-            pos = None
+    # Position is computed client-side from leg.stops + wall clock —
+    # see _interpolateTrainPos() in the card. NS' /v1/trein/{ritnummer}
+    # silently returns a different physical train when ritnummers are
+    # reused (and the dateTime anchor turned out not to disambiguate),
+    # so calling it here just feeds the card a misleading fallback.
+    # We keep `train_position: None` and let the card interpolate.
+    pos = None
 
     session_id = secrets.token_hex(6)
     train_entity_id = f"device_tracker.ns_reisadvies_train_{session_id}"
@@ -633,27 +605,9 @@ async def _ws_track_train_poll(
         connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
         return
 
-    pos_raw = await coord.async_fetch_live_train(
-        sess["train_number"], anchor_iso=sess.get("anchor"),
-    )
-    # Same distance-based validation as on start.
-    pos = pos_raw
-    leg_points = sess.get("leg_points") or []
-    if pos_raw and pos_raw.get("lat") is not None and leg_points:
-        from math import radians, sin, cos, asin, sqrt
-        def _km(a_lat, a_lng, b_lat, b_lng):
-            R = 6371.0
-            la1, lo1, la2, lo2 = map(radians, [a_lat, a_lng, b_lat, b_lng])
-            dla = la2 - la1; dlo = lo2 - lo1
-            h = sin(dla/2)**2 + cos(la1)*cos(la2)*sin(dlo/2)**2
-            return 2 * R * asin(sqrt(h))
-        nearest = min(_km(pos_raw["lat"], pos_raw["lng"], la, lo) for la, lo in leg_points)
-        if nearest > 50:
-            _LOGGER.warning(
-                "Train %s poll: position %.1f km from nearest leg stop; dropping.",
-                sess["train_number"], nearest,
-            )
-            pos = None
+    # Same as on start: don't fetch /v1/trein at all — the card derives
+    # position client-side from leg.stops + wall clock.
+    pos = None
     if pos:
         _set_train_state(
             hass,
