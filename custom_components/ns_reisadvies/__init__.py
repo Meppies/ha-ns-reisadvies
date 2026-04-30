@@ -540,32 +540,39 @@ async def _ws_track_train_start(
 
     pos_raw = await coord.async_fetch_live_train(train_number)
 
-    # Validate the position: NS' /v1/trein/{nr} keys on bare ritnummer,
-    # which gets reused across operators and lines. If the returned
-    # `station_code` does not appear in this leg's stops, we are looking
-    # at a different train run that shares the number — drop it rather
-    # than plotting a misleading marker.
+    # Sanity check: NS' /v1/trein/{ritnummer} reuses ritnummers between
+    # lines, so we can land on a different train with the same number.
+    # If the returned station is more than ~50 km from every known stop
+    # of THIS leg, it is almost certainly a different run — drop it.
+    # Otherwise accept (an exact-UIC-match check rejected too many real
+    # positions, e.g. when NS reports a station that's part of the train
+    # journey but not yet in the user's planning leg).
     pos = pos_raw
-    if pos_raw and pos_raw.get("station_code"):
-        target = pos_raw["station_code"].upper()
-        leg_codes = {(s.get("uicCode") or "").upper() for s in resolved}
-        # Compare via NS short code: look up the entry from the geo cache
-        # (which indexes both by short code and UIC) and check its UIC
-        # against the leg's stops.
-        from_geo = geo.get(target)
-        target_uic = (from_geo and from_geo.get("uic")) or ""
-        if target_uic and target_uic not in leg_codes:
-            _LOGGER.debug(
-                "Train %s: /v1/trein returned station %s (UIC %s) which is "
-                "not in this journey's stops %s — likely a different train "
-                "with the same ritnummer; dropping position.",
-                train_number, target, target_uic, leg_codes,
+    if pos_raw and pos_raw.get("lat") is not None and pos_raw.get("lng") is not None:
+        from math import radians, sin, cos, asin, sqrt
+        def _km(a_lat, a_lng, b_lat, b_lng):
+            R = 6371.0
+            la1, lo1, la2, lo2 = map(radians, [a_lat, a_lng, b_lat, b_lng])
+            dla = la2 - la1
+            dlo = lo2 - lo1
+            h = sin(dla / 2) ** 2 + cos(la1) * cos(la2) * sin(dlo / 2) ** 2
+            return 2 * R * asin(sqrt(h))
+        nearest = None
+        for s in resolved:
+            if s.get("lat") is None or s.get("lng") is None:
+                continue
+            d = _km(pos_raw["lat"], pos_raw["lng"], s["lat"], s["lng"])
+            if nearest is None or d < nearest:
+                nearest = d
+        if nearest is not None and nearest > 50:
+            _LOGGER.warning(
+                "Train %s: NS returned station %s (%.4f,%.4f) which is %.1f km "
+                "from the nearest leg stop. Likely a different train run "
+                "sharing the ritnummer; dropping position.",
+                train_number, pos_raw.get("station_code"),
+                pos_raw["lat"], pos_raw["lng"], nearest,
             )
             pos = None
-        elif not target_uic:
-            # Couldn't resolve the returned station to UIC — be conservative
-            # and accept it (better stale than nothing).
-            pass
 
     session_id = secrets.token_hex(6)
     train_entity_id = f"device_tracker.ns_reisadvies_train_{session_id}"
@@ -583,7 +590,10 @@ async def _ws_track_train_start(
         "train_entity_id": train_entity_id,
         "stop_entity_ids": stop_entity_ids,
         "train_number": train_number,
-        "leg_uics": {(s.get("uicCode") or "").upper() for s in resolved if s.get("uicCode")},
+        "leg_points": [
+            (s["lat"], s["lng"]) for s in resolved
+            if s.get("lat") is not None and s.get("lng") is not None
+        ],
     }
     _arm_cleanup(hass, session_id)
 
@@ -621,15 +631,23 @@ async def _ws_track_train_poll(
         return
 
     pos_raw = await coord.async_fetch_live_train(sess["train_number"])
-    # Same validation as on start: drop the position if it points to a
-    # station not on this train's known stop list.
-    leg_codes = sess.get("leg_uics") or set()
+    # Same distance-based validation as on start.
     pos = pos_raw
-    if pos_raw and pos_raw.get("station_code") and leg_codes:
-        geo = await coord.async_fetch_stations_geo()
-        from_geo = geo.get(pos_raw["station_code"].upper())
-        target_uic = (from_geo and from_geo.get("uic")) or ""
-        if target_uic and target_uic not in leg_codes:
+    leg_points = sess.get("leg_points") or []
+    if pos_raw and pos_raw.get("lat") is not None and leg_points:
+        from math import radians, sin, cos, asin, sqrt
+        def _km(a_lat, a_lng, b_lat, b_lng):
+            R = 6371.0
+            la1, lo1, la2, lo2 = map(radians, [a_lat, a_lng, b_lat, b_lng])
+            dla = la2 - la1; dlo = lo2 - lo1
+            h = sin(dla/2)**2 + cos(la1)*cos(la2)*sin(dlo/2)**2
+            return 2 * R * asin(sqrt(h))
+        nearest = min(_km(pos_raw["lat"], pos_raw["lng"], la, lo) for la, lo in leg_points)
+        if nearest > 50:
+            _LOGGER.warning(
+                "Train %s poll: position %.1f km from nearest leg stop; dropping.",
+                sess["train_number"], nearest,
+            )
             pos = None
     if pos:
         _set_train_state(
