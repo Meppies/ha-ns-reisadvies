@@ -363,25 +363,56 @@ def _any_coordinator(hass: HomeAssistant) -> NSUpdateCoordinator | None:
 
 
 def _resolve_stops(stops: list[dict], geo: dict[str, dict]) -> list[dict]:
-    """Resolve a list of {name, uicCode?} stops to {name, lat, lng}.
+    """Normalise the stop list the card sent, falling back to the
+    /v2/stations geo cache only when the stop did not include lat/lng.
 
-    Tries uicCode first (NS station code in /v2/stations is `code`,
-    not the UIC code, so we also try matching on name as a fallback).
+    NS' /v3/trips response already carries lat/lng on every leg.stops
+    entry, so the cache is just a backstop for older HA cards or for
+    callers that strip coordinates client-side. Each stop also keeps
+    `passed` (derived by the card from actualDepartureDateTime) and
+    `uicCode` so the WS handler can validate the train position.
     """
     by_name = {v["name"].casefold(): v for v in geo.values()}
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+
+    def _passed_from_iso(value: str | None) -> bool:
+        if not value:
+            return False
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return False
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed < now
+
     out: list[dict] = []
     for s in stops or []:
         name = (s.get("name") or "").strip()
-        code = (s.get("uicCode") or s.get("code") or "").upper()
-        match = None
-        if code and code in geo:
-            match = geo[code]
-        if not match and name:
-            match = by_name.get(name.casefold())
-        if match:
-            out.append({"name": match["name"], "lat": match["lat"], "lng": match["lng"]})
-        elif name:
-            out.append({"name": name, "lat": None, "lng": None})
+        uic = (s.get("uicCode") or s.get("code") or "").upper()
+        lat = s.get("lat")
+        lng = s.get("lng")
+        if (lat is None or lng is None) and (uic in geo or name.casefold() in by_name):
+            match = geo.get(uic) or by_name.get(name.casefold())
+            if match:
+                lat = match["lat"]
+                lng = match["lng"]
+                if not name:
+                    name = match["name"]
+        passed = bool(s.get("passed"))
+        if not passed:
+            passed = _passed_from_iso(
+                s.get("actualDepartureDateTime")
+                or s.get("plannedDepartureDateTime")
+            )
+        out.append({
+            "name": name or uic,
+            "lat": float(lat) if lat is not None else None,
+            "lng": float(lng) if lng is not None else None,
+            "uicCode": uic,
+            "passed": passed,
+        })
     return out
 
 
@@ -481,20 +512,42 @@ async def _ws_track_train_start(
     raw_stops: list[dict] = msg.get("stops") or []
 
     geo = await coord.async_fetch_stations_geo()
-
-    # Prefer the FULL train journey (origin -> destination of the train,
-    # not just the user's leg) when /v2/journey gives it to us. Each
-    # stop carries a `passed` flag so the card can colour the polyline.
-    journey_stops = await coord.async_fetch_journey_route(train_number)
-    if journey_stops:
-        # Use the journey as the canonical stop list; legacy `stops`
-        # field stays populated for any older card builds.
-        resolved = journey_stops
-    else:
-        resolved = _resolve_stops(raw_stops, geo)
+    # NS' /v3/trips response gives us the train's full stop list with
+    # lat/lng AND actualDepartureDateTime for free; trust that over a
+    # secondary /v2/journey lookup which often returns 404 on public
+    # NS-App keys. The card-side payload now ships those fields.
+    resolved = _resolve_stops(raw_stops, geo)
     plotted = [s for s in resolved if s.get("lat") is not None and s.get("lng") is not None]
+    journey_stops = resolved
 
-    pos = await coord.async_fetch_live_train(train_number)
+    pos_raw = await coord.async_fetch_live_train(train_number)
+
+    # Validate the position: NS' /v1/trein/{nr} keys on bare ritnummer,
+    # which gets reused across operators and lines. If the returned
+    # `station_code` does not appear in this leg's stops, we are looking
+    # at a different train run that shares the number — drop it rather
+    # than plotting a misleading marker.
+    pos = pos_raw
+    if pos_raw and pos_raw.get("station_code"):
+        target = pos_raw["station_code"].upper()
+        leg_codes = {(s.get("uicCode") or "").upper() for s in resolved}
+        # Compare via NS short code: look up the entry from the geo cache
+        # (which indexes both by short code and UIC) and check its UIC
+        # against the leg's stops.
+        from_geo = geo.get(target)
+        target_uic = (from_geo and from_geo.get("uic")) or ""
+        if target_uic and target_uic not in leg_codes:
+            _LOGGER.debug(
+                "Train %s: /v1/trein returned station %s (UIC %s) which is "
+                "not in this journey's stops %s — likely a different train "
+                "with the same ritnummer; dropping position.",
+                train_number, target, target_uic, leg_codes,
+            )
+            pos = None
+        elif not target_uic:
+            # Couldn't resolve the returned station to UIC — be conservative
+            # and accept it (better stale than nothing).
+            pass
 
     session_id = secrets.token_hex(6)
     train_entity_id = f"device_tracker.ns_reisadvies_train_{session_id}"
@@ -512,6 +565,7 @@ async def _ws_track_train_start(
         "train_entity_id": train_entity_id,
         "stop_entity_ids": stop_entity_ids,
         "train_number": train_number,
+        "leg_uics": {(s.get("uicCode") or "").upper() for s in resolved if s.get("uicCode")},
     }
     _arm_cleanup(hass, session_id)
 
@@ -548,7 +602,17 @@ async def _ws_track_train_poll(
         connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
         return
 
-    pos = await coord.async_fetch_live_train(sess["train_number"])
+    pos_raw = await coord.async_fetch_live_train(sess["train_number"])
+    # Same validation as on start: drop the position if it points to a
+    # station not on this train's known stop list.
+    leg_codes = sess.get("leg_uics") or set()
+    pos = pos_raw
+    if pos_raw and pos_raw.get("station_code") and leg_codes:
+        geo = await coord.async_fetch_stations_geo()
+        from_geo = geo.get(pos_raw["station_code"].upper())
+        target_uic = (from_geo and from_geo.get("uic")) or ""
+        if target_uic and target_uic not in leg_codes:
+            pos = None
     if pos:
         _set_train_state(
             hass,
@@ -556,12 +620,9 @@ async def _ws_track_train_poll(
             f"Trein {sess['train_number']}",
             pos,
         )
-    # Refresh the passed/future flags so the card can repaint the
-    # polyline as the train progresses.
-    journey_stops = await coord.async_fetch_journey_route(sess["train_number"])
     _arm_cleanup(hass, msg["session_id"])
     connection.send_result(
-        msg["id"], {"train_position": pos, "journey_stops": journey_stops},
+        msg["id"], {"train_position": pos},
     )
 
 

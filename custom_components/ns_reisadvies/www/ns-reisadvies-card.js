@@ -1046,13 +1046,22 @@ class NSReisadviesCard extends HTMLElement {
     this._activeMap.escHandler = (e) => { if (e.key === "Escape") closeFn(); };
     document.addEventListener("keydown", this._activeMap.escHandler);
 
-    // Build the stops payload (prefer real stops; ensure origin/destination).
+    // Build the stops payload — pass through the full leg.stops shape
+    // so the backend has lat/lng + actualDepartureDateTime per stop and
+    // does not need a secondary /v2/journey or /v2/stations lookup.
     const rawStops = (Array.isArray(leg.stops) && leg.stops.length > 1)
       ? leg.stops
       : [leg.origin, leg.destination].filter(Boolean);
     const stopsForBackend = rawStops
       .filter(s => !s.passing)
-      .map(s => ({ name: s.name || "", uicCode: s.uicCode || s.stationCode || "" }));
+      .map(s => ({
+        name: s.name || "",
+        uicCode: s.uicCode || s.stationCode || "",
+        lat: s.lat,
+        lng: s.lng,
+        actualDepartureDateTime: s.actualDepartureDateTime || null,
+        plannedDepartureDateTime: s.plannedDepartureDateTime || null,
+      }));
 
     // Kick off the backend session.
     let resp;
@@ -1581,7 +1590,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.3 ",
+  "%c NS-REISADVIES-CARD %c v2.3.4 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
