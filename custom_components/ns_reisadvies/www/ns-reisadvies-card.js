@@ -973,15 +973,17 @@ class NSReisadviesCard extends HTMLElement {
         background: #1a1a1a; font-family: inherit;
       }
       .ns-leaflet-train {
-        width: 28px; height: 28px; border-radius: 50%;
-        background: #FF6B00; border: 3px solid white;
-        box-shadow: 0 0 0 2px rgba(255,107,0,0.6), 0 2px 6px rgba(0,0,0,0.5);
+        width: 36px; height: 36px; border-radius: 50%;
+        background: #FF6B00;
+        border: 3px solid white;
+        box-shadow: 0 0 0 2px rgba(255,107,0,0.5), 0 3px 8px rgba(0,0,0,0.55);
         display: flex; align-items: center; justify-content: center;
-        color: white; font-weight: bold; font-size: 14px;
         transition: transform 0.4s ease-out;
       }
-      .ns-leaflet-train::before {
-        content: "🚆"; font-size: 16px; line-height: 1;
+      .ns-leaflet-train svg {
+        width: 22px; height: 22px;
+        fill: white;
+        filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
       }
       .ns-leaflet-stop {
         width: 14px; height: 14px; border-radius: 50%;
@@ -1274,15 +1276,17 @@ class NSReisadviesCard extends HTMLElement {
       });
     }
 
-    // Train marker — create or move.
+    // Train marker — create or move. The inline SVG is mdi-train so
+    // it reads as a recognisable train at-a-glance, not a generic dot.
     if (trainPos && trainPos.lat != null && trainPos.lng != null) {
       const ll = [trainPos.lat, trainPos.lng];
       if (!ctx.trainMarker) {
+        const trainSvg = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12,2C8,2 4,2.5 4,6V15.5A3.5,3.5 0 0,0 7.5,19L6,20.5V21H8L10,19H14L16,21H18V20.5L16.5,19A3.5,3.5 0 0,0 20,15.5V6C20,2.5 16,2 12,2M7.5,17A1.5,1.5 0 0,1 6,15.5A1.5,1.5 0 0,1 7.5,14A1.5,1.5 0 0,1 9,15.5A1.5,1.5 0 0,1 7.5,17M11,11H6V6H11V11M13,11V6H18V11H13M16.5,17A1.5,1.5 0 0,1 15,15.5A1.5,1.5 0 0,1 16.5,14A1.5,1.5 0 0,1 18,15.5A1.5,1.5 0 0,1 16.5,17Z"/></svg>`;
         const icon = L.divIcon({
           className: "ns-leaflet-train-wrap",
-          html: `<div class="ns-leaflet-train"></div>`,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
+          html: `<div class="ns-leaflet-train">${trainSvg}</div>`,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
         });
         ctx.trainMarker = L.marker(ll, {
           icon,
@@ -1590,7 +1594,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.4 ",
+  "%c NS-REISADVIES-CARD %c v2.3.5 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

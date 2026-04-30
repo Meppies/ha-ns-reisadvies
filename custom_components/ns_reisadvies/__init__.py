@@ -512,11 +512,29 @@ async def _ws_track_train_start(
     raw_stops: list[dict] = msg.get("stops") or []
 
     geo = await coord.async_fetch_stations_geo()
-    # NS' /v3/trips response gives us the train's full stop list with
-    # lat/lng AND actualDepartureDateTime for free; trust that over a
-    # secondary /v2/journey lookup which often returns 404 on public
-    # NS-App keys. The card-side payload now ships those fields.
-    resolved = _resolve_stops(raw_stops, geo)
+    # Start from the user's leg (always safe; comes with lat/lng and
+    # actualDepartureDateTime baked in). Then try /v2/journey for the
+    # FULL train run (incl. stops before the user's origin or after
+    # their destination). Use it only if it actually has more stops —
+    # /v2/journey returns 404 for some public NS-App keys, in which
+    # case we keep the leg-derived list.
+    leg_resolved = _resolve_stops(raw_stops, geo)
+    journey_full = await coord.async_fetch_journey_route(train_number)
+    if len(journey_full) > len(leg_resolved):
+        # Merge: take the journey list, but copy passed-flags from the
+        # leg's stops where they overlap (leg has fresher actual
+        # departure data because it came from /v3/trips with the
+        # user's planning context).
+        leg_passed_by_uic = {
+            s.get("uicCode"): s.get("passed") for s in leg_resolved if s.get("uicCode")
+        }
+        for js in journey_full:
+            uic = js.get("uicCode")
+            if uic and uic in leg_passed_by_uic:
+                js["passed"] = bool(leg_passed_by_uic[uic] or js.get("passed"))
+        resolved = journey_full
+    else:
+        resolved = leg_resolved
     plotted = [s for s in resolved if s.get("lat") is not None and s.get("lng") is not None]
     journey_stops = resolved
 
