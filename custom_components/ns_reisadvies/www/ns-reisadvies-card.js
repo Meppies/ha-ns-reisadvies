@@ -242,12 +242,6 @@ class NSReisadviesCard extends HTMLElement {
     // per minute, causing the timeline line to visibly flicker.
     const newState = hass.states[this._config.entity];
 
-    // If the live-map modal is open, propagate hass updates to ha-map so
-    // it picks up new train/stop positions as the WS handler updates them.
-    if (this._activeMap && this._activeMap.mapEl) {
-      this._activeMap.mapEl.hass = hass;
-    }
-
     if (this._lastStateObj === newState) {
       return;
     }
@@ -971,9 +965,30 @@ class NSReisadviesCard extends HTMLElement {
       .ns-map-modal .ns-map-body {
         flex: 1; min-height: 0; position: relative; background: var(--card-background-color, #1a1a1a);
       }
-      .ns-map-modal ha-map {
+      .ns-map-modal .ns-leaflet {
         position: absolute; inset: 0; width: 100%; height: 100%;
+        background: #1a1a1a;
       }
+      .ns-map-modal .leaflet-container {
+        background: #1a1a1a; font-family: inherit;
+      }
+      .ns-leaflet-train {
+        width: 28px; height: 28px; border-radius: 50%;
+        background: #FF6B00; border: 3px solid white;
+        box-shadow: 0 0 0 2px rgba(255,107,0,0.6), 0 2px 6px rgba(0,0,0,0.5);
+        display: flex; align-items: center; justify-content: center;
+        color: white; font-weight: bold; font-size: 14px;
+        transition: transform 0.4s ease-out;
+      }
+      .ns-leaflet-train::before {
+        content: "🚆"; font-size: 16px; line-height: 1;
+      }
+      .ns-leaflet-stop {
+        width: 14px; height: 14px; border-radius: 50%;
+        background: #1a1a1a; border: 3px solid #FFC917;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+      }
+      .ns-leaflet-stop.endpoint { width: 18px; height: 18px; border-width: 4px; }
       .ns-map-modal .ns-map-loading {
         position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
         font-size: 0.9em; opacity: 0.7;
@@ -1067,30 +1082,43 @@ class NSReisadviesCard extends HTMLElement {
     body.innerHTML = `<div class="ns-map-empty">${t("live_map_no_data", this._hass)}${hint ? `<br><small style="opacity:.6">${hint}</small>` : ""}</div>`;
   }
 
-  async _ensureHaMapLoaded() {
-    // <ha-map> is in a code-split chunk that HA only loads when a map
-    // card appears in the UI. Force the load via the official card-helper
-    // factory: creating a hui-map-card pulls in the ha-map element.
-    if (customElements.get("ha-map")) return true;
-    try {
-      if (typeof window.loadCardHelpers === "function") {
-        const helpers = await window.loadCardHelpers();
-        if (helpers && helpers.createCardElement) {
-          helpers.createCardElement({type: "map", entities: []});
-        }
-      }
-    } catch (err) {
-      console.warn("[ns-reisadvies] loadCardHelpers failed:", err);
+  async _ensureLeafletLoaded() {
+    // Use Leaflet directly (same library HA uses internally) — gives us
+    // full control over markers, polylines, and bounds without ha-map's
+    // entity-machine quirks. We load from unpkg with the same pin that
+    // HA frontend uses, so users on the same machine often hit cache.
+    if (window.L && window.L.map) return true;
+    if (this._leafletLoading) {
+      try { await this._leafletLoading; } catch {}
+      return !!(window.L && window.L.map);
     }
-    // Wait up to 5 s for ha-map to register.
+    this._leafletLoading = (async () => {
+      // CSS first.
+      if (!document.getElementById("ns-reisadvies-leaflet-css")) {
+        const link = document.createElement("link");
+        link.id = "ns-reisadvies-leaflet-css";
+        link.rel = "stylesheet";
+        link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+        link.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+        link.crossOrigin = "";
+        document.head.appendChild(link);
+      }
+      // JS.
+      await new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+        s.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
+        s.crossOrigin = "";
+        s.onload = resolve;
+        s.onerror = () => reject(new Error("leaflet.js failed to load"));
+        document.head.appendChild(s);
+      });
+    })();
     try {
-      await Promise.race([
-        customElements.whenDefined("ha-map"),
-        new Promise((_, rej) => setTimeout(() => rej(new Error("ha-map load timeout")), 5000)),
-      ]);
+      await this._leafletLoading;
       return true;
     } catch (err) {
-      console.error("[ns-reisadvies] ha-map did not register:", err);
+      console.error("[ns-reisadvies] Leaflet load failed:", err);
       return false;
     }
   }
@@ -1099,51 +1127,116 @@ class NSReisadviesCard extends HTMLElement {
     const body = modal.querySelector(".ns-map-body");
     if (!body) return;
     const stopsWithCoord = (resp.stops || []).filter(s => s.lat != null && s.lng != null);
-    const trainEid = resp.train_entity_id;
-    if (!trainEid && stopsWithCoord.length === 0) {
+    const trainPos = resp.train_position;
+    if (!trainPos && stopsWithCoord.length === 0) {
       this._renderMapEmpty(modal);
       return;
     }
 
-    const ok = await this._ensureHaMapLoaded();
-    // Guard: user may have closed the modal during the await.
+    const ok = await this._ensureLeafletLoaded();
     if (!this._activeMap || this._activeMap.modalEl !== modal) return;
     if (!ok) {
-      this._renderMapEmpty(modal, "ha-map element not available");
+      this._renderMapEmpty(modal, "Leaflet failed to load");
       return;
     }
 
+    const L = window.L;
     body.innerHTML = "";
-    const map = document.createElement("ha-map");
-    map.setAttribute("auto-fit", "");
-    map.setAttribute("zoom", "10");
-    body.appendChild(map);
-    this._activeMap.mapEl = map;
-    this._activeMap.stopEids = resp.stop_entity_ids || [];
-    this._activeMap.trainEid = trainEid;
+    const mapDiv = document.createElement("div");
+    mapDiv.className = "ns-leaflet";
+    body.appendChild(mapDiv);
+
+    const map = L.map(mapDiv, {
+      zoomControl: true,
+      attributionControl: true,
+    });
+
+    // Carto dark basemap — matches HA's default look.
+    L.tileLayer(
+      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: "abcd",
+        maxZoom: 19,
+      }
+    ).addTo(map);
+
+    this._activeMap.leaflet = L;
+    this._activeMap.lmap = map;
+    this._activeMap.stopMarkers = [];
+    this._activeMap.routeLine = null;
+    this._activeMap.trainMarker = null;
     this._activeMap.stopsWithCoord = stopsWithCoord;
-    this._applyMapData();
-    this._updatePosLabel(resp.train_position, leg);
+
+    this._applyMapData(trainPos);
+    this._updatePosLabel(trainPos, leg);
   }
 
-  _applyMapData() {
+  _applyMapData(trainPos) {
     const ctx = this._activeMap;
-    if (!ctx || !ctx.mapEl) return;
-    const entities = [];
-    if (ctx.trainEid) {
-      entities.push({ entity_id: ctx.trainEid, color: "#FF6B00", focus: true });
+    if (!ctx || !ctx.lmap) return;
+    const L = ctx.leaflet;
+    const map = ctx.lmap;
+    const stops = ctx.stopsWithCoord || [];
+
+    // Polyline through stops (only build once on first apply).
+    if (!ctx.routeLine && stops.length >= 2) {
+      const points = stops.map(s => [s.lat, s.lng]);
+      ctx.routeLine = L.polyline(points, {
+        color: "#FFC917",
+        weight: 4,
+        opacity: 0.85,
+      }).addTo(map);
     }
-    (ctx.stopEids || []).forEach((eid) => {
-      entities.push({ entity_id: eid, color: "#FFC917" });
-    });
-    const points = (ctx.stopsWithCoord || []).map(s => [s.lat, s.lng]);
-    // Bright NS-yellow against the dark Carto basemap.
-    const paths = points.length >= 2
-      ? [{ points, color: "#FFC917", gradualOpacity: false }]
-      : [];
-    ctx.mapEl.hass = this._hass;
-    ctx.mapEl.entities = entities;
-    ctx.mapEl.paths = paths;
+
+    // Stop markers (build once).
+    if (!ctx.stopMarkers.length && stops.length) {
+      stops.forEach((s, i) => {
+        const isEndpoint = i === 0 || i === stops.length - 1;
+        const icon = L.divIcon({
+          className: "ns-leaflet-stop-wrap",
+          html: `<div class="ns-leaflet-stop${isEndpoint ? " endpoint" : ""}"></div>`,
+          iconSize: isEndpoint ? [18, 18] : [14, 14],
+          iconAnchor: isEndpoint ? [9, 9] : [7, 7],
+        });
+        const m = L.marker([s.lat, s.lng], { icon, title: s.name }).addTo(map);
+        m.bindTooltip(s.name, { direction: "top", offset: [0, -8] });
+        ctx.stopMarkers.push(m);
+      });
+    }
+
+    // Train marker — create or move.
+    if (trainPos && trainPos.lat != null && trainPos.lng != null) {
+      const ll = [trainPos.lat, trainPos.lng];
+      if (!ctx.trainMarker) {
+        const icon = L.divIcon({
+          className: "ns-leaflet-train-wrap",
+          html: `<div class="ns-leaflet-train"></div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14],
+        });
+        ctx.trainMarker = L.marker(ll, {
+          icon,
+          zIndexOffset: 1000,
+          title: "Trein",
+        }).addTo(map);
+      } else {
+        ctx.trainMarker.setLatLng(ll);
+      }
+    }
+
+    // First-time fit to all points (stops + train).
+    if (!ctx.fitDone) {
+      const allLatLngs = stops.map(s => [s.lat, s.lng]);
+      if (trainPos && trainPos.lat != null) allLatLngs.push([trainPos.lat, trainPos.lng]);
+      if (allLatLngs.length) {
+        map.fitBounds(allLatLngs, { padding: [40, 40], maxZoom: 13 });
+      }
+      ctx.fitDone = true;
+      // Leaflet sometimes mis-sizes when its container animates in.
+      // Force a recompute after layout settles.
+      setTimeout(() => map.invalidateSize(), 200);
+    }
   }
 
   _updatePosLabel(pos, leg) {
@@ -1166,7 +1259,7 @@ class NSReisadviesCard extends HTMLElement {
         type: "ns_reisadvies/track_train_poll",
         session_id: ctx.sessionId,
       });
-      this._applyMapData();
+      this._applyMapData(resp && resp.train_position);
       this._updatePosLabel(resp && resp.train_position);
     } catch (err) {
       console.warn("ns_reisadvies live map poll failed", err);
@@ -1184,6 +1277,11 @@ class NSReisadviesCard extends HTMLElement {
         type: "ns_reisadvies/track_train_stop",
         session_id: ctx.sessionId,
       }).catch(() => {});
+    }
+    // Tear down the Leaflet map so its DOM listeners and tile downloads
+    // do not linger.
+    if (ctx.lmap) {
+      try { ctx.lmap.remove(); } catch {}
     }
     if (ctx.modalEl && ctx.modalEl.parentNode) {
       ctx.modalEl.parentNode.removeChild(ctx.modalEl);
@@ -1420,7 +1518,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.2.14 ",
+  "%c NS-REISADVIES-CARD %c v2.3.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
