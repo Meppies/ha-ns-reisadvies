@@ -380,21 +380,111 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             return {}
 
         out: dict[str, dict] = {}
-        # /v2/stations payload shape: {"payload": [ {code, namen:{lang,middel,kort}, land, lat, lng, ...}, ... ]}
+        # /v2/stations payload shape: {"payload": [ {code, UICCode, namen:{lang,middel,kort}, land, lat, lng, ...}, ... ]}
+        # We index by NS short code AND UIC code so callers can look up
+        # stops returned by /v3/trips (uicCode) or /v2/journey (stationCode).
         payload = (data or {}).get("payload") or []
         for st in payload:
             code = (st.get("code") or "").upper()
-            if not code:
+            uic = str(st.get("UICCode") or st.get("uicCode") or "")
+            if not code and not uic:
                 continue
             namen = st.get("namen") or {}
-            name = namen.get("lang") or namen.get("middel") or namen.get("kort") or code
+            name = namen.get("lang") or namen.get("middel") or namen.get("kort") or code or uic
             lat = st.get("lat")
             lng = st.get("lng")
             if lat is None or lng is None:
                 continue
-            out[code] = {"name": name, "lat": float(lat), "lng": float(lng)}
+            entry = {"name": name, "lat": float(lat), "lng": float(lng), "code": code, "uic": uic}
+            if code:
+                out[code] = entry
+            if uic:
+                out[uic] = entry
         bucket["_stations_geo"] = out
-        _LOGGER.debug("Stations geo cache: %d entries", len(out))
+        _LOGGER.debug("Stations geo cache: %d entries (code+UIC)", len(out))
+        return out
+
+    async def async_fetch_journey_route(self, train_number: str) -> list[dict]:
+        """Return the FULL list of stops the given train makes today.
+
+        Each stop includes name + lat/lng + a `passed` flag so the card
+        can split the route polyline into yellow (already-travelled) and
+        blue (still-to-go) segments.
+        """
+        if not train_number or not self.api_key:
+            return []
+        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        try:
+            async with async_timeout.timeout(15):
+                async with self._session.get(
+                    JOURNEY_API_URL,
+                    headers=headers,
+                    params={"train": str(train_number), "omitCrowdForecast": "true"},
+                ) as resp:
+                    if resp.status != 200:
+                        return []
+                    data = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return []
+
+        payload = (data or {}).get("payload") or {}
+        stops_raw = payload.get("stops") or []
+        if not stops_raw:
+            return []
+
+        geo = await self.async_fetch_stations_geo()
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+
+        def _passed(stop: dict) -> bool:
+            # Trust an explicit status value first.
+            status = (stop.get("status") or "").upper()
+            if status in {"PASSED", "PASSING_PASSED", "DEPARTED"}:
+                return True
+            # Otherwise derive from the actual departure time. For the
+            # destination there is no departure, so use actualArrival.
+            for key in ("actualDepartureDateTime", "actualArrivalDateTime",
+                        "plannedDepartureDateTime", "plannedArrivalDateTime"):
+                ts = stop.get(key)
+                if not ts:
+                    continue
+                try:
+                    # NS uses ISO-8601 with offset. fromisoformat handles
+                    # "+0200" since Python 3.11; otherwise normalise.
+                    parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                except (TypeError, ValueError):
+                    continue
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                if "Departure" in key:
+                    return parsed < now
+                # arrival of destination — only "passed" if we are well
+                # past it.
+                return parsed < now
+            return False
+
+        out: list[dict] = []
+        for stop in stops_raw:
+            station = stop.get("station") or {}
+            uic = str(station.get("uicCode") or stop.get("uicCode") or "")
+            code = (
+                station.get("stationCode")
+                or stop.get("stationCode")
+                or station.get("code")
+                or ""
+            ).upper()
+            geo_entry = (geo.get(uic) if uic else None) or (geo.get(code) if code else None)
+            if not geo_entry:
+                continue
+            out.append({
+                "name": geo_entry["name"],
+                "lat": geo_entry["lat"],
+                "lng": geo_entry["lng"],
+                "uicCode": uic,
+                "code": code,
+                "passed": _passed(stop),
+                "status": (stop.get("status") or "").upper(),
+            })
         return out
 
     async def async_fetch_live_train(self, train_number: str) -> dict | None:

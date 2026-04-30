@@ -473,7 +473,17 @@ async def _ws_track_train_start(
     raw_stops: list[dict] = msg.get("stops") or []
 
     geo = await coord.async_fetch_stations_geo()
-    resolved = _resolve_stops(raw_stops, geo)
+
+    # Prefer the FULL train journey (origin -> destination of the train,
+    # not just the user's leg) when /v2/journey gives it to us. Each
+    # stop carries a `passed` flag so the card can colour the polyline.
+    journey_stops = await coord.async_fetch_journey_route(train_number)
+    if journey_stops:
+        # Use the journey as the canonical stop list; legacy `stops`
+        # field stays populated for any older card builds.
+        resolved = journey_stops
+    else:
+        resolved = _resolve_stops(raw_stops, geo)
     plotted = [s for s in resolved if s.get("lat") is not None and s.get("lng") is not None]
 
     pos = await coord.async_fetch_live_train(train_number)
@@ -504,6 +514,7 @@ async def _ws_track_train_start(
             "train_entity_id": train_entity_id if pos else None,
             "stop_entity_ids": stop_entity_ids,
             "stops": resolved,
+            "journey_stops": journey_stops,
             "train_position": pos,
         },
     )
@@ -537,8 +548,13 @@ async def _ws_track_train_poll(
             f"Trein {sess['train_number']}",
             pos,
         )
+    # Refresh the passed/future flags so the card can repaint the
+    # polyline as the train progresses.
+    journey_stops = await coord.async_fetch_journey_route(sess["train_number"])
     _arm_cleanup(hass, msg["session_id"])
-    connection.send_result(msg["id"], {"train_position": pos})
+    connection.send_result(
+        msg["id"], {"train_position": pos, "journey_stops": journey_stops},
+    )
 
 
 @websocket_api.websocket_command(

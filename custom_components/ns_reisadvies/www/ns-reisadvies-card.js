@@ -1126,7 +1126,12 @@ class NSReisadviesCard extends HTMLElement {
   async _renderMapInto(modal, resp, leg) {
     const body = modal.querySelector(".ns-map-body");
     if (!body) return;
-    const stopsWithCoord = (resp.stops || []).filter(s => s.lat != null && s.lng != null);
+    // Prefer the full train journey (origin → destination of the train)
+    // over the user's leg subset, so the map shows the WHOLE rit.
+    const sourceStops = (resp.journey_stops && resp.journey_stops.length)
+      ? resp.journey_stops
+      : (resp.stops || []);
+    const stopsWithCoord = sourceStops.filter(s => s.lat != null && s.lng != null);
     const trainPos = resp.train_position;
     if (!trainPos && stopsWithCoord.length === 0) {
       this._renderMapEmpty(modal);
@@ -1164,7 +1169,8 @@ class NSReisadviesCard extends HTMLElement {
     this._activeMap.leaflet = L;
     this._activeMap.lmap = map;
     this._activeMap.stopMarkers = [];
-    this._activeMap.routeLine = null;
+    this._activeMap.passedLine = null;
+    this._activeMap.futureLine = null;
     this._activeMap.trainMarker = null;
     this._activeMap.stopsWithCoord = stopsWithCoord;
 
@@ -1172,21 +1178,50 @@ class NSReisadviesCard extends HTMLElement {
     this._updatePosLabel(trainPos, leg);
   }
 
-  _applyMapData(trainPos) {
+  _applyMapData(trainPos, freshStops) {
     const ctx = this._activeMap;
     if (!ctx || !ctx.lmap) return;
     const L = ctx.leaflet;
     const map = ctx.lmap;
+
+    // Refresh passed flags from poll responses if provided.
+    if (freshStops && freshStops.length) {
+      const byKey = new Map();
+      freshStops.forEach(s => {
+        const k = (s.uicCode || s.code || s.name || "").toString();
+        if (k) byKey.set(k, s);
+      });
+      ctx.stopsWithCoord = (ctx.stopsWithCoord || []).map(s => {
+        const k = (s.uicCode || s.code || s.name || "").toString();
+        const fresh = k && byKey.get(k);
+        return fresh ? { ...s, passed: !!fresh.passed } : s;
+      });
+    }
     const stops = ctx.stopsWithCoord || [];
 
-    // Polyline through stops (only build once on first apply).
-    if (!ctx.routeLine && stops.length >= 2) {
-      const points = stops.map(s => [s.lat, s.lng]);
-      ctx.routeLine = L.polyline(points, {
-        color: "#FFC917",
-        weight: 4,
-        opacity: 0.85,
-      }).addTo(map);
+    // Split the polyline at the boundary between passed and future
+    // stops. Yellow = travelled, blue = ahead.
+    if (stops.length >= 2) {
+      const yellowSeg = [];
+      const blueSeg = [];
+      for (let i = 0; i < stops.length - 1; i++) {
+        const a = stops[i], b = stops[i + 1];
+        const segPoints = [[a.lat, a.lng], [b.lat, b.lng]];
+        // The segment is "travelled" if BOTH endpoints have been passed.
+        const segPassed = a.passed && b.passed;
+        (segPassed ? yellowSeg : blueSeg).push(segPoints);
+      }
+      const refresh = (existing, segments, color) => {
+        if (existing) existing.remove();
+        if (!segments.length) return null;
+        return L.polyline(segments, {
+          color,
+          weight: 4,
+          opacity: 0.85,
+        }).addTo(map);
+      };
+      ctx.passedLine = refresh(ctx.passedLine, yellowSeg, "#FFC917");
+      ctx.futureLine = refresh(ctx.futureLine, blueSeg, "#3b82f6");
     }
 
     // Stop markers (build once).
@@ -1259,7 +1294,10 @@ class NSReisadviesCard extends HTMLElement {
         type: "ns_reisadvies/track_train_poll",
         session_id: ctx.sessionId,
       });
-      this._applyMapData(resp && resp.train_position);
+      this._applyMapData(
+        resp && resp.train_position,
+        resp && resp.journey_stops,
+      );
       this._updatePosLabel(resp && resp.train_position);
     } catch (err) {
       console.warn("ns_reisadvies live map poll failed", err);
@@ -1518,7 +1556,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.0 ",
+  "%c NS-REISADVIES-CARD %c v2.3.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
