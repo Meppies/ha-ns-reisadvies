@@ -1199,17 +1199,42 @@ class NSReisadviesCard extends HTMLElement {
     }
     const stops = ctx.stopsWithCoord || [];
 
-    // Split the polyline at the boundary between passed and future
-    // stops. Yellow = travelled, blue = ahead.
+    // Split the polyline by progress. Yellow = where the train has
+    // already been; blue = still ahead. The segment that CONTAINS the
+    // train (last passed → next future) is split at the train's actual
+    // position so the colour boundary follows the marker, not just the
+    // station endpoints.
     if (stops.length >= 2) {
       const yellowSeg = [];
       const blueSeg = [];
+      const tp = trainPos && trainPos.lat != null && trainPos.lng != null
+        ? [trainPos.lat, trainPos.lng]
+        : null;
+
+      // Find the boundary index: last stop with passed=true.
+      let lastPassedIdx = -1;
+      for (let i = 0; i < stops.length; i++) {
+        if (stops[i].passed) lastPassedIdx = i;
+      }
+
       for (let i = 0; i < stops.length - 1; i++) {
         const a = stops[i], b = stops[i + 1];
-        const segPoints = [[a.lat, a.lng], [b.lat, b.lng]];
-        // The segment is "travelled" if BOTH endpoints have been passed.
-        const segPassed = a.passed && b.passed;
-        (segPassed ? yellowSeg : blueSeg).push(segPoints);
+        const aLL = [a.lat, a.lng];
+        const bLL = [b.lat, b.lng];
+        if (a.passed && b.passed) {
+          yellowSeg.push([aLL, bLL]);
+        } else if (i === lastPassedIdx && tp) {
+          // Boundary segment: yellow up to the train, blue after it.
+          yellowSeg.push([aLL, tp]);
+          blueSeg.push([tp, bLL]);
+        } else if (lastPassedIdx === -1 && i === 0 && tp) {
+          // Train hasn't reached the first stop yet — still draw the
+          // boundary on the very first segment so it doesn't all read
+          // as future when the train sits just before origin.
+          blueSeg.push([aLL, bLL]);
+        } else {
+          blueSeg.push([aLL, bLL]);
+        }
       }
       const refresh = (existing, segments, color) => {
         if (existing) existing.remove();
@@ -1556,7 +1581,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.2 ",
+  "%c NS-REISADVIES-CARD %c v2.3.3 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

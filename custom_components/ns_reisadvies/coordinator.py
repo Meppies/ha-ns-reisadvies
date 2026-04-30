@@ -463,7 +463,13 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                 return parsed < now
             return False
 
+        # Build a name lookup once so we can resolve stops whose codes
+        # do not match the /v2/stations cache (rare but happens with
+        # foreign or recently renamed stations).
+        by_name = {v["name"].casefold(): v for v in geo.values()}
+
         out: list[dict] = []
+        unresolved: list[str] = []
         for stop in stops_raw:
             station = stop.get("station") or {}
             uic = str(station.get("uicCode") or stop.get("uicCode") or "")
@@ -473,8 +479,17 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                 or station.get("code")
                 or ""
             ).upper()
-            geo_entry = (geo.get(uic) if uic else None) or (geo.get(code) if code else None)
+            stop_name = (
+                station.get("name") or stop.get("name") or ""
+            ).strip()
+            geo_entry = (
+                (geo.get(uic) if uic else None)
+                or (geo.get(code) if code else None)
+                or (by_name.get(stop_name.casefold()) if stop_name else None)
+            )
             if not geo_entry:
+                if stop_name or code or uic:
+                    unresolved.append(stop_name or code or uic)
                 continue
             out.append({
                 "name": geo_entry["name"],
@@ -485,6 +500,11 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                 "passed": _passed(stop),
                 "status": (stop.get("status") or "").upper(),
             })
+        if unresolved:
+            _LOGGER.debug(
+                "Train %s journey: %d stops resolved, %d skipped: %s",
+                train_number, len(out), len(unresolved), unresolved,
+            )
         return out
 
     async def async_fetch_live_train(self, train_number: str) -> dict | None:
