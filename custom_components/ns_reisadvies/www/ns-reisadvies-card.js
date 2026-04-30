@@ -927,8 +927,62 @@ class NSReisadviesCard extends HTMLElement {
   // while the dialog is open (start/poll/stop WebSocket commands), so this
   // imposes zero ongoing API cost when the map is closed.
 
+  _ensureModalStyles() {
+    // The modal lives at document.body — outside any card shadow root —
+    // so the in-card <style> block does NOT apply to it. Inject once.
+    if (document.getElementById("ns-reisadvies-modal-styles")) return;
+    const style = document.createElement("style");
+    style.id = "ns-reisadvies-modal-styles";
+    style.textContent = `
+      .ns-map-modal {
+        position: fixed; inset: 0; z-index: 9999;
+        background: rgba(0, 0, 0, 0.55);
+        display: flex; align-items: center; justify-content: center;
+        backdrop-filter: blur(2px);
+      }
+      .ns-map-modal .ns-map-card {
+        background: var(--card-background-color, #1a1a1a);
+        color: var(--primary-text-color, white);
+        border-radius: 12px;
+        box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+        width: min(720px, 92vw); height: min(640px, 86vh);
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+      .ns-map-modal .ns-map-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 14px; border-bottom: 1px solid var(--divider-color, #444);
+      }
+      .ns-map-modal .ns-map-title {
+        font-weight: 600; font-size: 1em; display: flex; align-items: center; gap: 8px;
+      }
+      .ns-map-modal .ns-map-title .ns-map-train { color: #FF6B00; }
+      .ns-map-modal .ns-map-meta { font-size: 0.78em; opacity: 0.75; margin-left: 8px; font-weight: 400; }
+      .ns-map-modal .ns-map-close {
+        cursor: pointer; padding: 4px; border-radius: 50%; display: inline-flex;
+      }
+      .ns-map-modal .ns-map-close:hover { background: rgba(255,255,255,0.08); }
+      .ns-map-modal .ns-map-body {
+        flex: 1; min-height: 0; position: relative; background: var(--card-background-color, #1a1a1a);
+      }
+      .ns-map-modal ha-map {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+      }
+      .ns-map-modal .ns-map-loading {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        font-size: 0.9em; opacity: 0.7;
+      }
+      .ns-map-modal .ns-map-empty {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        padding: 20px; text-align: center; font-size: 0.95em;
+        color: var(--secondary-text-color, #aaa);
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   async openLiveMap(tripIdx, legIdx) {
     if (!this._hass || !this._config) return;
+    this._ensureModalStyles();
     const stateObj = this._hass.states[this._config.entity];
     const trips = stateObj && stateObj.attributes && stateObj.attributes.trips || [];
     const trip = trips[tripIdx];
@@ -1321,7 +1375,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.2.11 ",
+  "%c NS-REISADVIES-CARD %c v2.2.12 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
