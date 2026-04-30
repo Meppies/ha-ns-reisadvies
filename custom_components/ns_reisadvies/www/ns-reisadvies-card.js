@@ -1143,7 +1143,13 @@ class NSReisadviesCard extends HTMLElement {
       ? resp.journey_stops
       : (resp.stops || []);
     const stopsWithCoord = sourceStops.filter(s => s.lat != null && s.lng != null);
-    const trainPos = resp.train_position;
+    // Always store the rich leg.stops with timing on the active map so
+    // we can interpolate the train's position client-side in step with
+    // the wall clock — far more reliable than NS'  /v1/trein lookup,
+    // which keys on a non-unique ritnummer.
+    this._activeMap.legStopsRaw = (Array.isArray(leg.stops) ? leg.stops : [])
+      .filter(s => !s.passing);
+    const trainPos = this._interpolateTrainPos() || resp.train_position;
     if (!trainPos && stopsWithCoord.length === 0) {
       this._renderMapEmpty(modal);
       return;
@@ -1327,19 +1333,88 @@ class NSReisadviesCard extends HTMLElement {
   async _pollLiveMap() {
     const ctx = this._activeMap;
     if (!ctx || !ctx.sessionId) return;
+    // Interpolated position is recomputed every poll from leg.stops +
+    // wall clock; the WS call still goes out so the server-side session
+    // stays alive (and we get fresh passed-flags as a bonus).
+    let interp = this._interpolateTrainPos();
     try {
       const resp = await this._hass.callWS({
         type: "ns_reisadvies/track_train_poll",
         session_id: ctx.sessionId,
       });
-      this._applyMapData(
-        resp && resp.train_position,
-        resp && resp.journey_stops,
-      );
-      this._updatePosLabel(resp && resp.train_position);
+      const fallback = resp && resp.train_position;
+      const pos = interp || fallback;
+      this._applyMapData(pos, resp && resp.journey_stops);
+      this._updatePosLabel(pos);
     } catch (err) {
       console.warn("ns_reisadvies live map poll failed", err);
+      if (interp) {
+        this._applyMapData(interp);
+        this._updatePosLabel(interp);
+      }
     }
+  }
+
+  // Interpolate the train's geographic position from leg.stops + the
+  // wall clock. Uses actualDepartureDateTime as the canonical "left this
+  // station" marker and plannedArrivalDateTime of the next stop as the
+  // "due to arrive" marker. Linear interpolation along the great-circle
+  // chord; good enough for visual purposes.
+  _interpolateTrainPos() {
+    const ctx = this._activeMap;
+    if (!ctx) return null;
+    const stops = (ctx.legStopsRaw || []).filter(s => s.lat != null && s.lng != null);
+    if (stops.length < 2) return null;
+    const now = Date.now();
+    const stamp = (s, key) => {
+      const v = s[key];
+      if (!v) return null;
+      const d = Date.parse(v);
+      return Number.isFinite(d) ? d : null;
+    };
+
+    // Find the segment that contains "now": last stop whose actual or
+    // planned departure has happened, paired with the next stop.
+    let lastIdx = -1;
+    for (let i = 0; i < stops.length; i++) {
+      const dep = stamp(stops[i], "actualDepartureDateTime")
+        ?? stamp(stops[i], "plannedDepartureDateTime");
+      if (dep != null && dep <= now) lastIdx = i;
+    }
+    if (lastIdx < 0) {
+      // Train hasn't left origin yet — show it AT origin.
+      const o = stops[0];
+      return { lat: o.lat, lng: o.lng, station_name: o.name, source: "before-origin" };
+    }
+    if (lastIdx >= stops.length - 1) {
+      // Past final destination — show at last stop.
+      const e = stops[stops.length - 1];
+      return { lat: e.lat, lng: e.lng, station_name: e.name, source: "after-destination" };
+    }
+
+    const a = stops[lastIdx];
+    const b = stops[lastIdx + 1];
+    const aArr = stamp(a, "actualArrivalDateTime") ?? stamp(a, "plannedArrivalDateTime");
+    const aDep = stamp(a, "actualDepartureDateTime") ?? stamp(a, "plannedDepartureDateTime");
+    const bArr = stamp(b, "actualArrivalDateTime") ?? stamp(b, "plannedArrivalDateTime");
+    // If we're still BEFORE departure of `a` (e.g. dwelling at the
+    // station) — show at `a`.
+    if (aDep != null && now < aDep) {
+      return { lat: a.lat, lng: a.lng, station_name: a.name, source: "at-stop" };
+    }
+    // No arrival forecast for next stop — show at the just-departed
+    // station rather than guessing.
+    if (bArr == null || aDep == null || bArr <= aDep) {
+      return { lat: a.lat, lng: a.lng, station_name: a.name, source: "departed" };
+    }
+    const frac = Math.max(0, Math.min(1, (now - aDep) / (bArr - aDep)));
+    return {
+      lat: a.lat + (b.lat - a.lat) * frac,
+      lng: a.lng + (b.lng - a.lng) * frac,
+      station_name: `${a.name} → ${b.name}`,
+      source: "interpolated",
+      frac,
+    };
   }
 
   closeLiveMap() {
@@ -1594,7 +1669,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.6 ",
+  "%c NS-REISADVIES-CARD %c v2.3.7 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
