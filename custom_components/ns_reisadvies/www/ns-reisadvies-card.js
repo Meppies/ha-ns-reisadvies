@@ -241,6 +241,13 @@ class NSReisadviesCard extends HTMLElement {
     // Without this gate the entire DOM is rewritten dozens of times
     // per minute, causing the timeline line to visibly flicker.
     const newState = hass.states[this._config.entity];
+
+    // If the live-map modal is open, propagate hass updates to ha-map so
+    // it picks up new train/stop positions as the WS handler updates them.
+    if (this._activeMap && this._activeMap.mapEl) {
+      this._activeMap.mapEl.hass = hass;
+    }
+
     if (this._lastStateObj === newState) {
       return;
     }
@@ -1130,8 +1137,9 @@ class NSReisadviesCard extends HTMLElement {
       entities.push({ entity_id: eid, color: "#FFC917" });
     });
     const points = (ctx.stopsWithCoord || []).map(s => [s.lat, s.lng]);
+    // Bright NS-yellow against the dark Carto basemap.
     const paths = points.length >= 2
-      ? [{ points, color: "#003082", gradualOpacity: false }]
+      ? [{ points, color: "#FFC917", gradualOpacity: false }]
       : [];
     ctx.mapEl.hass = this._hass;
     ctx.mapEl.entities = entities;
@@ -1412,7 +1420,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.2.13 ",
+  "%c NS-REISADVIES-CARD %c v2.2.14 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
