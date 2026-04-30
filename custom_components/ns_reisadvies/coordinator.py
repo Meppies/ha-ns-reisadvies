@@ -507,7 +507,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             )
         return out
 
-    async def async_fetch_live_train(self, train_number: str) -> dict | None:
+    async def async_fetch_live_train(
+        self, train_number: str, anchor_iso: str | None = None
+    ) -> dict | None:
         """Return the live GPS position for a single train.
 
         Primary: /virtual-train-api/vehicle?route=<ritnummer> — the same
@@ -515,6 +517,12 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         lat/lng plus speed (km/h) and heading. Falls back to
         /virtual-train-api/api/vehicle and finally to a station-based
         lookup via the composition endpoint.
+
+        ``anchor_iso`` (ISO-8601 like "2026-04-30T08:25:00+0200") is
+        passed as ``dateTime`` to /v1/trein/{nr} when the bulk endpoint
+        is empty. NS uses it to disambiguate ritnummers reused across
+        the day so we get the actual physical train the user is on
+        rather than another rotation that happens to share the number.
         """
         if not train_number:
             return None
@@ -629,7 +637,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                     "Live vehicle fetch %s: empty. Raw response: %s",
                     train_number, snippet,
                 )
-            return await self._async_station_based_position(train_number)
+            return await self._async_station_based_position(train_number, anchor_iso)
 
         target = str(train_number)
         match = None
@@ -656,12 +664,12 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                     list(sample.keys()),
                     str(sample)[:400],
                 )
-            return await self._async_station_based_position(train_number)
+            return await self._async_station_based_position(train_number, anchor_iso)
 
         lat = match.get("lat") or match.get("latitude")
         lng = match.get("lng") or match.get("lon") or match.get("longitude")
         if lat is None or lng is None:
-            return await self._async_station_based_position(train_number)
+            return await self._async_station_based_position(train_number, anchor_iso)
         return {
             "lat": float(lat),
             "lng": float(lng),
@@ -672,17 +680,29 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             "source": "vehicle",
         }
 
-    async def _async_station_based_position(self, train_number: str) -> dict | None:
+    async def _async_station_based_position(
+        self, train_number: str, anchor_iso: str | None = None,
+    ) -> dict | None:
         """Fallback: derive a position from the train's current station
         via /v1/trein/{nr} (composition endpoint) + cached /v2/stations.
+
+        ``anchor_iso`` is forwarded as the ``dateTime`` query parameter
+        so NS picks the specific physical train running at that instant
+        rather than whatever rotation currently happens to use the
+        ritnummer.
         """
         if not self.api_key:
             return None
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
         url = f"{VIRTUAL_TRAIN_API_URL}/{train_number}"
+        params: dict[str, str] = {}
+        if anchor_iso:
+            params["dateTime"] = anchor_iso
         try:
             async with async_timeout.timeout(15):
-                async with self._session.get(url, headers=headers) as resp:
+                async with self._session.get(
+                    url, headers=headers, params=params or None,
+                ) as resp:
                     if resp.status != 200:
                         return None
                     data = await resp.json()

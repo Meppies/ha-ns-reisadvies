@@ -497,6 +497,7 @@ def _arm_cleanup(hass: HomeAssistant, session_id: str, seconds: int = 600) -> No
         vol.Required("type"): "ns_reisadvies/track_train_start",
         vol.Required("train_number"): vol.Any(str, int),
         vol.Optional("stops", default=[]): list,
+        vol.Optional("anchor"): vol.Any(str, None),
     }
 )
 @websocket_api.async_response
@@ -510,6 +511,7 @@ async def _ws_track_train_start(
 
     train_number = str(msg["train_number"])
     raw_stops: list[dict] = msg.get("stops") or []
+    anchor_iso: str | None = msg.get("anchor") or None
 
     geo = await coord.async_fetch_stations_geo()
     # Start from the user's leg (always safe; comes with lat/lng and
@@ -538,7 +540,7 @@ async def _ws_track_train_start(
     plotted = [s for s in resolved if s.get("lat") is not None and s.get("lng") is not None]
     journey_stops = resolved
 
-    pos_raw = await coord.async_fetch_live_train(train_number)
+    pos_raw = await coord.async_fetch_live_train(train_number, anchor_iso=anchor_iso)
 
     # Sanity check: NS' /v1/trein/{ritnummer} reuses ritnummers between
     # lines, so we can land on a different train with the same number.
@@ -590,6 +592,7 @@ async def _ws_track_train_start(
         "train_entity_id": train_entity_id,
         "stop_entity_ids": stop_entity_ids,
         "train_number": train_number,
+        "anchor": anchor_iso,
         "leg_points": [
             (s["lat"], s["lng"]) for s in resolved
             if s.get("lat") is not None and s.get("lng") is not None
@@ -630,7 +633,9 @@ async def _ws_track_train_poll(
         connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
         return
 
-    pos_raw = await coord.async_fetch_live_train(sess["train_number"])
+    pos_raw = await coord.async_fetch_live_train(
+        sess["train_number"], anchor_iso=sess.get("anchor"),
+    )
     # Same distance-based validation as on start.
     pos = pos_raw
     leg_points = sess.get("leg_points") or []

@@ -1068,6 +1068,14 @@ class NSReisadviesCard extends HTMLElement {
         plannedDepartureDateTime: s.plannedDepartureDateTime || null,
       }));
 
+    // Anchor: the planned departure of THIS specific train run, used by
+    // the backend to pass `dateTime` to /v1/trein/{nr} so NS picks the
+    // right physical rotation. Using planned (not actual) avoids a wild
+    // jump if NS is slow to publish the actual.
+    const anchor = leg.origin?.plannedDepartureDateTime
+      || leg.origin?.actualDepartureDateTime
+      || null;
+
     // Kick off the backend session.
     let resp;
     try {
@@ -1075,6 +1083,7 @@ class NSReisadviesCard extends HTMLElement {
         type: "ns_reisadvies/track_train_start",
         train_number: trainNum,
         stops: stopsForBackend,
+        anchor,
       });
     } catch (err) {
       this._renderMapEmpty(modal, String((err && err.message) || err));
@@ -1694,7 +1703,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.8 ",
+  "%c NS-REISADVIES-CARD %c v2.3.9 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
