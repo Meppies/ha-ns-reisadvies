@@ -1037,7 +1037,10 @@ class NSReisadviesCard extends HTMLElement {
         </div>
       </div>`;
     document.body.appendChild(modal);
-    this._activeMap = { modalEl: modal, sessionId: null, pollHandle: null };
+    this._activeMap = {
+      modalEl: modal, sessionId: null, pollHandle: null,
+      tripIdx, legIdx,
+    };
 
     const closeFn = () => this.closeLiveMap();
     modal.querySelector(".ns-map-close").addEventListener("click", closeFn);
@@ -1333,9 +1336,19 @@ class NSReisadviesCard extends HTMLElement {
   async _pollLiveMap() {
     const ctx = this._activeMap;
     if (!ctx || !ctx.sessionId) return;
-    // Interpolated position is recomputed every poll from leg.stops +
-    // wall clock; the WS call still goes out so the server-side session
-    // stays alive (and we get fresh passed-flags as a bonus).
+
+    // Refresh leg.stops from the live sensor state so newly confirmed
+    // actualDepartureDateTime values flow into the interpolation. The
+    // sensor is repolled by the coordinator on its own scan-interval,
+    // so we just have to re-read.
+    if (this._hass && this._config?.entity && ctx.tripIdx != null && ctx.legIdx != null) {
+      const trips = this._hass.states[this._config.entity]?.attributes?.trips || [];
+      const leg = trips[ctx.tripIdx]?.legs?.[ctx.legIdx];
+      if (leg && Array.isArray(leg.stops)) {
+        ctx.legStopsRaw = leg.stops.filter(s => !s.passing);
+      }
+    }
+
     let interp = this._interpolateTrainPos();
     try {
       const resp = await this._hass.callWS({
@@ -1355,59 +1368,71 @@ class NSReisadviesCard extends HTMLElement {
     }
   }
 
-  // Interpolate the train's geographic position from leg.stops + the
-  // wall clock. Uses actualDepartureDateTime as the canonical "left this
-  // station" marker and plannedArrivalDateTime of the next stop as the
-  // "due to arrive" marker. Linear interpolation along the great-circle
-  // chord; good enough for visual purposes.
+  // Compute the train's position from leg.stops + wall clock. Only
+  // actualDepartureDateTime counts as proof a train has left a stop —
+  // planned times are not enough, because NS confirms departures as
+  // they happen and a delay must NOT be turned into the marker
+  // teleporting forward. If we have no actualDeparture for the current
+  // stop, the train is still there.
   _interpolateTrainPos() {
     const ctx = this._activeMap;
     if (!ctx) return null;
     const stops = (ctx.legStopsRaw || []).filter(s => s.lat != null && s.lng != null);
     if (stops.length < 2) return null;
     const now = Date.now();
-    const stamp = (s, key) => {
-      const v = s[key];
+    const stamp = (s, k) => {
+      const v = s && s[k];
       if (!v) return null;
       const d = Date.parse(v);
       return Number.isFinite(d) ? d : null;
     };
 
-    // Find the segment that contains "now": last stop whose actual or
-    // planned departure has happened, paired with the next stop.
-    let lastIdx = -1;
+    // Find the LAST stop whose ACTUAL departure has happened. That's
+    // where the train confirmedly left from. Anything before then is
+    // history; anything after is speculation.
+    let lastDepartedIdx = -1;
     for (let i = 0; i < stops.length; i++) {
-      const dep = stamp(stops[i], "actualDepartureDateTime")
-        ?? stamp(stops[i], "plannedDepartureDateTime");
-      if (dep != null && dep <= now) lastIdx = i;
-    }
-    if (lastIdx < 0) {
-      // Train hasn't left origin yet — show it AT origin.
-      const o = stops[0];
-      return { lat: o.lat, lng: o.lng, station_name: o.name, source: "before-origin" };
-    }
-    if (lastIdx >= stops.length - 1) {
-      // Past final destination — show at last stop.
-      const e = stops[stops.length - 1];
-      return { lat: e.lat, lng: e.lng, station_name: e.name, source: "after-destination" };
+      const ad = stamp(stops[i], "actualDepartureDateTime");
+      if (ad != null && ad <= now) lastDepartedIdx = i;
     }
 
-    const a = stops[lastIdx];
-    const b = stops[lastIdx + 1];
-    const aArr = stamp(a, "actualArrivalDateTime") ?? stamp(a, "plannedArrivalDateTime");
-    const aDep = stamp(a, "actualDepartureDateTime") ?? stamp(a, "plannedDepartureDateTime");
-    const bArr = stamp(b, "actualArrivalDateTime") ?? stamp(b, "plannedArrivalDateTime");
-    // If we're still BEFORE departure of `a` (e.g. dwelling at the
-    // station) — show at `a`.
-    if (aDep != null && now < aDep) {
-      return { lat: a.lat, lng: a.lng, station_name: a.name, source: "at-stop" };
+    if (lastDepartedIdx < 0) {
+      // Train has not been confirmed to leave any stop yet. Place it
+      // at the first stop whose actual ARRIVAL is in the past (just
+      // arrived at origin) — otherwise at origin.
+      let arrivedIdx = -1;
+      for (let i = 0; i < stops.length; i++) {
+        const aa = stamp(stops[i], "actualArrivalDateTime");
+        if (aa != null && aa <= now) arrivedIdx = i;
+      }
+      const o = stops[Math.max(0, arrivedIdx)];
+      return { lat: o.lat, lng: o.lng, station_name: o.name, source: "at-origin" };
     }
-    // No arrival forecast for next stop — show at the just-departed
-    // station rather than guessing.
-    if (bArr == null || aDep == null || bArr <= aDep) {
-      return { lat: a.lat, lng: a.lng, station_name: a.name, source: "departed" };
+
+    if (lastDepartedIdx >= stops.length - 1) {
+      // Past the final stop — pin at destination.
+      const e = stops[stops.length - 1];
+      return { lat: e.lat, lng: e.lng, station_name: e.name, source: "arrived" };
     }
-    const frac = Math.max(0, Math.min(1, (now - aDep) / (bArr - aDep)));
+
+    const a = stops[lastDepartedIdx];
+    const b = stops[lastDepartedIdx + 1];
+    // Has the train confirmedly arrived at `b` already? If yes, the
+    // train is dwelling AT `b` (waiting to depart).
+    const bActArr = stamp(b, "actualArrivalDateTime");
+    if (bActArr != null && bActArr <= now) {
+      return { lat: b.lat, lng: b.lng, station_name: b.name, source: "at-stop" };
+    }
+
+    // Still en-route between a and b. Interpolate along the chord
+    // using actual departure of `a` and the (planned-if-no-actual)
+    // arrival of `b`.
+    const aActDep = stamp(a, "actualDepartureDateTime");
+    const bArr = stamp(b, "plannedArrivalDateTime") ?? bActArr;
+    if (aActDep == null || bArr == null || bArr <= aActDep) {
+      return { lat: a.lat, lng: a.lng, station_name: a.name, source: "just-departed" };
+    }
+    const frac = Math.max(0, Math.min(1, (now - aActDep) / (bArr - aActDep)));
     return {
       lat: a.lat + (b.lat - a.lat) * frac,
       lng: a.lng + (b.lng - a.lng) * frac,
@@ -1669,7 +1694,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.7 ",
+  "%c NS-REISADVIES-CARD %c v2.3.8 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
