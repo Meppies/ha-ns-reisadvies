@@ -1276,13 +1276,22 @@ class NSReisadviesEditor extends HTMLElement {
 
 // Idempotent registration — the integration auto-registers this script
 // via add_extra_js_url, but a user might also have it pinned manually
-// under Settings → Dashboards → Resources. Guarding the define() calls
-// prevents the "already defined" error in that case.
-if (!customElements.get("ns-reisadvies-editor")) {
+// under Settings → Dashboards → Resources. We catch DOMException so a
+// duplicate define from a second script tag does not silently abort the
+// rest of this module (which would skip customCards.push below).
+try {
   customElements.define("ns-reisadvies-editor", NSReisadviesEditor);
+} catch (e) {
+  if (!(e instanceof DOMException) || !customElements.get("ns-reisadvies-editor")) {
+    console.error("ns-reisadvies-editor define failed:", e);
+  }
 }
-if (!customElements.get("ns-reisadvies-card")) {
+try {
   customElements.define("ns-reisadvies-card", NSReisadviesCard);
+} catch (e) {
+  if (!(e instanceof DOMException) || !customElements.get("ns-reisadvies-card")) {
+    console.error("ns-reisadvies-card define failed:", e);
+  }
 }
 
 // Register the card with Home Assistant so it shows up in the
