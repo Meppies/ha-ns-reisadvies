@@ -1060,7 +1060,35 @@ class NSReisadviesCard extends HTMLElement {
     body.innerHTML = `<div class="ns-map-empty">${t("live_map_no_data", this._hass)}${hint ? `<br><small style="opacity:.6">${hint}</small>` : ""}</div>`;
   }
 
-  _renderMapInto(modal, resp, leg) {
+  async _ensureHaMapLoaded() {
+    // <ha-map> is in a code-split chunk that HA only loads when a map
+    // card appears in the UI. Force the load via the official card-helper
+    // factory: creating a hui-map-card pulls in the ha-map element.
+    if (customElements.get("ha-map")) return true;
+    try {
+      if (typeof window.loadCardHelpers === "function") {
+        const helpers = await window.loadCardHelpers();
+        if (helpers && helpers.createCardElement) {
+          helpers.createCardElement({type: "map", entities: []});
+        }
+      }
+    } catch (err) {
+      console.warn("[ns-reisadvies] loadCardHelpers failed:", err);
+    }
+    // Wait up to 5 s for ha-map to register.
+    try {
+      await Promise.race([
+        customElements.whenDefined("ha-map"),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("ha-map load timeout")), 5000)),
+      ]);
+      return true;
+    } catch (err) {
+      console.error("[ns-reisadvies] ha-map did not register:", err);
+      return false;
+    }
+  }
+
+  async _renderMapInto(modal, resp, leg) {
     const body = modal.querySelector(".ns-map-body");
     if (!body) return;
     const stopsWithCoord = (resp.stops || []).filter(s => s.lat != null && s.lng != null);
@@ -1069,6 +1097,15 @@ class NSReisadviesCard extends HTMLElement {
       this._renderMapEmpty(modal);
       return;
     }
+
+    const ok = await this._ensureHaMapLoaded();
+    // Guard: user may have closed the modal during the await.
+    if (!this._activeMap || this._activeMap.modalEl !== modal) return;
+    if (!ok) {
+      this._renderMapEmpty(modal, "ha-map element not available");
+      return;
+    }
+
     body.innerHTML = "";
     const map = document.createElement("ha-map");
     map.setAttribute("auto-fit", "");
@@ -1375,7 +1412,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.2.12 ",
+  "%c NS-REISADVIES-CARD %c v2.2.13 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
