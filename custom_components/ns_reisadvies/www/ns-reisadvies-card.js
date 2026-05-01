@@ -1630,30 +1630,23 @@ class NSReisadviesCard extends HTMLElement {
       } else {
         ctx.trainMarker.setLatLng(ll);
       }
-      // Orient the tile along the bearing while keeping the body
-      // upright (wheels at the bottom). For east-bound headings we
-      // rotate normally; for west-bound we mirror horizontally and
-      // rotate inside the [-90°, +90°] band so the cab points the
-      // right way without the body flipping upside-down.
-      // Skip if speed ≈ 0 (heading is noisy at standstill).
+      // Keep the marker visually stable: the train tile stays
+      // horizontal (no rotation), only its X-axis is mirrored when the
+      // train is heading west. That removes the jarring flip the
+      // user saw at the south/north heading boundary and is the same
+      // approach treinposities.nl uses. We accept that N/S motion is
+      // not visually distinguished — it never looked good there
+      // anyway because trains are very wide and don't read well at a
+      // 90° tilt.
+      // Skip mirror updates while the train is essentially parked
+      // (speed ≈ 0); heading values are noisy at standstill.
       const speedNum = Number(trainPos.speed);
       if (Number.isFinite(speedNum) && speedNum > 1 && trainPos.heading != null) {
-        // ArcGIS heading: 0 = north, 90 = east, 180 = south, 270 = west.
-        // Our SVG points east (cab on the right) at rotate(0).
         const h = ((Number(trainPos.heading) % 360) + 360) % 360;
-        let rot, scaleX;
-        if (h <= 180) {
-          // East hemisphere — straight rotate, body upright in [-90, 90].
-          rot = h - 90;
-          scaleX = 1;
-        } else {
-          // West hemisphere — mirror first, then rotate symmetrically.
-          rot = 270 - h;
-          scaleX = -1;
-        }
+        const scaleX = (h > 180 && h < 360) ? -1 : 1;
         const el = ctx.trainMarker.getElement();
         const tileEl = el && el.querySelector(".ns-leaflet-train");
-        if (tileEl) tileEl.style.transform = `rotate(${rot}deg) scaleX(${scaleX})`;
+        if (tileEl) tileEl.style.transform = `scaleX(${scaleX})`;
       }
     }
 
@@ -2047,7 +2040,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.6.1 ",
+  "%c NS-REISADVIES-CARD %c v2.6.2 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
