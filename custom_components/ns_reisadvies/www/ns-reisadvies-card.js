@@ -1271,30 +1271,163 @@ class NSReisadviesCard extends HTMLElement {
     if (!this._activeMap || this._activeMap.lmap !== ctx.lmap) return;  // closed
     const features = (data && data.features) || [];
     if (!features.length) return;
-    // Build one combined polyline layer for performance.
+
+    // 1. Collect raw LineStrings for the visual base layer.
     const railPolylines = [];
+    const lineStrings = [];  // array of [[lat,lng], ...]
     for (const f of features) {
       const g = f.geometry;
       if (!g) continue;
       if (g.type === "LineString") {
-        railPolylines.push(g.coordinates.map(c => [c[1], c[0]]));
+        const ll = g.coordinates.map(c => [c[1], c[0]]);
+        railPolylines.push(ll);
+        lineStrings.push(ll);
       } else if (g.type === "MultiLineString") {
         for (const seg of g.coordinates) {
-          railPolylines.push(seg.map(c => [c[1], c[0]]));
+          const ll = seg.map(c => [c[1], c[0]]);
+          railPolylines.push(ll);
+          lineStrings.push(ll);
         }
       }
     }
     if (!railPolylines.length) return;
+
     ctx.railLayer = L.polyline(railPolylines, {
       color: "#5a6a7a",
       weight: 1.6,
       opacity: 0.55,
       interactive: false,
     });
-    // Insert at the very bottom of the map so coloured route, stops
-    // and the train all sit on top.
     ctx.railLayer.addTo(ctx.lmap);
     ctx.railLayer.bringToBack();
+
+    // 2. Build an undirected graph from the LineStrings so we can
+    // snap the colored route polyline to the actual track. Each
+    // consecutive coordinate pair becomes an edge; coordinates are
+    // rounded to 5 decimals (~1 m) so neighbouring segments meet
+    // cleanly at junctions.
+    const graph = new Map();
+    const nodeCoords = new Map();  // key → [lat,lng]
+    const k = c => `${c[0].toFixed(5)},${c[1].toFixed(5)}`;
+    const haversine = (a, b) => {
+      const R = 6371000.0;
+      const r = Math.PI / 180;
+      const la1 = a[0] * r, la2 = b[0] * r;
+      const dla = (b[0] - a[0]) * r;
+      const dlo = (b[1] - a[1]) * r;
+      const h = Math.sin(dla / 2) ** 2
+        + Math.cos(la1) * Math.cos(la2) * Math.sin(dlo / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(h));
+    };
+    for (const ls of lineStrings) {
+      for (let i = 0; i < ls.length - 1; i++) {
+        const a = ls[i], b = ls[i + 1];
+        const ka = k(a), kb = k(b);
+        if (ka === kb) continue;
+        if (!nodeCoords.has(ka)) nodeCoords.set(ka, a);
+        if (!nodeCoords.has(kb)) nodeCoords.set(kb, b);
+        const w = haversine(a, b);
+        if (!graph.has(ka)) graph.set(ka, []);
+        if (!graph.has(kb)) graph.set(kb, []);
+        graph.get(ka).push({ to: kb, w });
+        graph.get(kb).push({ to: ka, w });
+      }
+    }
+    ctx.railGraph = { graph, nodeCoords, haversine };
+
+    // 3. Now snap the colored route to the rail graph. Update markers
+    // and the polylines using the snapped polyline as the geometry.
+    this._applyMapData();
+  }
+
+  // Snap an arbitrary [lat,lng] point to the nearest rail-graph node.
+  _railSnap(point) {
+    const ctx = this._activeMap;
+    const g = ctx && ctx.railGraph;
+    if (!g) return null;
+    let bestKey = null, bestD = Infinity;
+    for (const [key, c] of g.nodeCoords) {
+      const d = g.haversine(point, c);
+      if (d < bestD) { bestD = d; bestKey = key; }
+    }
+    return { key: bestKey, dist: bestD };
+  }
+
+  // Dijkstra shortest path on the rail graph. Returns the path as a
+  // list of [lat,lng] pairs, or null if no path exists.
+  _railPath(fromKey, toKey) {
+    const ctx = this._activeMap;
+    const g = ctx && ctx.railGraph;
+    if (!g) return null;
+    const { graph, nodeCoords } = g;
+    if (fromKey === toKey) {
+      const c = nodeCoords.get(fromKey);
+      return c ? [c] : null;
+    }
+    const dist = new Map();
+    const prev = new Map();
+    const visited = new Set();
+    dist.set(fromKey, 0);
+    // Naive O((V+E) V) — fine for the few-thousand-node sub-graph
+    // we have for one route.
+    while (true) {
+      // Find unvisited node with smallest distance
+      let cur = null, curD = Infinity;
+      for (const [k, d] of dist) {
+        if (visited.has(k)) continue;
+        if (d < curD) { curD = d; cur = k; }
+      }
+      if (cur == null) return null;
+      if (cur === toKey) break;
+      visited.add(cur);
+      const neigh = graph.get(cur) || [];
+      for (const e of neigh) {
+        if (visited.has(e.to)) continue;
+        const nd = curD + e.w;
+        if (nd < (dist.get(e.to) ?? Infinity)) {
+          dist.set(e.to, nd);
+          prev.set(e.to, cur);
+        }
+      }
+    }
+    const path = [];
+    let n = toKey;
+    while (n != null) {
+      path.unshift(nodeCoords.get(n));
+      n = prev.get(n);
+    }
+    return path;
+  }
+
+  // Build a snapped polyline for the WHOLE route by routing through
+  // the rail graph between consecutive stops. Falls back to straight
+  // chord segments where no rail path is found.
+  _railSnapStops(stops) {
+    if (!stops || stops.length < 2) return null;
+    const ctx = this._activeMap;
+    if (!ctx || !ctx.railGraph) return null;
+    const segments = [];  // one [[lat,lng], ...] per segment
+    for (let i = 0; i < stops.length - 1; i++) {
+      const a = stops[i], b = stops[i + 1];
+      const sa = this._railSnap([a.lat, a.lng]);
+      const sb = this._railSnap([b.lat, b.lng]);
+      // Reject snaps that are absurdly far (> 1 km) — probably the
+      // station isn't in the rail bbox we fetched.
+      if (!sa || !sb || sa.dist > 1000 || sb.dist > 1000) {
+        segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
+        continue;
+      }
+      const path = this._railPath(sa.key, sb.key);
+      if (!path || path.length < 2) {
+        segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
+        continue;
+      }
+      // Anchor the segment at the actual station coords so it visually
+      // ties to the marker, then walks the snapped path, then ends at
+      // the next station.
+      segments.push([[a.lat, a.lng], ...path, [b.lat, b.lng]]);
+    }
+    return segments;
   }
 
   _applyMapData(trainPos, freshStops) {
@@ -1318,11 +1451,8 @@ class NSReisadviesCard extends HTMLElement {
     }
     const stops = ctx.stopsWithCoord || [];
 
-    // Split the polyline by progress. Yellow = where the train has
-    // already been; blue = still ahead. The segment that CONTAINS the
-    // train (last passed → next future) is split at the train's actual
-    // position so the colour boundary follows the marker, not just the
-    // station endpoints.
+    // Build the colored polyline. Prefer rail-snapped geometry when
+    // the rail graph is available, fall back to straight chords.
     if (stops.length >= 2) {
       const yellowSeg = [];
       const blueSeg = [];
@@ -1330,29 +1460,46 @@ class NSReisadviesCard extends HTMLElement {
         ? [trainPos.lat, trainPos.lng]
         : null;
 
+      // Per-segment snapped geometry (or straight chord fallback).
+      const snapped = this._railSnapStops(stops) || stops.slice(0, -1).map((a, i) => {
+        const b = stops[i + 1];
+        return [[a.lat, a.lng], [b.lat, b.lng]];
+      });
+
       // Find the boundary index: last stop with passed=true.
       let lastPassedIdx = -1;
       for (let i = 0; i < stops.length; i++) {
         if (stops[i].passed) lastPassedIdx = i;
       }
 
-      for (let i = 0; i < stops.length - 1; i++) {
+      // Helper: split a polyline at the closest point to `tp`. Returns
+      // [before, after] each as [[lat,lng], ...]. Falls back to a
+      // simple endpoint cut if `tp` is missing.
+      const splitAtTrain = (poly, tpLL) => {
+        if (!tpLL || poly.length < 2) return [poly, poly];
+        let bestI = 0, bestD = Infinity;
+        const dist2 = (a, b) =>
+          (a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]);
+        for (let i = 0; i < poly.length; i++) {
+          const d = dist2(poly[i], tpLL);
+          if (d < bestD) { bestD = d; bestI = i; }
+        }
+        const before = poly.slice(0, bestI + 1).concat([tpLL]);
+        const after = [tpLL].concat(poly.slice(bestI + 1));
+        return [before, after];
+      };
+
+      for (let i = 0; i < snapped.length; i++) {
         const a = stops[i], b = stops[i + 1];
-        const aLL = [a.lat, a.lng];
-        const bLL = [b.lat, b.lng];
+        const seg = snapped[i];
         if (a.passed && b.passed) {
-          yellowSeg.push([aLL, bLL]);
+          yellowSeg.push(seg);
         } else if (i === lastPassedIdx && tp) {
-          // Boundary segment: yellow up to the train, blue after it.
-          yellowSeg.push([aLL, tp]);
-          blueSeg.push([tp, bLL]);
-        } else if (lastPassedIdx === -1 && i === 0 && tp) {
-          // Train hasn't reached the first stop yet — still draw the
-          // boundary on the very first segment so it doesn't all read
-          // as future when the train sits just before origin.
-          blueSeg.push([aLL, bLL]);
+          const [before, after] = splitAtTrain(seg, tp);
+          if (before.length >= 2) yellowSeg.push(before);
+          if (after.length >= 2) blueSeg.push(after);
         } else {
-          blueSeg.push([aLL, bLL]);
+          blueSeg.push(seg);
         }
       }
       const refresh = (existing, segments, color) => {
@@ -1361,7 +1508,7 @@ class NSReisadviesCard extends HTMLElement {
         return L.polyline(segments, {
           color,
           weight: 4,
-          opacity: 0.85,
+          opacity: 0.9,
         }).addTo(map);
       };
       ctx.passedLine = refresh(ctx.passedLine, yellowSeg, "#FFC917");
@@ -1834,7 +1981,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.5.0 ",
+  "%c NS-REISADVIES-CARD %c v2.5.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
