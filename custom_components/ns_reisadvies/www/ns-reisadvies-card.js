@@ -972,36 +972,21 @@ class NSReisadviesCard extends HTMLElement {
       .ns-map-modal .leaflet-container {
         background: #1a1a1a; font-family: inherit;
       }
+      /* Side-view train tile, rotated to match the train's heading. */
       .ns-leaflet-train {
-        width: 36px; height: 36px; border-radius: 50%;
-        background: #FF6B00;
-        border: 3px solid white;
-        box-shadow: 0 0 0 2px rgba(255,107,0,0.5), 0 3px 8px rgba(0,0,0,0.55);
-        display: flex; align-items: center; justify-content: center;
-        transition: transform 0.4s ease-out;
+        width: 44px; height: 22px;
         position: relative;
+        transition: transform 0.5s ease-out;
+        filter: drop-shadow(0 2px 3px rgba(0,0,0,0.55));
       }
-      .ns-leaflet-train svg {
-        width: 22px; height: 22px;
-        fill: white;
-        filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
-      }
-      /* Heading arrow on the rim, rotated by JS to match richting */
-      .ns-leaflet-train-arrow {
-        position: absolute; inset: -10px;
+      .ns-leaflet-train svg { display: block; width: 100%; height: 100%; }
+      .ns-leaflet-train .ns-cat {
+        position: absolute; left: 50%; top: 50%;
+        transform: translate(-50%, -50%);
+        font: 700 8px/1 "Helvetica Neue", Helvetica, Arial, sans-serif;
+        color: #003082; letter-spacing: 0.3px;
+        text-shadow: 0 1px 0 rgba(255,255,255,0.7);
         pointer-events: none;
-        transform-origin: center center;
-        transition: transform 0.5s ease-out, opacity 0.3s;
-      }
-      .ns-leaflet-train-arrow::before {
-        content: "";
-        position: absolute; left: 50%; top: -2px;
-        transform: translateX(-50%);
-        width: 0; height: 0;
-        border-left: 7px solid transparent;
-        border-right: 7px solid transparent;
-        border-bottom: 11px solid #FF6B00;
-        filter: drop-shadow(0 0 1px white) drop-shadow(0 0 1px white);
       }
       .ns-leaflet-stop {
         width: 14px; height: 14px; border-radius: 50%;
@@ -1319,39 +1304,63 @@ class NSReisadviesCard extends HTMLElement {
       });
     }
 
-    // Train marker — create or move. The inline SVG is mdi-train so
-    // it reads as a recognisable train at-a-glance, not a generic dot.
+    // Train marker — side-view train tile, treinposities.nl-style.
+    // Yellow NS body with blue stripe, four windows, dark blue cab and
+    // a red light at the front. The tile is rotated to match the GPS
+    // heading so the front faces the direction of travel.
     if (trainPos && trainPos.lat != null && trainPos.lng != null) {
       const ll = [trainPos.lat, trainPos.lng];
       if (!ctx.trainMarker) {
-        const trainSvg = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12,2C8,2 4,2.5 4,6V15.5A3.5,3.5 0 0,0 7.5,19L6,20.5V21H8L10,19H14L16,21H18V20.5L16.5,19A3.5,3.5 0 0,0 20,15.5V6C20,2.5 16,2 12,2M7.5,17A1.5,1.5 0 0,1 6,15.5A1.5,1.5 0 0,1 7.5,14A1.5,1.5 0 0,1 9,15.5A1.5,1.5 0 0,1 7.5,17M11,11H6V6H11V11M13,11V6H18V11H13M16.5,17A1.5,1.5 0 0,1 15,15.5A1.5,1.5 0 0,1 16.5,14A1.5,1.5 0 0,1 18,15.5A1.5,1.5 0 0,1 16.5,17Z"/></svg>`;
+        // viewBox 88x44, drawn pointing RIGHT (heading 90 = east).
+        // Rotation in CSS later converts heading → marker angle.
+        const tile = `
+          <svg viewBox="0 0 88 44" xmlns="http://www.w3.org/2000/svg">
+            <!-- yellow body with rounded corners -->
+            <path d="M4 14 Q4 8 12 8 L72 8 Q80 8 84 14 L86 22 L86 32 Q86 36 82 36 L8 36 Q4 36 4 32 Z" fill="#FFC917" stroke="#003082" stroke-width="1.2"/>
+            <!-- blue stripe along the bottom (NS livery) -->
+            <rect x="6" y="30" width="80" height="4" fill="#003082"/>
+            <!-- cab window (front, pointing right) -->
+            <path d="M68 14 Q72 12 78 14 L82 20 L78 22 L70 22 Z" fill="#cfe6ff" stroke="#003082" stroke-width="0.8"/>
+            <!-- passenger windows -->
+            <rect x="14" y="15" width="10" height="9" rx="1.5" fill="#cfe6ff" stroke="#003082" stroke-width="0.6"/>
+            <rect x="28" y="15" width="10" height="9" rx="1.5" fill="#cfe6ff" stroke="#003082" stroke-width="0.6"/>
+            <rect x="42" y="15" width="10" height="9" rx="1.5" fill="#cfe6ff" stroke="#003082" stroke-width="0.6"/>
+            <rect x="56" y="15" width="10" height="9" rx="1.5" fill="#cfe6ff" stroke="#003082" stroke-width="0.6"/>
+            <!-- front headlight -->
+            <circle cx="83" cy="26" r="1.6" fill="#fffae0"/>
+            <!-- wheels -->
+            <circle cx="18" cy="36" r="3.5" fill="#1c1c1c"/>
+            <circle cx="32" cy="36" r="3.5" fill="#1c1c1c"/>
+            <circle cx="56" cy="36" r="3.5" fill="#1c1c1c"/>
+            <circle cx="70" cy="36" r="3.5" fill="#1c1c1c"/>
+          </svg>`;
+        const cat = (trainPos.train_type || leg?.product?.shortCategoryName || "").toString().slice(0, 4);
         const icon = L.divIcon({
           className: "ns-leaflet-train-wrap",
-          html: `<div class="ns-leaflet-train"><div class="ns-leaflet-train-arrow"></div>${trainSvg}</div>`,
-          iconSize: [36, 36],
-          iconAnchor: [18, 18],
+          html: `<div class="ns-leaflet-train">${tile}<span class="ns-cat">${cat}</span></div>`,
+          iconSize: [44, 22],
+          iconAnchor: [22, 11],
         });
         ctx.trainMarker = L.marker(ll, {
           icon,
           zIndexOffset: 1000,
           title: "Trein",
+          rotationAngle: 0,
         }).addTo(map);
       } else {
         ctx.trainMarker.setLatLng(ll);
       }
-      // Rotate the heading-arrow to match the train's bearing if we
-      // got one from the OBIS feed. Skip if the train is parked
-      // (snelheid 0) — heading values are noisy at standstill.
-      const heading = (trainPos.speed != null && trainPos.speed > 0) ? trainPos.heading : null;
-      const el = ctx.trainMarker.getElement();
-      const arrow = el && el.querySelector(".ns-leaflet-train-arrow");
-      if (arrow) {
-        if (heading != null) {
-          arrow.style.transform = `rotate(${heading}deg)`;
-          arrow.style.opacity = "1";
-        } else {
-          arrow.style.opacity = "0";
-        }
+      // Rotate the tile to face the bearing. Skip if speed is 0 (NS
+      // OBIS reports noisy heading at standstill); when stopped, keep
+      // the previous heading rather than snapping to garbage.
+      const speedNum = Number(trainPos.speed);
+      if (Number.isFinite(speedNum) && speedNum > 1 && trainPos.heading != null) {
+        // ArcGIS richting is 0=north, 90=east; CSS rotate(0)=points right
+        // (east) for our SVG, so subtract 90.
+        const angle = Number(trainPos.heading) - 90;
+        const el = ctx.trainMarker.getElement();
+        const tileEl = el && el.querySelector(".ns-leaflet-train");
+        if (tileEl) tileEl.style.transform = `rotate(${angle}deg)`;
       }
     }
 
@@ -1745,7 +1754,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.4.0 ",
+  "%c NS-REISADVIES-CARD %c v2.4.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
