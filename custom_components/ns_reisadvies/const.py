@@ -41,6 +41,16 @@ VIRTUAL_TRAIN_API_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/api/v
 VIRTUAL_TRAIN_VEHICLE_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/vehicle"
 VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/api/vehicle"
 
+# ProRail's public ArcGIS feature service exposing OBIS train positions —
+# the same feed treinposities.nl/treinenradar.nl use. No API key needed,
+# no station-level rounding: returns real GPS lat/lng + speed + heading
+# per train. We query by `treinNummer` for a single train.
+ARCGIS_TREINEN_URL = (
+    "https://utility.arcgis.com/usrsvcs/servers/"
+    "9e11bc6bace24952bf2b7cd1df1a5311/rest/services/"
+    "NS_treinlocaties/FeatureServer/0/query"
+)
+
 # Storage
 STORAGE_VERSION = 1
 STORAGE_KEY = "ns_reisadvies_tracked_trips"

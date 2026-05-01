@@ -540,13 +540,12 @@ async def _ws_track_train_start(
     plotted = [s for s in resolved if s.get("lat") is not None and s.get("lng") is not None]
     journey_stops = resolved
 
-    # Position is computed client-side from leg.stops + wall clock —
-    # see _interpolateTrainPos() in the card. NS' /v1/trein/{ritnummer}
-    # silently returns a different physical train when ritnummers are
-    # reused (and the dateTime anchor turned out not to disambiguate),
-    # so calling it here just feeds the card a misleading fallback.
-    # We keep `train_position: None` and let the card interpolate.
-    pos = None
+    # Live GPS position via ProRail's public ArcGIS NS_treinlocaties
+    # service — same feed as treinposities.nl. Returns real lat/lng,
+    # speed (km/h), heading (degrees) and a timestamp. Filters on the
+    # ritnummer server-side so the wrong-train problem of /v1/trein
+    # disappears.
+    pos = await coord.async_fetch_arcgis_position(train_number)
 
     session_id = secrets.token_hex(6)
     train_entity_id = f"device_tracker.ns_reisadvies_train_{session_id}"
@@ -605,9 +604,7 @@ async def _ws_track_train_poll(
         connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
         return
 
-    # Same as on start: don't fetch /v1/trein at all — the card derives
-    # position client-side from leg.stops + wall clock.
-    pos = None
+    pos = await coord.async_fetch_arcgis_position(sess["train_number"])
     if pos:
         _set_train_state(
             hass,

@@ -979,11 +979,29 @@ class NSReisadviesCard extends HTMLElement {
         box-shadow: 0 0 0 2px rgba(255,107,0,0.5), 0 3px 8px rgba(0,0,0,0.55);
         display: flex; align-items: center; justify-content: center;
         transition: transform 0.4s ease-out;
+        position: relative;
       }
       .ns-leaflet-train svg {
         width: 22px; height: 22px;
         fill: white;
         filter: drop-shadow(0 1px 1px rgba(0,0,0,0.3));
+      }
+      /* Heading arrow on the rim, rotated by JS to match richting */
+      .ns-leaflet-train-arrow {
+        position: absolute; inset: -10px;
+        pointer-events: none;
+        transform-origin: center center;
+        transition: transform 0.5s ease-out, opacity 0.3s;
+      }
+      .ns-leaflet-train-arrow::before {
+        content: "";
+        position: absolute; left: 50%; top: -2px;
+        transform: translateX(-50%);
+        width: 0; height: 0;
+        border-left: 7px solid transparent;
+        border-right: 7px solid transparent;
+        border-bottom: 11px solid #FF6B00;
+        filter: drop-shadow(0 0 1px white) drop-shadow(0 0 1px white);
       }
       .ns-leaflet-stop {
         width: 14px; height: 14px; border-radius: 50%;
@@ -1164,7 +1182,11 @@ class NSReisadviesCard extends HTMLElement {
     // which keys on a non-unique ritnummer.
     this._activeMap.legStopsRaw = (Array.isArray(leg.stops) ? leg.stops : [])
       .filter(s => !s.passing);
-    const trainPos = this._interpolateTrainPos() || resp.train_position;
+    // Prefer real GPS (ProRail OBIS via ArcGIS) when the backend
+    // returns a position; fall back to wall-clock interpolation when
+    // the ArcGIS feed has no recent fix for this train (briefly during
+    // station dwells, or for trains without OBIS reporting).
+    const trainPos = resp.train_position || this._interpolateTrainPos();
     if (!trainPos && stopsWithCoord.length === 0) {
       this._renderMapEmpty(modal);
       return;
@@ -1305,7 +1327,7 @@ class NSReisadviesCard extends HTMLElement {
         const trainSvg = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12,2C8,2 4,2.5 4,6V15.5A3.5,3.5 0 0,0 7.5,19L6,20.5V21H8L10,19H14L16,21H18V20.5L16.5,19A3.5,3.5 0 0,0 20,15.5V6C20,2.5 16,2 12,2M7.5,17A1.5,1.5 0 0,1 6,15.5A1.5,1.5 0 0,1 7.5,14A1.5,1.5 0 0,1 9,15.5A1.5,1.5 0 0,1 7.5,17M11,11H6V6H11V11M13,11V6H18V11H13M16.5,17A1.5,1.5 0 0,1 15,15.5A1.5,1.5 0 0,1 16.5,14A1.5,1.5 0 0,1 18,15.5A1.5,1.5 0 0,1 16.5,17Z"/></svg>`;
         const icon = L.divIcon({
           className: "ns-leaflet-train-wrap",
-          html: `<div class="ns-leaflet-train">${trainSvg}</div>`,
+          html: `<div class="ns-leaflet-train"><div class="ns-leaflet-train-arrow"></div>${trainSvg}</div>`,
           iconSize: [36, 36],
           iconAnchor: [18, 18],
         });
@@ -1316,6 +1338,20 @@ class NSReisadviesCard extends HTMLElement {
         }).addTo(map);
       } else {
         ctx.trainMarker.setLatLng(ll);
+      }
+      // Rotate the heading-arrow to match the train's bearing if we
+      // got one from the OBIS feed. Skip if the train is parked
+      // (snelheid 0) — heading values are noisy at standstill.
+      const heading = (trainPos.speed != null && trainPos.speed > 0) ? trainPos.heading : null;
+      const el = ctx.trainMarker.getElement();
+      const arrow = el && el.querySelector(".ns-leaflet-train-arrow");
+      if (arrow) {
+        if (heading != null) {
+          arrow.style.transform = `rotate(${heading}deg)`;
+          arrow.style.opacity = "1";
+        } else {
+          arrow.style.opacity = "0";
+        }
       }
     }
 
@@ -1342,7 +1378,10 @@ class NSReisadviesCard extends HTMLElement {
       return;
     }
     const speed = pos.speed != null ? Math.round(pos.speed) : null;
-    el.textContent = speed != null ? "· " + t("live_map_speed", this._hass, { n: speed }) : "";
+    const parts = [];
+    if (speed != null) parts.push(t("live_map_speed", this._hass, { n: speed }));
+    if (pos.station_name) parts.push(pos.station_name);
+    el.textContent = parts.length ? "· " + parts.join(" · ") : "";
   }
 
   async _pollLiveMap() {
@@ -1367,8 +1406,8 @@ class NSReisadviesCard extends HTMLElement {
         type: "ns_reisadvies/track_train_poll",
         session_id: ctx.sessionId,
       });
-      const fallback = resp && resp.train_position;
-      const pos = interp || fallback;
+      const real = resp && resp.train_position;
+      const pos = real || interp;
       this._applyMapData(pos, resp && resp.journey_stops);
       this._updatePosLabel(pos);
     } catch (err) {
@@ -1706,7 +1745,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.3.11 ",
+  "%c NS-REISADVIES-CARD %c v2.4.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

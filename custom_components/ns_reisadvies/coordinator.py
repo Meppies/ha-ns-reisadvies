@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import (
     API_URL,
+    ARCGIS_TREINEN_URL,
     DOMAIN,
     JOURNEY_API_URL,
     STATIONS_API_URL,
@@ -403,6 +404,63 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         bucket["_stations_geo"] = out
         _LOGGER.debug("Stations geo cache: %d entries (code+UIC)", len(out))
         return out
+
+    async def async_fetch_arcgis_position(self, train_number: str) -> dict | None:
+        """Live train GPS via ProRail's public ArcGIS NS_treinlocaties.
+
+        Returns smooth lat/lng + speed (km/h) + heading (degrees) +
+        epoch-ms timestamp, the same feed treinposities.nl uses. No NS
+        API key required for this endpoint. The query filters on
+        ``treinNummer`` so we get exactly the user's run, not a random
+        rotation that shares the ritnummer.
+        """
+        if not train_number:
+            return None
+        try:
+            target = int(str(train_number).strip())
+        except (TypeError, ValueError):
+            return None
+        try:
+            async with async_timeout.timeout(10):
+                async with self._session.get(
+                    ARCGIS_TREINEN_URL,
+                    params={
+                        "where": f"treinNummer={target}",
+                        "outFields": "treinNummer,lat,lng,snelheid,richting,Tijd,Stationsnaam,type,ritId",
+                        "f": "json",
+                        "resultRecordCount": "1",
+                    },
+                ) as resp:
+                    if resp.status != 200:
+                        _LOGGER.debug(
+                            "ArcGIS treinlocaties %s -> HTTP %s",
+                            target, resp.status,
+                        )
+                        return None
+                    data = await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("ArcGIS fetch %s failed: %s", target, err)
+            return None
+
+        feats = (data or {}).get("features") or []
+        if not feats:
+            return None
+        attrs = feats[0].get("attributes") or {}
+        lat = attrs.get("lat")
+        lng = attrs.get("lng")
+        if lat is None or lng is None:
+            return None
+        return {
+            "lat": float(lat),
+            "lng": float(lng),
+            "speed": attrs.get("snelheid"),
+            "heading": attrs.get("richting"),
+            "ts_ms": attrs.get("Tijd"),
+            "station_name": attrs.get("Stationsnaam") or None,
+            "train_type": attrs.get("type"),
+            "rit_id": attrs.get("ritId"),
+            "source": "prorail-obis",
+        }
 
     async def async_fetch_journey_route(self, train_number: str) -> list[dict]:
         """Return the FULL list of stops the given train makes today.
