@@ -1361,7 +1361,10 @@ class NSReisadviesCard extends HTMLElement {
     // cleanly at junctions.
     const graph = new Map();
     const nodeCoords = new Map();  // key → [lat,lng]
-    const k = c => `${c[0].toFixed(5)},${c[1].toFixed(5)}`;
+    // 4-decimal precision (~11 m): enough to auto-merge nearby
+    // junction endpoints from neighbouring rail features without
+    // collapsing distinct parallel tracks.
+    const k = c => `${c[0].toFixed(4)},${c[1].toFixed(4)}`;
     const haversine = (a, b) => {
       const R = 6371000.0;
       const r = Math.PI / 180;
@@ -1393,92 +1396,111 @@ class NSReisadviesCard extends HTMLElement {
     this._applyMapData();
   }
 
-  // Snap an arbitrary [lat,lng] point to the nearest rail-graph node.
-  _railSnap(point) {
+  // Snap a [lat,lng] to the K nearest rail-graph nodes. Returning a
+  // ranked list lets us retry with the second-best candidate when
+  // the closest one happens to land on a disconnected sub-graph
+  // (rangeer-spoor, freight-only branch, etc).
+  _railSnapCandidates(point, k = 3, maxDist = 2000) {
     const ctx = this._activeMap;
     const g = ctx && ctx.railGraph;
-    if (!g) return null;
-    let bestKey = null, bestD = Infinity;
+    if (!g) return [];
+    const out = [];
     for (const [key, c] of g.nodeCoords) {
       const d = g.haversine(point, c);
-      if (d < bestD) { bestD = d; bestKey = key; }
+      if (d > maxDist) continue;
+      out.push({ key, dist: d });
     }
-    return { key: bestKey, dist: bestD };
+    out.sort((a, b) => a.dist - b.dist);
+    return out.slice(0, k);
   }
 
-  // Dijkstra shortest path on the rail graph. Returns the path as a
-  // list of [lat,lng] pairs, or null if no path exists.
+  // A* shortest path on the rail graph using haversine as the
+  // admissible heuristic. Returns the path as a list of [lat,lng]
+  // pairs, or null if unreachable.
   _railPath(fromKey, toKey) {
     const ctx = this._activeMap;
     const g = ctx && ctx.railGraph;
     if (!g) return null;
-    const { graph, nodeCoords } = g;
+    const { graph, nodeCoords, haversine } = g;
     if (fromKey === toKey) {
       const c = nodeCoords.get(fromKey);
       return c ? [c] : null;
     }
-    const dist = new Map();
-    const prev = new Map();
-    const visited = new Set();
-    dist.set(fromKey, 0);
-    // Naive O((V+E) V) — fine for the few-thousand-node sub-graph
-    // we have for one route.
-    while (true) {
-      // Find unvisited node with smallest distance
-      let cur = null, curD = Infinity;
-      for (const [k, d] of dist) {
-        if (visited.has(k)) continue;
-        if (d < curD) { curD = d; cur = k; }
+    const goal = nodeCoords.get(toKey);
+    if (!goal) return null;
+    const cameFrom = new Map();
+    const gScore = new Map();
+    gScore.set(fromKey, 0);
+    // Tiny ad-hoc priority queue: array kept sorted by f-score on
+    // every push. With 4-decimal precision the graph stays small
+    // enough that this is fast.
+    const open = [{ key: fromKey, f: haversine(nodeCoords.get(fromKey), goal) }];
+    let iters = 0;
+    while (open.length) {
+      iters++;
+      if (iters > 100000) return null;  // safety
+      // Pop lowest f
+      let bestIdx = 0;
+      for (let i = 1; i < open.length; i++) {
+        if (open[i].f < open[bestIdx].f) bestIdx = i;
       }
-      if (cur == null) return null;
-      if (cur === toKey) break;
-      visited.add(cur);
-      const neigh = graph.get(cur) || [];
-      for (const e of neigh) {
-        if (visited.has(e.to)) continue;
-        const nd = curD + e.w;
-        if (nd < (dist.get(e.to) ?? Infinity)) {
-          dist.set(e.to, nd);
-          prev.set(e.to, cur);
+      const cur = open.splice(bestIdx, 1)[0];
+      if (cur.key === toKey) {
+        const path = [nodeCoords.get(toKey)];
+        let n = toKey;
+        while (cameFrom.has(n)) {
+          n = cameFrom.get(n);
+          path.unshift(nodeCoords.get(n));
         }
+        return path;
+      }
+      const curG = gScore.get(cur.key);
+      const neigh = graph.get(cur.key) || [];
+      for (const e of neigh) {
+        const tent = curG + e.w;
+        if (tent >= (gScore.get(e.to) ?? Infinity)) continue;
+        gScore.set(e.to, tent);
+        cameFrom.set(e.to, cur.key);
+        const f = tent + haversine(nodeCoords.get(e.to), goal);
+        open.push({ key: e.to, f });
       }
     }
-    const path = [];
-    let n = toKey;
-    while (n != null) {
-      path.unshift(nodeCoords.get(n));
-      n = prev.get(n);
-    }
-    return path;
+    return null;
   }
 
   // Build a snapped polyline for the WHOLE route by routing through
-  // the rail graph between consecutive stops. Falls back to straight
-  // chord segments where no rail path is found.
+  // the rail graph between consecutive stops. Tries the top few snap
+  // candidates per stop so a single bad snap (onto an isolated
+  // sub-graph) doesn't fall back to a straight chord.
   _railSnapStops(stops) {
     if (!stops || stops.length < 2) return null;
     const ctx = this._activeMap;
     if (!ctx || !ctx.railGraph) return null;
-    const segments = [];  // one [[lat,lng], ...] per segment
+    const segments = [];
     for (let i = 0; i < stops.length - 1; i++) {
       const a = stops[i], b = stops[i + 1];
-      const sa = this._railSnap([a.lat, a.lng]);
-      const sb = this._railSnap([b.lat, b.lng]);
-      // Reject snaps that are absurdly far (> 1 km) — probably the
-      // station isn't in the rail bbox we fetched.
-      if (!sa || !sb || sa.dist > 1000 || sb.dist > 1000) {
+      const candA = this._railSnapCandidates([a.lat, a.lng]);
+      const candB = this._railSnapCandidates([b.lat, b.lng]);
+      let bestPath = null;
+      outer:
+      for (const sa of candA) {
+        for (const sb of candB) {
+          const path = this._railPath(sa.key, sb.key);
+          if (path && path.length >= 2) {
+            bestPath = path;
+            break outer;
+          }
+        }
+      }
+      if (!bestPath) {
+        console.warn(
+          `[ns-reisadvies] no rail path ${a.name}→${b.name}; straight fallback. `
+          + `(snap candidates: A=${candA.length} B=${candB.length})`
+        );
         segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
         continue;
       }
-      const path = this._railPath(sa.key, sb.key);
-      if (!path || path.length < 2) {
-        segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
-        continue;
-      }
-      // Anchor the segment at the actual station coords so it visually
-      // ties to the marker, then walks the snapped path, then ends at
-      // the next station.
-      segments.push([[a.lat, a.lng], ...path, [b.lat, b.lng]]);
+      segments.push([[a.lat, a.lng], ...bestPath, [b.lat, b.lng]]);
     }
     return segments;
   }
@@ -1646,7 +1668,17 @@ class NSReisadviesCard extends HTMLElement {
         const scaleX = (h > 180 && h < 360) ? -1 : 1;
         const el = ctx.trainMarker.getElement();
         const tileEl = el && el.querySelector(".ns-leaflet-train");
-        if (tileEl) tileEl.style.transform = `scaleX(${scaleX})`;
+        if (tileEl) {
+          tileEl.style.transform = `scaleX(${scaleX})`;
+          // Counter-flip the category label (SPR/IC) so the text
+          // stays readable when the tile is mirrored.
+          const cat = tileEl.querySelector(".ns-cat");
+          if (cat) {
+            cat.style.transform = scaleX === -1
+              ? "translate(-50%, -50%) scaleX(-1)"
+              : "translate(-50%, -50%)";
+          }
+        }
       }
     }
 
@@ -2040,7 +2072,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.6.2 ",
+  "%c NS-REISADVIES-CARD %c v2.7.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
