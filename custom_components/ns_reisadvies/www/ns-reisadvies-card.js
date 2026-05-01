@@ -1221,8 +1221,80 @@ class NSReisadviesCard extends HTMLElement {
     this._activeMap.trainMarker = null;
     this._activeMap.stopsWithCoord = stopsWithCoord;
 
+    // Fetch ProRail rail geometries for the route's bbox and render
+    // them as a dim grey base layer. Real curving tracks make the
+    // colored route polyline less misleading and ensure the GPS
+    // marker visibly sits on a track. Fire-and-forget — the colored
+    // route renders immediately, the rail layer slides in when ready.
+    this._fetchAndRenderRailLayer(stopsWithCoord);
+
     this._applyMapData(trainPos);
     this._updatePosLabel(trainPos, leg);
+  }
+
+  async _fetchAndRenderRailLayer(stops) {
+    const ctx = this._activeMap;
+    if (!ctx || !ctx.lmap || !stops || stops.length < 2) return;
+    const L = ctx.leaflet;
+    // Bounding box around the stops + 5 km padding (~0.06°) so curves
+    // outside the stop chord are still included.
+    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+    for (const s of stops) {
+      if (s.lat == null || s.lng == null) continue;
+      if (s.lat < minLat) minLat = s.lat;
+      if (s.lat > maxLat) maxLat = s.lat;
+      if (s.lng < minLng) minLng = s.lng;
+      if (s.lng > maxLng) maxLng = s.lng;
+    }
+    if (!Number.isFinite(minLat)) return;
+    const pad = 0.06;
+    const bbox = [minLng - pad, minLat - pad, maxLng + pad, maxLat + pad].join(",");
+
+    const url = "https://maps.prorail.nl/arcgis/rest/services/ProRail_basiskaart/FeatureServer/6/query"
+      + "?where=1%3D1"
+      + "&geometry=" + encodeURIComponent(bbox)
+      + "&geometryType=esriGeometryEnvelope"
+      + "&inSR=4326&outSR=4326"
+      + "&spatialRel=esriSpatialRelIntersects"
+      + "&outFields=GEOCODE_NAAM"
+      + "&f=geojson"
+      + "&resultRecordCount=2000";
+    let data;
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) return;
+      data = await resp.json();
+    } catch (err) {
+      console.warn("[ns-reisadvies] rail fetch failed", err);
+      return;
+    }
+    if (!this._activeMap || this._activeMap.lmap !== ctx.lmap) return;  // closed
+    const features = (data && data.features) || [];
+    if (!features.length) return;
+    // Build one combined polyline layer for performance.
+    const railPolylines = [];
+    for (const f of features) {
+      const g = f.geometry;
+      if (!g) continue;
+      if (g.type === "LineString") {
+        railPolylines.push(g.coordinates.map(c => [c[1], c[0]]));
+      } else if (g.type === "MultiLineString") {
+        for (const seg of g.coordinates) {
+          railPolylines.push(seg.map(c => [c[1], c[0]]));
+        }
+      }
+    }
+    if (!railPolylines.length) return;
+    ctx.railLayer = L.polyline(railPolylines, {
+      color: "#5a6a7a",
+      weight: 1.6,
+      opacity: 0.55,
+      interactive: false,
+    });
+    // Insert at the very bottom of the map so coloured route, stops
+    // and the train all sit on top.
+    ctx.railLayer.addTo(ctx.lmap);
+    ctx.railLayer.bringToBack();
   }
 
   _applyMapData(trainPos, freshStops) {
@@ -1762,7 +1834,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.4.2 ",
+  "%c NS-REISADVIES-CARD %c v2.5.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
