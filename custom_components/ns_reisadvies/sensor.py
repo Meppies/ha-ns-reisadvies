@@ -116,6 +116,9 @@ class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
             "live_train_map_enabled": bool(
                 bucket.get("_live_train_map_enabled", False)
             ),
+            "live_map_refresh_seconds": int(
+                bucket.get("_live_map_refresh_seconds", 10)
+            ),
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:

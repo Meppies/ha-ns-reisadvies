@@ -510,6 +510,11 @@ class NSReisadviesCard extends HTMLElement {
 
     const serverTracked = stateObj.attributes.tracked_trips || [];
     this._liveMapEnabled = !!stateObj.attributes.live_train_map_enabled;
+    // Configurable poll cadence while the modal is open. Clamp to the
+    // same 5–60 s server-side range so a stale attribute can never
+    // accidentally hammer the API.
+    const refreshAttr = Number(stateObj.attributes.live_map_refresh_seconds);
+    this._liveMapRefreshMs = (Number.isFinite(refreshAttr) ? Math.max(5, Math.min(60, refreshAttr)) : 10) * 1000;
 
     this.cleanOldFavorites(serverTracked);
     this.processAutoFavs(stateObj);
@@ -1100,9 +1105,12 @@ class NSReisadviesCard extends HTMLElement {
 
     this._renderMapInto(modal, resp, leg);
 
-    // Begin polling. 10 s while the map is open; safeguard timeout
-    // is set server-side (10 min) but we always send a stop on close.
-    this._activeMap.pollHandle = setInterval(() => this._pollLiveMap(), 10000);
+    // Poll cadence is configurable in the hub options (default 10 s,
+    // 5–60 s allowed). Stored in hass.data and re-exposed via the
+    // sensor's live_map_refresh_seconds attribute. Server-side cleanup
+    // timer (10 min) still fires if the page closes without notifying.
+    const intervalMs = this._liveMapRefreshMs || 10000;
+    this._activeMap.pollHandle = setInterval(() => this._pollLiveMap(), intervalMs);
   }
 
   _renderMapEmpty(modal, hint) {
@@ -1754,7 +1762,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.4.1 ",
+  "%c NS-REISADVIES-CARD %c v2.4.2 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

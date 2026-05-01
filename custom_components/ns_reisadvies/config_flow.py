@@ -32,10 +32,12 @@ from .const import (
     CONF_FAV_HOURS,
     CONF_FETCH_COMPOSITION,
     CONF_LIVE_TRAIN_MAP,
+    CONF_LIVE_MAP_REFRESH_SECONDS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
     DEFAULT_FETCH_COMPOSITION,
     DEFAULT_LIVE_TRAIN_MAP,
+    DEFAULT_LIVE_MAP_REFRESH_SECONDS,
 )
 from .stations import STATIONS
 
@@ -130,6 +132,7 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_FAV_HOURS: DEFAULT_FAV_HOURS,
                     CONF_FETCH_COMPOSITION: DEFAULT_FETCH_COMPOSITION,
                     CONF_LIVE_TRAIN_MAP: DEFAULT_LIVE_TRAIN_MAP,
+                    CONF_LIVE_MAP_REFRESH_SECONDS: DEFAULT_LIVE_MAP_REFRESH_SECONDS,
                 }
                 # First route comes along as a subentry
                 return self.async_create_entry(
@@ -272,6 +275,9 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
         fav_val = int(data.get(CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
         comp_val = bool(data.get(CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
         map_val = bool(data.get(CONF_LIVE_TRAIN_MAP, DEFAULT_LIVE_TRAIN_MAP))
+        map_int = int(data.get(
+            CONF_LIVE_MAP_REFRESH_SECONDS, DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+        ))
 
         schema = vol.Schema({
             vol.Required(CONF_API_KEY, default=str(api_val)): str,
@@ -283,5 +289,8 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
             ): vol.All(int, vol.Range(min=0, max=72)),
             vol.Required(CONF_FETCH_COMPOSITION, default=comp_val): bool,
             vol.Required(CONF_LIVE_TRAIN_MAP, default=map_val): bool,
+            vol.Required(
+                CONF_LIVE_MAP_REFRESH_SECONDS, default=map_int,
+            ): vol.All(int, vol.Range(min=5, max=60)),
         })
         return self.async_show_form(step_id="init", data_schema=schema)

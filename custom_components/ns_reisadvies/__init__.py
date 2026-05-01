@@ -41,10 +41,12 @@ from .const import (
     CONF_FAV_HOURS,
     CONF_FETCH_COMPOSITION,
     CONF_LIVE_TRAIN_MAP,
+    CONF_LIVE_MAP_REFRESH_SECONDS,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
     DEFAULT_FETCH_COMPOSITION,
     DEFAULT_LIVE_TRAIN_MAP,
+    DEFAULT_LIVE_MAP_REFRESH_SECONDS,
 )
 from .coordinator import NSUpdateCoordinator
 
@@ -249,11 +251,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     fav_hours = int(entry.data.get(CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
     fetch_composition = bool(entry.data.get(CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
     live_train_map = bool(entry.data.get(CONF_LIVE_TRAIN_MAP, DEFAULT_LIVE_TRAIN_MAP))
+    live_map_refresh = int(entry.data.get(
+        CONF_LIVE_MAP_REFRESH_SECONDS, DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+    ))
 
-    # Make live_train_map flag visible to the sensor platform via hass.data
-    # so it can expose it in extra_state_attributes (used by the card to
-    # decide whether to render the map icon).
+    # Make live_train_map flag + refresh interval visible to the sensor
+    # platform via hass.data so the card can read them from
+    # extra_state_attributes (decides whether to render the map icon
+    # and how fast to poll while it is open).
     hass.data[DOMAIN]["_live_train_map_enabled"] = live_train_map
+    hass.data[DOMAIN]["_live_map_refresh_seconds"] = max(5, min(60, live_map_refresh))
 
     # Coordinator per subentry. We store them in hass.data keyed by
     # subentry_id so the sensor platform can pick them up.

@@ -70,14 +70,16 @@
           "scan_interval_minuten": "Verversingsinterval (minuten)",
           "fav_hours": "Favorieten bewaren (uren)",
           "fetch_composition": "Treinsamenstelling ophalen (bakken)",
-          "live_train_map": "Live trein-kaart tonen (per traject)"
+          "live_train_map": "Live trein-kaart tonen (per traject)",
+          "live_map_refresh_seconds": "Live kaart-verversinginterval (seconden)"
         },
         "data_description": {
           "api_key": "Je NS API-sleutel. Vervang deze als hij geroteerd is.",
           "scan_interval_minuten": "Hoe vaak de integratie de NS-API ophaalt. Bereik: 1 tot 60.",
           "fav_hours": "Hoe lang een gepinde favoriet bewaard blijft voordat hij automatisch verwijderd wordt. Zet op 0 om verlopen uit te schakelen.",
           "fetch_composition": "Doet een extra NS-API call per unieke trein per refresh, om de actuele samenstelling op te halen (aantal bakken, materieel-type, plaatje). Standaard uit om API-quota te besparen.",
-          "live_train_map": "Voegt een klein kaart-icoontje toe onder het vertrekperron van elk traject. Tikken opent een kaart met de route, stops en live trein-positie. De positie wordt alleen opgehaald zolang het kaartje openstaat."
+          "live_train_map": "Voegt een klein kaart-icoontje toe onder het vertrekperron van elk traject. Tikken opent een kaart met de route, stops en live trein-positie. De positie wordt alleen opgehaald zolang het kaartje openstaat.",
+          "live_map_refresh_seconds": "Hoe vaak de GPS-positie van de trein wordt ververst terwijl het live kaartje openstaat. Sneller = vloeiender beweging, iets meer netwerkverkeer. Bereik: 5 tot 60 seconden."
         }
       }
     }

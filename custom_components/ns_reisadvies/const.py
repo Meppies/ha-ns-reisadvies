@@ -22,12 +22,14 @@ CONF_SCAN_INTERVAL = "scan_interval_minuten"
 CONF_FAV_HOURS = "fav_hours"
 CONF_FETCH_COMPOSITION = "fetch_composition"
 CONF_LIVE_TRAIN_MAP = "live_train_map"
+CONF_LIVE_MAP_REFRESH_SECONDS = "live_map_refresh_seconds"
 
 # Defaults
 DEFAULT_SCAN_INTERVAL = 5
 DEFAULT_FAV_HOURS = 6  # 0 disables expiry
 DEFAULT_FETCH_COMPOSITION = False  # extra API calls — opt in
 DEFAULT_LIVE_TRAIN_MAP = False  # on-demand only, but icon is opt-in
+DEFAULT_LIVE_MAP_REFRESH_SECONDS = 10  # poll cadence while modal is open
 
 # API URLs
 API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips"
