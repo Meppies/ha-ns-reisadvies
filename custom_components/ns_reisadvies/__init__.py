@@ -13,9 +13,13 @@ the entity registry.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
+import time as _time
+from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
@@ -27,7 +31,7 @@ from homeassistant.components.http import StaticPathConfig
 from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components import lovelace, websocket_api
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.loader import async_get_integration
 
 from .const import (
@@ -54,6 +58,9 @@ _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.SENSOR]
 CARD_URL = "/ns_reisadvies/ns-reisadvies-card.js"
+RAIL_FILE = "rail.geojson"
+RAIL_REFRESH_INTERVAL = timedelta(days=7)
+RAIL_MAX_AGE_SECONDS = 7 * 24 * 3600
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +314,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         websocket_api.async_register_command(hass, _ws_track_train_poll)
         websocket_api.async_register_command(hass, _ws_track_train_stop)
         hass.data[DOMAIN]["_ws_registered"] = True
+
+    # Schedule the rail-cache refresh once per HA boot. Runs ~30s after
+    # setup so the integration finishes booting first, then weekly.
+    if "_rail_refresh_scheduled" not in hass.data[DOMAIN] and coordinators:
+        hass.data[DOMAIN]["_rail_refresh_scheduled"] = True
+        first_coord = next(iter(coordinators.values()))
+
+        async def _periodic_rail_refresh(_now=None):
+            await _async_refresh_rail_cache(hass, first_coord)
+
+        async_call_later(hass, 30, _periodic_rail_refresh)
+        async_track_time_interval(
+            hass, _periodic_rail_refresh, RAIL_REFRESH_INTERVAL,
+        )
 
     # Static path + Lovelace card auto-registration (one-shot per HA).
     if "static_paths_registered" not in hass.data[DOMAIN]:
@@ -680,6 +701,45 @@ def _backfill_entity_subentries(hass: HomeAssistant, entry: ConfigEntry) -> None
                 "Could not link %s to subentry %s: %s",
                 ent.entity_id, target, err,
             )
+
+
+async def _async_refresh_rail_cache(
+    hass: HomeAssistant, coord: NSUpdateCoordinator, force: bool = False,
+) -> None:
+    """Download the full ProRail rail network if missing or > 7 days old.
+
+    Stores it as plain GeoJSON next to the card.js so it can be served
+    by the same static path. Roughly 5–10 MB on disk, browser-cacheable.
+    """
+    www_dir = hass.config.path("custom_components/ns_reisadvies/www")
+    target = Path(www_dir) / RAIL_FILE
+    if not force and target.exists():
+        try:
+            age = _time.time() - target.stat().st_mtime
+        except OSError:
+            age = RAIL_MAX_AGE_SECONDS + 1
+        if age < RAIL_MAX_AGE_SECONDS:
+            return
+    data = await coord.async_fetch_full_rail_network()
+    if not data:
+        return
+
+    def _write() -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Compact JSON to keep the file small; GeoJSON parsers are fine
+        # with no whitespace.
+        target.write_text(
+            json.dumps(data, separators=(",", ":")), encoding="utf-8",
+        )
+
+    try:
+        await hass.async_add_executor_job(_write)
+        _LOGGER.info(
+            "NS Reisadvies: rail.geojson cached (%d features)",
+            len(data.get("features", [])),
+        )
+    except OSError as err:
+        _LOGGER.warning("NS Reisadvies: could not write rail cache: %s", err)
 
 
 async def _async_register_card_resource(hass: HomeAssistant, version: str) -> None:

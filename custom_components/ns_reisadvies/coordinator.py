@@ -22,6 +22,7 @@ from .const import (
     ARCGIS_TREINEN_URL,
     DOMAIN,
     JOURNEY_API_URL,
+    PRORAIL_RAIL_URL,
     STATIONS_API_URL,
     STORAGE_KEY,
     STORAGE_VERSION,
@@ -404,6 +405,60 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         bucket["_stations_geo"] = out
         _LOGGER.debug("Stations geo cache: %d entries (code+UIC)", len(out))
         return out
+
+    async def async_fetch_full_rail_network(self) -> dict | None:
+        """Download every ProRail Spoorbaanhartlijn feature in NL.
+
+        Returns a GeoJSON FeatureCollection or None on hard failure.
+        Pages through the FeatureServer in chunks of 2000 — the server
+        caps each request to that size — until exhausted.
+        """
+        features: list[dict] = []
+        offset = 0
+        page_size = 2000
+        max_pages = 20  # safety cap (~40 000 features)
+        while True:
+            params = {
+                "where": "1=1",
+                "outSR": "4326",
+                "outFields": "GEOCODE_NAAM",
+                "f": "geojson",
+                "resultOffset": str(offset),
+                "resultRecordCount": str(page_size),
+                "returnGeometry": "true",
+            }
+            try:
+                async with async_timeout.timeout(60):
+                    async with self._session.get(
+                        PRORAIL_RAIL_URL, params=params,
+                    ) as resp:
+                        if resp.status != 200:
+                            _LOGGER.warning(
+                                "ProRail rail network fetch HTTP %s at offset %s",
+                                resp.status, offset,
+                            )
+                            return None
+                        page = await resp.json()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                _LOGGER.warning("ProRail rail network fetch failed: %s", err)
+                return None
+            page_feats = (page or {}).get("features") or []
+            features.extend(page_feats)
+            if len(page_feats) < page_size:
+                break
+            offset += page_size
+            if offset >= page_size * max_pages:
+                _LOGGER.warning(
+                    "ProRail rail network: hit %d-page safety cap, stopping",
+                    max_pages,
+                )
+                break
+        if not features:
+            return None
+        _LOGGER.info(
+            "ProRail rail network downloaded: %d features", len(features),
+        )
+        return {"type": "FeatureCollection", "features": features}
 
     async def async_fetch_arcgis_position(self, train_number: str) -> dict | None:
         """Live train GPS via ProRail's public ArcGIS NS_treinlocaties.

@@ -1236,8 +1236,66 @@ class NSReisadviesCard extends HTMLElement {
     const ctx = this._activeMap;
     if (!ctx || !ctx.lmap || !stops || stops.length < 2) return;
     const L = ctx.leaflet;
-    // Bounding box around the stops + 5 km padding (~0.06°) so curves
-    // outside the stop chord are still included.
+
+    // Try the integration's cached full NL rail network first; fall
+    // back to a live bbox-query at ProRail when the cache is missing.
+    let data = null;
+    try {
+      // Cache the parsed JSON in-memory for the page lifetime so
+      // re-opening the modal does not re-parse the (~5 MB) file.
+      if (NSReisadviesCard._railCache) {
+        data = NSReisadviesCard._railCache;
+      } else {
+        const resp = await fetch("/ns_reisadvies/rail.geojson");
+        if (resp.ok) {
+          data = await resp.json();
+          NSReisadviesCard._railCache = data;
+        }
+      }
+    } catch (err) {
+      console.warn("[ns-reisadvies] cached rail load failed", err);
+    }
+
+    if (!data) {
+      // Live fallback — bbox around the stops + 5 km padding.
+      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
+      for (const s of stops) {
+        if (s.lat == null || s.lng == null) continue;
+        if (s.lat < minLat) minLat = s.lat;
+        if (s.lat > maxLat) maxLat = s.lat;
+        if (s.lng < minLng) minLng = s.lng;
+        if (s.lng > maxLng) maxLng = s.lng;
+      }
+      if (!Number.isFinite(minLat)) return;
+      const pad = 0.06;
+      const bbox = [minLng - pad, minLat - pad, maxLng + pad, maxLat + pad].join(",");
+      const url = "https://maps.prorail.nl/arcgis/rest/services/ProRail_basiskaart/FeatureServer/6/query"
+        + "?where=1%3D1"
+        + "&geometry=" + encodeURIComponent(bbox)
+        + "&geometryType=esriGeometryEnvelope"
+        + "&inSR=4326&outSR=4326"
+        + "&spatialRel=esriSpatialRelIntersects"
+        + "&outFields=GEOCODE_NAAM"
+        + "&f=geojson"
+        + "&resultRecordCount=2000";
+      try {
+        const resp = await fetch(url);
+        if (!resp.ok) return;
+        data = await resp.json();
+      } catch (err) {
+        console.warn("[ns-reisadvies] live rail fetch failed", err);
+        return;
+      }
+    }
+
+    if (!this._activeMap || this._activeMap.lmap !== ctx.lmap) return;
+    const features = (data && data.features) || [];
+    if (!features.length) return;
+
+    // 1. Collect LineStrings. Render EVERY feature on the map (full
+    // NL coverage when zoomed out), but only keep features whose
+    // geometry overlaps the route bbox for the routing graph — that
+    // keeps Dijkstra fast even with a country-sized cache loaded.
     let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
     for (const s of stops) {
       if (s.lat == null || s.lng == null) continue;
@@ -1246,47 +1304,29 @@ class NSReisadviesCard extends HTMLElement {
       if (s.lng < minLng) minLng = s.lng;
       if (s.lng > maxLng) maxLng = s.lng;
     }
-    if (!Number.isFinite(minLat)) return;
-    const pad = 0.06;
-    const bbox = [minLng - pad, minLat - pad, maxLng + pad, maxLat + pad].join(",");
+    const PAD = 0.08;
+    const inBbox = (lat, lng) =>
+      lat >= minLat - PAD && lat <= maxLat + PAD
+      && lng >= minLng - PAD && lng <= maxLng + PAD;
+    const segmentInBbox = (ll) => {
+      for (const p of ll) if (inBbox(p[0], p[1])) return true;
+      return false;
+    };
 
-    const url = "https://maps.prorail.nl/arcgis/rest/services/ProRail_basiskaart/FeatureServer/6/query"
-      + "?where=1%3D1"
-      + "&geometry=" + encodeURIComponent(bbox)
-      + "&geometryType=esriGeometryEnvelope"
-      + "&inSR=4326&outSR=4326"
-      + "&spatialRel=esriSpatialRelIntersects"
-      + "&outFields=GEOCODE_NAAM"
-      + "&f=geojson"
-      + "&resultRecordCount=2000";
-    let data;
-    try {
-      const resp = await fetch(url);
-      if (!resp.ok) return;
-      data = await resp.json();
-    } catch (err) {
-      console.warn("[ns-reisadvies] rail fetch failed", err);
-      return;
-    }
-    if (!this._activeMap || this._activeMap.lmap !== ctx.lmap) return;  // closed
-    const features = (data && data.features) || [];
-    if (!features.length) return;
-
-    // 1. Collect raw LineStrings for the visual base layer.
     const railPolylines = [];
-    const lineStrings = [];  // array of [[lat,lng], ...]
+    const lineStrings = [];
     for (const f of features) {
       const g = f.geometry;
       if (!g) continue;
       if (g.type === "LineString") {
         const ll = g.coordinates.map(c => [c[1], c[0]]);
         railPolylines.push(ll);
-        lineStrings.push(ll);
+        if (segmentInBbox(ll)) lineStrings.push(ll);
       } else if (g.type === "MultiLineString") {
         for (const seg of g.coordinates) {
           const ll = seg.map(c => [c[1], c[0]]);
           railPolylines.push(ll);
-          lineStrings.push(ll);
+          if (segmentInBbox(ll)) lineStrings.push(ll);
         }
       }
     }
@@ -1981,7 +2021,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.5.1 ",
+  "%c NS-REISADVIES-CARD %c v2.6.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

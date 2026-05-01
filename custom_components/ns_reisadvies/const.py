@@ -53,6 +53,13 @@ ARCGIS_TREINEN_URL = (
     "NS_treinlocaties/FeatureServer/0/query"
 )
 
+# ProRail Spoorbaanhartlijn — full NL rail network, used as the grey
+# base layer in the live train map. Static enough to cache for a week.
+PRORAIL_RAIL_URL = (
+    "https://maps.prorail.nl/arcgis/rest/services/"
+    "ProRail_basiskaart/FeatureServer/6/query"
+)
+
 # Storage
 STORAGE_VERSION = 1
 STORAGE_KEY = "ns_reisadvies_tracked_trips"
