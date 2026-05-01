@@ -731,7 +731,20 @@ class NSReisadviesCard extends HTMLElement {
           : `<span>${stopLabel}</span><span class="stops-toggle ${isExpanded ? "open" : ""}" data-leg-key="${legKey}" title="${toggleLabel}" role="button"><ha-icon icon="mdi:chevron-down"></ha-icon></span>`;
 
         const trainNum = (leg.product && leg.product.number) ? String(leg.product.number) : "";
-        const showMapIcon = this._liveMapEnabled && trainNum && Array.isArray(leg.stops) && leg.stops.length > 1;
+        // Live positions come from ProRail's OBIS feed, which only
+        // tracks Dutch operators. Foreign carriers (DB ICE, NMBS,
+        // Eurostar) and most replacement bus services are missing —
+        // suppress the icon for those so a user does not get an empty
+        // marker. Whitelist beats blacklist: easier to extend.
+        const opCode = String((leg.product && leg.product.operatorCode) || "").toUpperCase();
+        const obisOperators = new Set([
+          "NS", "ARR", "ARRIVA", "BLAUWNET", "KEOLIS",
+          "KEOLIS-SYNTUS", "SYNTUS", "QBUZZ", "BRENG",
+        ]);
+        const showMapIcon = this._liveMapEnabled
+          && trainNum
+          && Array.isArray(leg.stops) && leg.stops.length > 1
+          && obisOperators.has(opCode);
         const mapIconHtml = showMapIcon
           ? `<div class="tl-map-icon-row"><button class="tl-map-icon-btn" data-trip-idx="${tIdx}" data-leg-idx="${index}" title="${t("show_live_map", this._hass)}"><ha-icon icon="mdi:map-marker-radius-outline"></ha-icon><span>${t("live_map_button", this._hass)}</span></button></div>`
           : "";
@@ -1617,17 +1630,30 @@ class NSReisadviesCard extends HTMLElement {
       } else {
         ctx.trainMarker.setLatLng(ll);
       }
-      // Rotate the tile to face the bearing. Skip if speed is 0 (NS
-      // OBIS reports noisy heading at standstill); when stopped, keep
-      // the previous heading rather than snapping to garbage.
+      // Orient the tile along the bearing while keeping the body
+      // upright (wheels at the bottom). For east-bound headings we
+      // rotate normally; for west-bound we mirror horizontally and
+      // rotate inside the [-90°, +90°] band so the cab points the
+      // right way without the body flipping upside-down.
+      // Skip if speed ≈ 0 (heading is noisy at standstill).
       const speedNum = Number(trainPos.speed);
       if (Number.isFinite(speedNum) && speedNum > 1 && trainPos.heading != null) {
-        // ArcGIS richting is 0=north, 90=east; CSS rotate(0)=points right
-        // (east) for our SVG, so subtract 90.
-        const angle = Number(trainPos.heading) - 90;
+        // ArcGIS heading: 0 = north, 90 = east, 180 = south, 270 = west.
+        // Our SVG points east (cab on the right) at rotate(0).
+        const h = ((Number(trainPos.heading) % 360) + 360) % 360;
+        let rot, scaleX;
+        if (h <= 180) {
+          // East hemisphere — straight rotate, body upright in [-90, 90].
+          rot = h - 90;
+          scaleX = 1;
+        } else {
+          // West hemisphere — mirror first, then rotate symmetrically.
+          rot = 270 - h;
+          scaleX = -1;
+        }
         const el = ctx.trainMarker.getElement();
         const tileEl = el && el.querySelector(".ns-leaflet-train");
-        if (tileEl) tileEl.style.transform = `rotate(${angle}deg)`;
+        if (tileEl) tileEl.style.transform = `rotate(${rot}deg) scaleX(${scaleX})`;
       }
     }
 
@@ -2021,7 +2047,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.6.0 ",
+  "%c NS-REISADVIES-CARD %c v2.6.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
