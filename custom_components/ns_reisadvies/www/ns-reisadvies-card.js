@@ -1407,7 +1407,9 @@ class NSReisadviesCard extends HTMLElement {
   }
 
   // A* shortest path on the rail graph using haversine as the
-  // admissible heuristic. Returns the path as a list of [lat,lng]
+  // admissible heuristic. Uses a binary min-heap as the priority
+  // queue so 75 km cross-country routes finish in under a second
+  // even with thousands of nodes. Returns the path as [lat,lng]
   // pairs, or null if unreachable.
   _railPathWith(g, fromKey, toKey) {
     if (!g) return null;
@@ -1418,23 +1420,49 @@ class NSReisadviesCard extends HTMLElement {
     }
     const goal = nodeCoords.get(toKey);
     if (!goal) return null;
+
     const cameFrom = new Map();
     const gScore = new Map();
     gScore.set(fromKey, 0);
-    // Tiny ad-hoc priority queue: array kept sorted by f-score on
-    // every push. With 4-decimal precision the graph stays small
-    // enough that this is fast.
-    const open = [{ key: fromKey, f: haversine(nodeCoords.get(fromKey), goal) }];
-    let iters = 0;
-    while (open.length) {
-      iters++;
-      if (iters > 100000) return null;  // safety
-      // Pop lowest f
-      let bestIdx = 0;
-      for (let i = 1; i < open.length; i++) {
-        if (open[i].f < open[bestIdx].f) bestIdx = i;
+    const closed = new Set();
+
+    // Binary min-heap keyed by f-score.
+    const heap = [];
+    const heapPush = (n) => {
+      heap.push(n);
+      let i = heap.length - 1;
+      while (i > 0) {
+        const p = (i - 1) >> 1;
+        if (heap[p].f <= heap[i].f) break;
+        [heap[p], heap[i]] = [heap[i], heap[p]];
+        i = p;
       }
-      const cur = open.splice(bestIdx, 1)[0];
+    };
+    const heapPop = () => {
+      if (!heap.length) return null;
+      const top = heap[0];
+      const last = heap.pop();
+      if (heap.length) {
+        heap[0] = last;
+        let i = 0;
+        const n = heap.length;
+        while (true) {
+          const l = i * 2 + 1, r = i * 2 + 2;
+          let best = i;
+          if (l < n && heap[l].f < heap[best].f) best = l;
+          if (r < n && heap[r].f < heap[best].f) best = r;
+          if (best === i) break;
+          [heap[best], heap[i]] = [heap[i], heap[best]];
+          i = best;
+        }
+      }
+      return top;
+    };
+
+    heapPush({ key: fromKey, f: haversine(nodeCoords.get(fromKey), goal) });
+    while (heap.length) {
+      const cur = heapPop();
+      if (closed.has(cur.key)) continue;
       if (cur.key === toKey) {
         const path = [nodeCoords.get(toKey)];
         let n = toKey;
@@ -1444,15 +1472,17 @@ class NSReisadviesCard extends HTMLElement {
         }
         return path;
       }
+      closed.add(cur.key);
       const curG = gScore.get(cur.key);
       const neigh = graph.get(cur.key) || [];
       for (const e of neigh) {
+        if (closed.has(e.to)) continue;
         const tent = curG + e.w;
         if (tent >= (gScore.get(e.to) ?? Infinity)) continue;
         gScore.set(e.to, tent);
         cameFrom.set(e.to, cur.key);
         const f = tent + haversine(nodeCoords.get(e.to), goal);
-        open.push({ key: e.to, f });
+        heapPush({ key: e.to, f });
       }
     }
     return null;
@@ -1467,27 +1497,40 @@ class NSReisadviesCard extends HTMLElement {
     const segments = [];
     for (let i = 0; i < stops.length - 1; i++) {
       const a = stops[i], b = stops[i + 1];
-      const candA = this._railSnapCandidatesWith(g, [a.lat, a.lng]);
-      const candB = this._railSnapCandidatesWith(g, [b.lat, b.lng]);
+      // Try larger snap distances and more candidates so isolated
+      // sub-graphs don't kill the route.
+      const candA = this._railSnapCandidatesWith(g, [a.lat, a.lng], 5, 5000);
+      const candB = this._railSnapCandidatesWith(g, [b.lat, b.lng], 5, 5000);
       let bestPath = null;
+      let bestPathSnaps = null;
+      let triedCount = 0;
       outer:
       for (const sa of candA) {
         for (const sb of candB) {
+          triedCount++;
           const path = this._railPathWith(g, sa.key, sb.key);
           if (path && path.length >= 2) {
             bestPath = path;
+            bestPathSnaps = { sa, sb };
             break outer;
           }
         }
       }
       if (!bestPath) {
+        const closestA = candA[0]?.dist?.toFixed(0) ?? "n/a";
+        const closestB = candB[0]?.dist?.toFixed(0) ?? "n/a";
         console.warn(
-          `[ns-reisadvies] no rail path ${a.name}→${b.name}; straight fallback. `
-          + `(snap candidates: A=${candA.length} B=${candB.length})`
+          `[ns-reisadvies] NO RAIL PATH ${a.name} → ${b.name} | `
+          + `straight-line fallback | snaps tried: ${triedCount} | `
+          + `closest A: ${closestA}m, B: ${closestB}m`
         );
         segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
         continue;
       }
+      console.info(
+        `[ns-reisadvies] rail-snap ${a.name} → ${b.name}: `
+        + `${bestPath.length} pts, snap A=${bestPathSnaps.sa.dist.toFixed(0)}m B=${bestPathSnaps.sb.dist.toFixed(0)}m`
+      );
       segments.push([[a.lat, a.lng], ...bestPath, [b.lat, b.lng]]);
     }
     return segments;
@@ -2062,7 +2105,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.7.1 ",
+  "%c NS-REISADVIES-CARD %c v2.7.2 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
