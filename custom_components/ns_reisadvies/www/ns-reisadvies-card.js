@@ -510,6 +510,18 @@ class NSReisadviesCard extends HTMLElement {
 
     const serverTracked = stateObj.attributes.tracked_trips || [];
     this._liveMapEnabled = !!stateObj.attributes.live_train_map_enabled;
+
+    // First time we have hass + config + the live map enabled, kick
+    // off the rail-data load + per-leg route pre-computation. Both run
+    // off the main thread (yields between trips) so the card render
+    // stays snappy. Cached on the class so other card instances on
+    // the same page reuse it.
+    if (this._liveMapEnabled && !this._railWarmKicked) {
+      this._railWarmKicked = true;
+      this._warmRouteCache().catch(err => {
+        console.warn("[ns-reisadvies] route pre-warm failed", err);
+      });
+    }
     // Configurable poll cadence while the modal is open. Clamp to the
     // same 5–60 s server-side range so a stale attribute can never
     // accidentally hammer the API.
@@ -1234,175 +1246,155 @@ class NSReisadviesCard extends HTMLElement {
     this._activeMap.trainMarker = null;
     this._activeMap.stopsWithCoord = stopsWithCoord;
 
-    // Fetch ProRail rail geometries for the route's bbox and render
-    // them as a dim grey base layer. Real curving tracks make the
-    // colored route polyline less misleading and ensure the GPS
-    // marker visibly sits on a track. Fire-and-forget — the colored
-    // route renders immediately, the rail layer slides in when ready.
-    this._fetchAndRenderRailLayer(stopsWithCoord);
+    // Render the rail base layer + apply the cached route. The data
+    // and routing graph are already loaded via _ensureRailReady()
+    // which was kicked off during the card's first render — so this
+    // is just a synchronous Leaflet add (or a quick await on the
+    // already-resolved promise on the very first modal open after
+    // page load).
+    const railResult = NSReisadviesCard._railResult || await this._ensureRailReady();
+    if (this._activeMap && this._activeMap.modalEl === modal) {
+      if (railResult) this._activeMap.railLayer = this._renderRailLayerInto(map);
+      // Look up the pre-computed route geometry, or compute it now
+      // if the warm-up missed this leg (rare).
+      const cache = NSReisadviesCard._routeCache = NSReisadviesCard._routeCache || new Map();
+      const key = stopsWithCoord
+        .map(s => s.uicCode || s.stationCode || `${s.lat},${s.lng}`)
+        .join("|");
+      let segs = cache.get(key);
+      if (!segs && railResult) {
+        segs = this._railSnapStopsWith(stopsWithCoord, railResult.graph);
+        cache.set(key, segs);
+      }
+      this._activeMap.snappedSegments = segs || null;
+    }
 
     this._applyMapData(trainPos);
     this._updatePosLabel(trainPos, leg);
   }
 
-  async _fetchAndRenderRailLayer(stops) {
-    const ctx = this._activeMap;
-    if (!ctx || !ctx.lmap || !stops || stops.length < 2) return;
-    const L = ctx.leaflet;
-
-    // Try the integration's cached full NL rail network first; fall
-    // back to a live bbox-query at ProRail when the cache is missing.
-    let data = null;
-    try {
-      // Cache the parsed JSON in-memory for the page lifetime so
-      // re-opening the modal does not re-parse the (~5 MB) file.
-      if (NSReisadviesCard._railCache) {
-        data = NSReisadviesCard._railCache;
-      } else {
-        const resp = await fetch("/ns_reisadvies/rail.geojson");
-        if (resp.ok) {
-          data = await resp.json();
-          NSReisadviesCard._railCache = data;
-        }
-      }
-    } catch (err) {
-      console.warn("[ns-reisadvies] cached rail load failed", err);
-    }
-
-    if (!data) {
-      // Live fallback — bbox around the stops + 5 km padding.
-      let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-      for (const s of stops) {
-        if (s.lat == null || s.lng == null) continue;
-        if (s.lat < minLat) minLat = s.lat;
-        if (s.lat > maxLat) maxLat = s.lat;
-        if (s.lng < minLng) minLng = s.lng;
-        if (s.lng > maxLng) maxLng = s.lng;
-      }
-      if (!Number.isFinite(minLat)) return;
-      const pad = 0.06;
-      const bbox = [minLng - pad, minLat - pad, maxLng + pad, maxLat + pad].join(",");
-      const url = "https://maps.prorail.nl/arcgis/rest/services/ProRail_basiskaart/FeatureServer/6/query"
-        + "?where=1%3D1"
-        + "&geometry=" + encodeURIComponent(bbox)
-        + "&geometryType=esriGeometryEnvelope"
-        + "&inSR=4326&outSR=4326"
-        + "&spatialRel=esriSpatialRelIntersects"
-        + "&outFields=GEOCODE_NAAM"
-        + "&f=geojson"
-        + "&resultRecordCount=2000";
+  // Lazily load the ProRail rail GeoJSON + build the routing graph.
+  // Class-level so all card instances on the same page share it; the
+  // graph is built ONCE for the whole NL network, not per-modal. Once
+  // ready, opening the live map is just a state-machine update and a
+  // GPS fetch — no fetching/parsing/graph-building inside the click.
+  _ensureRailReady() {
+    if (NSReisadviesCard._railReady) return NSReisadviesCard._railReady;
+    NSReisadviesCard._railReady = (async () => {
+      let data = null;
       try {
-        const resp = await fetch(url);
-        if (!resp.ok) return;
-        data = await resp.json();
+        const resp = await fetch("/ns_reisadvies/rail.geojson");
+        if (resp.ok) data = await resp.json();
       } catch (err) {
-        console.warn("[ns-reisadvies] live rail fetch failed", err);
-        return;
+        console.warn("[ns-reisadvies] cached rail load failed", err);
       }
-    }
+      if (!data) return null;
 
-    if (!this._activeMap || this._activeMap.lmap !== ctx.lmap) return;
-    const features = (data && data.features) || [];
-    if (!features.length) return;
-
-    // 1. Collect LineStrings. Render EVERY feature on the map (full
-    // NL coverage when zoomed out), but only keep features whose
-    // geometry overlaps the route bbox for the routing graph — that
-    // keeps Dijkstra fast even with a country-sized cache loaded.
-    let minLat = Infinity, maxLat = -Infinity, minLng = Infinity, maxLng = -Infinity;
-    for (const s of stops) {
-      if (s.lat == null || s.lng == null) continue;
-      if (s.lat < minLat) minLat = s.lat;
-      if (s.lat > maxLat) maxLat = s.lat;
-      if (s.lng < minLng) minLng = s.lng;
-      if (s.lng > maxLng) maxLng = s.lng;
-    }
-    const PAD = 0.08;
-    const inBbox = (lat, lng) =>
-      lat >= minLat - PAD && lat <= maxLat + PAD
-      && lng >= minLng - PAD && lng <= maxLng + PAD;
-    const segmentInBbox = (ll) => {
-      for (const p of ll) if (inBbox(p[0], p[1])) return true;
-      return false;
-    };
-
-    const railPolylines = [];
-    const lineStrings = [];
-    for (const f of features) {
-      const g = f.geometry;
-      if (!g) continue;
-      if (g.type === "LineString") {
-        const ll = g.coordinates.map(c => [c[1], c[0]]);
-        railPolylines.push(ll);
-        if (segmentInBbox(ll)) lineStrings.push(ll);
-      } else if (g.type === "MultiLineString") {
-        for (const seg of g.coordinates) {
-          const ll = seg.map(c => [c[1], c[0]]);
+      const features = data.features || [];
+      const railPolylines = [];
+      const lineStrings = [];
+      for (const f of features) {
+        const g = f.geometry;
+        if (!g) continue;
+        if (g.type === "LineString") {
+          const ll = g.coordinates.map(c => [c[1], c[0]]);
           railPolylines.push(ll);
-          if (segmentInBbox(ll)) lineStrings.push(ll);
+          lineStrings.push(ll);
+        } else if (g.type === "MultiLineString") {
+          for (const seg of g.coordinates) {
+            const ll = seg.map(c => [c[1], c[0]]);
+            railPolylines.push(ll);
+            lineStrings.push(ll);
+          }
         }
       }
-    }
-    if (!railPolylines.length) return;
 
-    ctx.railLayer = L.polyline(railPolylines, {
+      // Build full-NL graph once. 4-decimal precision (~11 m) auto-
+      // merges junction endpoints from neighbouring rail features.
+      const graph = new Map();
+      const nodeCoords = new Map();
+      const k = c => `${c[0].toFixed(4)},${c[1].toFixed(4)}`;
+      const haversine = (a, b) => {
+        const R = 6371000.0;
+        const r = Math.PI / 180;
+        const la1 = a[0] * r, la2 = b[0] * r;
+        const dla = (b[0] - a[0]) * r;
+        const dlo = (b[1] - a[1]) * r;
+        const h = Math.sin(dla / 2) ** 2
+          + Math.cos(la1) * Math.cos(la2) * Math.sin(dlo / 2) ** 2;
+        return 2 * R * Math.asin(Math.sqrt(h));
+      };
+      for (const ls of lineStrings) {
+        for (let i = 0; i < ls.length - 1; i++) {
+          const a = ls[i], b = ls[i + 1];
+          const ka = k(a), kb = k(b);
+          if (ka === kb) continue;
+          if (!nodeCoords.has(ka)) nodeCoords.set(ka, a);
+          if (!nodeCoords.has(kb)) nodeCoords.set(kb, b);
+          const w = haversine(a, b);
+          if (!graph.has(ka)) graph.set(ka, []);
+          if (!graph.has(kb)) graph.set(kb, []);
+          graph.get(ka).push({ to: kb, w });
+          graph.get(kb).push({ to: ka, w });
+        }
+      }
+
+      const result = {
+        railPolylines,
+        graph: { graph, nodeCoords, haversine },
+      };
+      NSReisadviesCard._railResult = result;
+      return result;
+    })();
+    return NSReisadviesCard._railReady;
+  }
+
+  // Render the cached rail GeoJSON onto an open Leaflet map.
+  _renderRailLayerInto(map) {
+    const r = NSReisadviesCard._railResult;
+    if (!r || !r.railPolylines || !r.railPolylines.length) return null;
+    const layer = window.L.polyline(r.railPolylines, {
       color: "#5a6a7a",
       weight: 1.6,
       opacity: 0.55,
       interactive: false,
     });
-    ctx.railLayer.addTo(ctx.lmap);
-    ctx.railLayer.bringToBack();
+    layer.addTo(map);
+    layer.bringToBack();
+    return layer;
+  }
 
-    // 2. Build an undirected graph from the LineStrings so we can
-    // snap the colored route polyline to the actual track. Each
-    // consecutive coordinate pair becomes an edge; coordinates are
-    // rounded to 5 decimals (~1 m) so neighbouring segments meet
-    // cleanly at junctions.
-    const graph = new Map();
-    const nodeCoords = new Map();  // key → [lat,lng]
-    // 4-decimal precision (~11 m): enough to auto-merge nearby
-    // junction endpoints from neighbouring rail features without
-    // collapsing distinct parallel tracks.
-    const k = c => `${c[0].toFixed(4)},${c[1].toFixed(4)}`;
-    const haversine = (a, b) => {
-      const R = 6371000.0;
-      const r = Math.PI / 180;
-      const la1 = a[0] * r, la2 = b[0] * r;
-      const dla = (b[0] - a[0]) * r;
-      const dlo = (b[1] - a[1]) * r;
-      const h = Math.sin(dla / 2) ** 2
-        + Math.cos(la1) * Math.cos(la2) * Math.sin(dlo / 2) ** 2;
-      return 2 * R * Math.asin(Math.sqrt(h));
-    };
-    for (const ls of lineStrings) {
-      for (let i = 0; i < ls.length - 1; i++) {
-        const a = ls[i], b = ls[i + 1];
-        const ka = k(a), kb = k(b);
-        if (ka === kb) continue;
-        if (!nodeCoords.has(ka)) nodeCoords.set(ka, a);
-        if (!nodeCoords.has(kb)) nodeCoords.set(kb, b);
-        const w = haversine(a, b);
-        if (!graph.has(ka)) graph.set(ka, []);
-        if (!graph.has(kb)) graph.set(kb, []);
-        graph.get(ka).push({ to: kb, w });
-        graph.get(kb).push({ to: ka, w });
+  // Pre-warm the routing cache for every visible leg with a live-map
+  // icon. Each unique stops-uic sequence is routed at most once and
+  // the result is stored on the class. Yields between trips so the
+  // UI stays responsive even with many trips on screen.
+  async _warmRouteCache() {
+    if (!this._hass || !this._config) return;
+    const r = await this._ensureRailReady();
+    if (!r) return;
+    const stateObj = this._hass.states[this._config.entity];
+    const trips = (stateObj && stateObj.attributes && stateObj.attributes.trips) || [];
+    const cache = NSReisadviesCard._routeCache = NSReisadviesCard._routeCache || new Map();
+    for (const t of trips) {
+      for (const leg of (t.legs || [])) {
+        if (!leg.product || !leg.product.number) continue;
+        const stops = (leg.stops || []).filter(s => !s.passing && s.lat != null && s.lng != null);
+        if (stops.length < 2) continue;
+        const key = stops.map(s => s.uicCode || s.stationCode || `${s.lat},${s.lng}`).join("|");
+        if (cache.has(key)) continue;
+        // Yield to the event loop so we don't lock the UI on big trip lists.
+        await new Promise(rr => setTimeout(rr, 0));
+        const segs = this._railSnapStopsWith(stops, r.graph);
+        cache.set(key, segs);
       }
     }
-    ctx.railGraph = { graph, nodeCoords, haversine };
-
-    // 3. Now snap the colored route to the rail graph. Update markers
-    // and the polylines using the snapped polyline as the geometry.
-    this._applyMapData();
   }
 
   // Snap a [lat,lng] to the K nearest rail-graph nodes. Returning a
   // ranked list lets us retry with the second-best candidate when
   // the closest one happens to land on a disconnected sub-graph
   // (rangeer-spoor, freight-only branch, etc).
-  _railSnapCandidates(point, k = 3, maxDist = 2000) {
-    const ctx = this._activeMap;
-    const g = ctx && ctx.railGraph;
+  _railSnapCandidatesWith(g, point, k = 3, maxDist = 2000) {
     if (!g) return [];
     const out = [];
     for (const [key, c] of g.nodeCoords) {
@@ -1417,9 +1409,7 @@ class NSReisadviesCard extends HTMLElement {
   // A* shortest path on the rail graph using haversine as the
   // admissible heuristic. Returns the path as a list of [lat,lng]
   // pairs, or null if unreachable.
-  _railPath(fromKey, toKey) {
-    const ctx = this._activeMap;
-    const g = ctx && ctx.railGraph;
+  _railPathWith(g, fromKey, toKey) {
     if (!g) return null;
     const { graph, nodeCoords, haversine } = g;
     if (fromKey === toKey) {
@@ -1472,20 +1462,18 @@ class NSReisadviesCard extends HTMLElement {
   // the rail graph between consecutive stops. Tries the top few snap
   // candidates per stop so a single bad snap (onto an isolated
   // sub-graph) doesn't fall back to a straight chord.
-  _railSnapStops(stops) {
-    if (!stops || stops.length < 2) return null;
-    const ctx = this._activeMap;
-    if (!ctx || !ctx.railGraph) return null;
+  _railSnapStopsWith(stops, g) {
+    if (!stops || stops.length < 2 || !g) return null;
     const segments = [];
     for (let i = 0; i < stops.length - 1; i++) {
       const a = stops[i], b = stops[i + 1];
-      const candA = this._railSnapCandidates([a.lat, a.lng]);
-      const candB = this._railSnapCandidates([b.lat, b.lng]);
+      const candA = this._railSnapCandidatesWith(g, [a.lat, a.lng]);
+      const candB = this._railSnapCandidatesWith(g, [b.lat, b.lng]);
       let bestPath = null;
       outer:
       for (const sa of candA) {
         for (const sb of candB) {
-          const path = this._railPath(sa.key, sb.key);
+          const path = this._railPathWith(g, sa.key, sb.key);
           if (path && path.length >= 2) {
             bestPath = path;
             break outer;
@@ -1535,8 +1523,10 @@ class NSReisadviesCard extends HTMLElement {
         ? [trainPos.lat, trainPos.lng]
         : null;
 
-      // Per-segment snapped geometry (or straight chord fallback).
-      const snapped = this._railSnapStops(stops) || stops.slice(0, -1).map((a, i) => {
+      // Use the snapped geometry that was pre-computed (or just-now
+      // computed) when the modal opened. Fall back to straight
+      // chords if for some reason it isn't available.
+      const snapped = ctx.snappedSegments || stops.slice(0, -1).map((a, i) => {
         const b = stops[i + 1];
         return [[a.lat, a.lng], [b.lat, b.lng]];
       });
@@ -2072,7 +2062,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.7.0 ",
+  "%c NS-REISADVIES-CARD %c v2.7.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
