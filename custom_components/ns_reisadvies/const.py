@@ -3,10 +3,16 @@
 DOMAIN = "ns_reisadvies"
 NAME = "NS Reisadvies"
 
-# Config entry schema version. Used by async_migrate_entry to lift
-# legacy multi-entry installs (v1.x) into a single hub with route
-# subentries (v2.0.0).
-CONFIG_ENTRY_VERSION = 2
+# Config entry schema version.
+#
+#   v1: legacy "one config entry per route" layout (pre-v2.0.0).
+#   v2: hub + subentries layout (v2.0.0). Hub-wide settings still on
+#       ConfigEntry.data, route data on subentries.
+#   v3: Platinum-cleanup (v2.9.0). Hub-wide configurable options moved
+#       from ConfigEntry.data to ConfigEntry.options. ConfigEntry.data
+#       only carries credentials (api_key) and other immutable setup
+#       fields.
+CONFIG_ENTRY_VERSION = 3
 
 # Subentry type used for individual routes under the hub.
 SUBENTRY_TYPE_ROUTE = "route"

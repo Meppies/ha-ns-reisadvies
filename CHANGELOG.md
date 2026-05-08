@@ -4,6 +4,49 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] — 2026-05-08
+
+### Changed
+- **ConfigEntry layout (v2 → v3 migration).** Hub-wide configurable
+  options (`scan_interval_minuten`, `fav_hours`, `fetch_composition`,
+  `live_train_map`, `live_map_refresh_seconds`) move from
+  `entry.data` to `entry.options`. Only the API key remains in
+  `entry.data`. Migration is automatic and idempotent. Satisfies the
+  Bronze quality-scale rule on `data` vs `options` separation.
+- **Runtime data on the entry.** Coordinators, the live-train-map
+  session map, and the per-HA stations geo cache now live on
+  `entry.runtime_data` (typed via `NSRuntimeData`) instead of
+  `hass.data[DOMAIN][entry_id]`. Bronze rule `runtime-data`.
+- **Sensor uses `has_entity_name = True`.** Each route now creates a
+  proper `DeviceInfo` (name = "Hilversum → Duivendrecht") and the
+  sensor takes its friendly name from the device. Entity IDs stay
+  unchanged. Bronze rule `has-entity-name` plus the related Gold
+  `devices` rule.
+
+### Added
+- **`test-before-configure`.** The config flow now probes
+  `/v2/stations` with the entered API key and surfaces
+  `invalid_auth` / `cannot_connect` errors in the form before the
+  entry is created. The same probe runs in the options flow when the
+  key is rotated. Bronze rule `test-before-configure`.
+- **`PARALLEL_UPDATES = 0`** on the sensor platform (each route has
+  its own coordinator that does the actual fetching). Silver rule
+  `parallel-updates`.
+- **`quality_scale.yaml`** in the integration root tracks every rule
+  in the official quality-scale checklist as `done` / `todo` /
+  `exempt` with reasons. Honest by design — the manifest still
+  declares `platinum` as the target tier.
+- **README "Uninstalling" section** with step-by-step removal
+  instructions. Bronze rule `docs-removal-instructions`.
+
+### Notes
+- This release fixes architectural Bronze gaps that existed since
+  v1.4.0. There are no behavioural changes for end users; existing
+  sensor entity_ids and the Lovelace card both keep working
+  identically. The next release in this stream (v2.10.0) tackles
+  the Silver gaps (entity-unavailable, log-when-unavailable, reauth
+  flow, > 95 % test coverage).
+
 ## [2.8.0] — 2026-05-08
 
 ### Added

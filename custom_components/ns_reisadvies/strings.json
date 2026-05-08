@@ -19,7 +19,9 @@
     "error": {
       "same_station": "The departure and arrival station must be different.",
       "unknown_station": "That is not a recognised Dutch railway station — pick one from the list.",
-      "duplicate_route": "A route with these two stations already exists."
+      "duplicate_route": "A route with these two stations already exists.",
+      "invalid_auth": "The NS API rejected this key. Check it on apiportal.ns.nl and that the Ns-App subscription is active.",
+      "cannot_connect": "Could not reach the NS API. Check your internet connection and try again."
     },
     "abort": {
       "single_instance_allowed": "NS Reisadvies is already configured. Add more routes via the integration tile.",
@@ -40,6 +42,10 @@
           "data": {
             "act_station": "Departure station",
             "arr_station": "Arrival station"
+          },
+          "data_description": {
+            "act_station": "The station where this route starts.",
+            "arr_station": "The station where this route ends."
           }
         },
         "reconfigure": {
@@ -47,6 +53,10 @@
           "data": {
             "act_station": "Departure station",
             "arr_station": "Arrival station"
+          },
+          "data_description": {
+            "act_station": "The station where this route starts.",
+            "arr_station": "The station where this route ends."
           }
         }
       },
@@ -61,6 +71,10 @@
     }
   },
   "options": {
+    "error": {
+      "invalid_auth": "The NS API rejected this key. Check it on apiportal.ns.nl and that the Ns-App subscription is active.",
+      "cannot_connect": "Could not reach the NS API. Check your internet connection and try again."
+    },
     "step": {
       "init": {
         "title": "NS Reisadvies options",

@@ -3,14 +3,18 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ns_reisadvies.const import (
     CONF_API_KEY,
+    CONF_FAV_HOURS,
+    CONF_FETCH_COMPOSITION,
     CONF_FROM_STATION,
+    CONF_LIVE_MAP_REFRESH_SECONDS,
+    CONF_LIVE_TRAIN_MAP,
+    CONF_SCAN_INTERVAL,
     CONF_TO_STATION,
     CONFIG_ENTRY_VERSION,
     DOMAIN,
@@ -19,7 +23,11 @@ from custom_components.ns_reisadvies.const import (
 
 
 def _make_hub_entry(
-    *, with_subentry: bool = True, version: int = CONFIG_ENTRY_VERSION
+    *,
+    with_subentry: bool = True,
+    version: int = CONFIG_ENTRY_VERSION,
+    data: dict | None = None,
+    options: dict | None = None,
 ) -> MockConfigEntry:
     subentries: list[dict] = []
     if with_subentry:
@@ -38,19 +46,16 @@ def _make_hub_entry(
         version=version,
         domain=DOMAIN,
         title="NS Reisadvies",
-        data={CONF_API_KEY: "test-key"},
-        options={},
+        data=data if data is not None else {CONF_API_KEY: "test-key"},
+        options=options or {},
         subentries_data=subentries,
         source=config_entries.SOURCE_USER,
     )
 
 
-async def test_setup_and_unload(hass: HomeAssistant) -> None:
-    """The hub sets up a coordinator per route subentry, unload tears it down."""
-    entry = _make_hub_entry()
-    entry.add_to_hass(hass)
-
-    with (
+def _setup_patches() -> tuple:
+    """Common patches to keep async_setup_entry away from the network."""
+    return (
         patch(
             "custom_components.ns_reisadvies.NSUpdateCoordinator.async_load_tracked",
             new=AsyncMock(),
@@ -67,17 +72,74 @@ async def test_setup_and_unload(hass: HomeAssistant) -> None:
             "custom_components.ns_reisadvies._async_refresh_rail_cache",
             new=AsyncMock(),
         ),
-    ):
+    )
+
+
+async def test_setup_writes_runtime_data(hass: HomeAssistant) -> None:
+    """async_setup_entry populates entry.runtime_data with coordinators + flags."""
+    entry = _make_hub_entry(
+        options={
+            CONF_SCAN_INTERVAL: 5,
+            CONF_FAV_HOURS: 6,
+            CONF_FETCH_COMPOSITION: False,
+            CONF_LIVE_TRAIN_MAP: True,
+            CONF_LIVE_MAP_REFRESH_SECONDS: 15,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    patches = _setup_patches()
+    for p in patches:
+        p.start()
+    try:
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+    finally:
+        for p in patches:
+            p.stop()
 
-    assert entry.entry_id in hass.data[DOMAIN]
-    coordinators = hass.data[DOMAIN][entry.entry_id]
-    assert len(coordinators) == 1
+    runtime = entry.runtime_data
+    assert runtime is not None
+    assert len(runtime.coordinators) == 1
+    assert runtime.live_train_map_enabled is True
+    assert runtime.live_map_refresh_seconds == 15
 
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
-    assert entry.entry_id not in hass.data[DOMAIN]
+
+
+async def test_v2_to_v3_migration_moves_options(hass: HomeAssistant) -> None:
+    """Hub-wide settings on entry.data move to entry.options on migration."""
+    entry = _make_hub_entry(
+        version=2,
+        data={
+            CONF_API_KEY: "legacy-key",
+            CONF_SCAN_INTERVAL: 7,
+            CONF_FAV_HOURS: 4,
+            CONF_FETCH_COMPOSITION: True,
+            CONF_LIVE_TRAIN_MAP: True,
+            CONF_LIVE_MAP_REFRESH_SECONDS: 20,
+        },
+    )
+    entry.add_to_hass(hass)
+
+    patches = _setup_patches()
+    for p in patches:
+        p.start()
+    try:
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    finally:
+        for p in patches:
+            p.stop()
+
+    assert entry.version == 3
+    assert entry.data == {CONF_API_KEY: "legacy-key"}
+    assert entry.options[CONF_SCAN_INTERVAL] == 7
+    assert entry.options[CONF_FAV_HOURS] == 4
+    assert entry.options[CONF_FETCH_COMPOSITION] is True
+    assert entry.options[CONF_LIVE_TRAIN_MAP] is True
+    assert entry.options[CONF_LIVE_MAP_REFRESH_SECONDS] == 20
 
 
 async def test_setup_survives_transient_api_outage(hass: HomeAssistant) -> None:
@@ -85,29 +147,15 @@ async def test_setup_survives_transient_api_outage(hass: HomeAssistant) -> None:
     entry = _make_hub_entry()
     entry.add_to_hass(hass)
 
-    refresh = AsyncMock()
-    refresh.side_effect = lambda: None  # async_refresh swallows the error
-
-    with (
-        patch(
-            "custom_components.ns_reisadvies.NSUpdateCoordinator.async_load_tracked",
-            new=AsyncMock(),
-        ),
-        patch(
-            "custom_components.ns_reisadvies.NSUpdateCoordinator.async_refresh",
-            new=refresh,
-        ),
-        patch(
-            "custom_components.ns_reisadvies._async_register_card_resource",
-            new=AsyncMock(),
-        ),
-        patch(
-            "custom_components.ns_reisadvies._async_refresh_rail_cache",
-            new=AsyncMock(),
-        ),
-    ):
+    patches = _setup_patches()
+    for p in patches:
+        p.start()
+    try:
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
+    finally:
+        for p in patches:
+            p.stop()
 
     # Even though refresh "did nothing", the entry is loaded and the coordinator
     # is registered — the sensor will be created in "No trips" state.
@@ -124,30 +172,18 @@ async def test_recover_subentries_from_storage(hass: HomeAssistant) -> None:
         "core.entity_registry",
     ]
 
-    with (
-        patch(
-            "custom_components.ns_reisadvies.os.listdir",
-            return_value=fake_files,
-        ),
-        patch(
-            "custom_components.ns_reisadvies.NSUpdateCoordinator.async_load_tracked",
-            new=AsyncMock(),
-        ),
-        patch(
-            "custom_components.ns_reisadvies.NSUpdateCoordinator.async_refresh",
-            new=AsyncMock(),
-        ),
-        patch(
-            "custom_components.ns_reisadvies._async_register_card_resource",
-            new=AsyncMock(),
-        ),
-        patch(
-            "custom_components.ns_reisadvies._async_refresh_rail_cache",
-            new=AsyncMock(),
-        ),
+    with patch(
+        "custom_components.ns_reisadvies.os.listdir", return_value=fake_files,
     ):
-        assert await hass.config_entries.async_setup(entry.entry_id)
-        await hass.async_block_till_done()
+        patches = _setup_patches()
+        for p in patches:
+            p.start()
+        try:
+            assert await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+        finally:
+            for p in patches:
+                p.stop()
 
     # The recovered subentry should now exist.
     assert any(

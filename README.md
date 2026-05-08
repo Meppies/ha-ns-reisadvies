@@ -62,6 +62,24 @@ slots, train composition, and an opt-in live train map.
 2. Restart Home Assistant.
 3. Add the integration via *Settings → Devices & services*.
 
+## Uninstalling
+
+1. *Settings → Devices & services → NS Reisadvies → ⋮ → Delete*. This
+   removes the hub entry, every route subentry, every sensor created
+   by the integration and the per-route favourite-trip storage files.
+2. *HACS → Integrations → NS Reisadvies → ⋮ → Remove* to delete
+   `custom_components/ns_reisadvies/` from disk.
+3. Optional clean-up: open *Settings → Dashboards → Resources* and
+   remove the `/ns_reisadvies/ns-reisadvies-card.js` resource if it
+   still appears (newer HA versions clean it up automatically when
+   the integration is removed).
+4. Restart Home Assistant.
+
+The persistent storage files
+(`.storage/ns_reisadvies_tracked_trips_*` and the cached
+`rail.geojson` inside the integration's `www/` folder) are removed
+when steps 1 and 2 complete — no manual file deletion is needed.
+
 ## Configuration
 
 You'll need a free NS API key (subscription **Ns-App**):

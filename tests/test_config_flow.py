@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant import config_entries
@@ -36,31 +37,44 @@ async def _start_flow(
 
 @pytest.mark.usefixtures("mock_setup_entry")
 async def test_user_flow_creates_hub(hass: HomeAssistant) -> None:
-    """Submitting valid input creates a hub entry with one route subentry."""
+    """Submitting valid input creates a hub entry with one route subentry.
+
+    Settings live on entry.options (v3 layout), only the API key on
+    entry.data.
+    """
     result = await _start_flow(hass)
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
     assert result["errors"] in (None, {})
 
-    result = await hass.config_entries.flow.async_configure(
-        result["flow_id"],
-        user_input={
-            CONF_API_KEY: "test-api-key",
-            CONF_FROM_STATION: "Hilversum",
-            CONF_TO_STATION: "Duivendrecht",
-        },
-    )
-    await hass.async_block_till_done()
+    with patch(
+        "custom_components.ns_reisadvies.config_flow.async_validate_api_key",
+        new=AsyncMock(return_value=None),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_API_KEY: "test-api-key",
+                CONF_FROM_STATION: "Hilversum",
+                CONF_TO_STATION: "Duivendrecht",
+            },
+        )
+        await hass.async_block_till_done()
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "NS Reisadvies"
+
+    # Credentials → entry.data
     data = result["data"]
-    assert data[CONF_API_KEY] == "test-api-key"
-    assert data[CONF_SCAN_INTERVAL] == DEFAULT_SCAN_INTERVAL
-    assert data[CONF_FAV_HOURS] == DEFAULT_FAV_HOURS
-    assert data[CONF_FETCH_COMPOSITION] is False
-    assert data[CONF_LIVE_TRAIN_MAP] is False
-    assert data[CONF_LIVE_MAP_REFRESH_SECONDS] == DEFAULT_LIVE_MAP_REFRESH_SECONDS
+    assert data == {CONF_API_KEY: "test-api-key"}
+
+    # Configurable settings → entry.options
+    options = result.get("options") or {}
+    assert options[CONF_SCAN_INTERVAL] == DEFAULT_SCAN_INTERVAL
+    assert options[CONF_FAV_HOURS] == DEFAULT_FAV_HOURS
+    assert options[CONF_FETCH_COMPOSITION] is False
+    assert options[CONF_LIVE_TRAIN_MAP] is False
+    assert options[CONF_LIVE_MAP_REFRESH_SECONDS] == DEFAULT_LIVE_MAP_REFRESH_SECONDS
 
     subentries = result.get("subentries") or []
     assert len(subentries) == 1
@@ -68,6 +82,46 @@ async def test_user_flow_creates_hub(hass: HomeAssistant) -> None:
     assert sub["data"][CONF_FROM_STATION] == "Hilversum"
     assert sub["data"][CONF_TO_STATION] == "Duivendrecht"
     assert sub["unique_id"] == "hilversum_duivendrecht"
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_user_flow_rejects_invalid_auth(hass: HomeAssistant) -> None:
+    """A bad API key surfaces an 'invalid_auth' error in the form."""
+    result = await _start_flow(hass)
+    with patch(
+        "custom_components.ns_reisadvies.config_flow.async_validate_api_key",
+        new=AsyncMock(return_value="invalid_auth"),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_API_KEY: "bad-key",
+                CONF_FROM_STATION: "Hilversum",
+                CONF_TO_STATION: "Duivendrecht",
+            },
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["base"] == "invalid_auth"
+
+
+@pytest.mark.usefixtures("mock_setup_entry")
+async def test_user_flow_rejects_cannot_connect(hass: HomeAssistant) -> None:
+    """A network failure surfaces a 'cannot_connect' error."""
+    result = await _start_flow(hass)
+    with patch(
+        "custom_components.ns_reisadvies.config_flow.async_validate_api_key",
+        new=AsyncMock(return_value="cannot_connect"),
+    ):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            user_input={
+                CONF_API_KEY: "test-key",
+                CONF_FROM_STATION: "Hilversum",
+                CONF_TO_STATION: "Duivendrecht",
+            },
+        )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"]["base"] == "cannot_connect"
 
 
 @pytest.mark.usefixtures("mock_setup_entry")
@@ -106,7 +160,7 @@ async def test_user_flow_rejects_same_station(hass: HomeAssistant) -> None:
 async def test_single_instance_only(hass: HomeAssistant) -> None:
     """Adding a second hub aborts: one hub, many routes is the rule."""
     entry = config_entries.ConfigEntry(
-        version=2,
+        version=3,
         minor_version=1,
         domain=DOMAIN,
         title="NS Reisadvies",

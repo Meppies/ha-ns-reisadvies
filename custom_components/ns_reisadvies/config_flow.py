@@ -125,31 +125,45 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 api_key = (user_input.get(CONF_API_KEY) or "").strip()
                 from_st = user_input[CONF_FROM_STATION]
                 to_st = user_input[CONF_TO_STATION]
-                # Hub data: globalen
-                hub_data = {
-                    CONF_API_KEY: api_key,
-                    CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
-                    CONF_FAV_HOURS: DEFAULT_FAV_HOURS,
-                    CONF_FETCH_COMPOSITION: DEFAULT_FETCH_COMPOSITION,
-                    CONF_LIVE_TRAIN_MAP: DEFAULT_LIVE_TRAIN_MAP,
-                    CONF_LIVE_MAP_REFRESH_SECONDS: DEFAULT_LIVE_MAP_REFRESH_SECONDS,
-                }
-                # First route comes along as a subentry
-                return self.async_create_entry(
-                    title="NS Reisadvies",
-                    data=hub_data,
-                    subentries=[
-                        {
-                            "subentry_type": SUBENTRY_TYPE_ROUTE,
-                            "title": f"{from_st} -> {to_st}",
-                            "unique_id": f"{from_st}_{to_st}".lower(),
-                            "data": {
-                                CONF_FROM_STATION: from_st,
-                                CONF_TO_STATION: to_st,
-                            },
-                        }
-                    ],
-                )
+                # Test-before-configure (Bronze quality-scale rule):
+                # validate the NS API key with a real probe call before
+                # creating the entry. Surfaces invalid_auth /
+                # cannot_connect errors in the form so the user can
+                # correct them on the spot.
+                from .coordinator import async_validate_api_key
+                probe_error = await async_validate_api_key(self.hass, api_key)
+                if probe_error:
+                    errors["base"] = probe_error
+                else:
+                    # v3 layout: only credentials live in entry.data;
+                    # configurable settings (refresh interval etc.)
+                    # live in entry.options. Defaults applied here so
+                    # the options form has sensible starting values.
+                    hub_data = {CONF_API_KEY: api_key}
+                    hub_options = {
+                        CONF_SCAN_INTERVAL: DEFAULT_SCAN_INTERVAL,
+                        CONF_FAV_HOURS: DEFAULT_FAV_HOURS,
+                        CONF_FETCH_COMPOSITION: DEFAULT_FETCH_COMPOSITION,
+                        CONF_LIVE_TRAIN_MAP: DEFAULT_LIVE_TRAIN_MAP,
+                        CONF_LIVE_MAP_REFRESH_SECONDS: DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+                    }
+                    # First route comes along as a subentry
+                    return self.async_create_entry(
+                        title="NS Reisadvies",
+                        data=hub_data,
+                        options=hub_options,
+                        subentries=[
+                            {
+                                "subentry_type": SUBENTRY_TYPE_ROUTE,
+                                "title": f"{from_st} -> {to_st}",
+                                "unique_id": f"{from_st}_{to_st}".lower(),
+                                "data": {
+                                    CONF_FROM_STATION: from_st,
+                                    CONF_TO_STATION: to_st,
+                                },
+                            }
+                        ],
+                    )
 
         schema = vol.Schema({
             vol.Required(CONF_API_KEY): str,
@@ -256,41 +270,78 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
 
 
 class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
-    """Edit hub-level (integration-wide) settings."""
+    """Edit hub-level (integration-wide) settings.
+
+    Per the Bronze quality-scale rule on
+    ``ConfigEntry.data`` vs ``ConfigEntry.options`` separation,
+    configurable settings live on ``entry.options``; only credentials
+    live on ``entry.data``. The form submits both: the API key is
+    written back to ``data`` (so a key-rotation re-runs setup with
+    fresh credentials), everything else lands on ``options``.
+    """
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.entry = config_entry
 
+    def _read(self, key: str, default):
+        """Read a value, preferring options over data (post-v3 layout)."""
+        if self.entry.options and key in self.entry.options:
+            return self.entry.options[key]
+        return self.entry.data.get(key, default)
+
     async def async_step_init(self, user_input=None):
         if user_input is not None:
-            # Schrijf naar entry.data zodat de hub de nieuwe waarden
-            # bewaart en de update_listener een reload triggert.
-            new_data = {**self.entry.data, **user_input}
-            self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+            # Validate the (possibly rotated) API key before saving.
+            api_key_input = (user_input.get(CONF_API_KEY) or "").strip()
+            from .coordinator import async_validate_api_key
+            probe_error = await async_validate_api_key(self.hass, api_key_input)
+            if probe_error:
+                return self.async_show_form(
+                    step_id="init",
+                    data_schema=self._build_schema(api_key_input),
+                    errors={"base": probe_error},
+                )
+
+            # Split: API key → entry.data, everything else → entry.options.
+            new_data = {**self.entry.data, CONF_API_KEY: api_key_input}
+            new_options = {
+                k: v for k, v in user_input.items() if k != CONF_API_KEY
+            }
+            self.hass.config_entries.async_update_entry(
+                self.entry, data=new_data, options=new_options,
+            )
             return self.async_create_entry(title="", data={})
 
-        data = self.entry.data
-        api_val = data.get(CONF_API_KEY, "")
-        int_val = int(data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-        fav_val = int(data.get(CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
-        comp_val = bool(data.get(CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
-        map_val = bool(data.get(CONF_LIVE_TRAIN_MAP, DEFAULT_LIVE_TRAIN_MAP))
-        map_int = int(data.get(
-            CONF_LIVE_MAP_REFRESH_SECONDS, DEFAULT_LIVE_MAP_REFRESH_SECONDS,
-        ))
+        return self.async_show_form(
+            step_id="init", data_schema=self._build_schema(),
+        )
 
-        schema = vol.Schema({
+    def _build_schema(self, api_key_default: str | None = None) -> vol.Schema:
+        api_val = api_key_default if api_key_default is not None else self._read(
+            CONF_API_KEY, "",
+        )
+        return vol.Schema({
             vol.Required(CONF_API_KEY, default=str(api_val)): str,
             vol.Required(
-                CONF_SCAN_INTERVAL, default=int_val
+                CONF_SCAN_INTERVAL,
+                default=int(self._read(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),
             ): vol.All(int, vol.Range(min=1, max=60)),
             vol.Required(
-                CONF_FAV_HOURS, default=fav_val
+                CONF_FAV_HOURS,
+                default=int(self._read(CONF_FAV_HOURS, DEFAULT_FAV_HOURS)),
             ): vol.All(int, vol.Range(min=0, max=72)),
-            vol.Required(CONF_FETCH_COMPOSITION, default=comp_val): bool,
-            vol.Required(CONF_LIVE_TRAIN_MAP, default=map_val): bool,
             vol.Required(
-                CONF_LIVE_MAP_REFRESH_SECONDS, default=map_int,
+                CONF_FETCH_COMPOSITION,
+                default=bool(self._read(CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION)),
+            ): bool,
+            vol.Required(
+                CONF_LIVE_TRAIN_MAP,
+                default=bool(self._read(CONF_LIVE_TRAIN_MAP, DEFAULT_LIVE_TRAIN_MAP)),
+            ): bool,
+            vol.Required(
+                CONF_LIVE_MAP_REFRESH_SECONDS,
+                default=int(
+                    self._read(CONF_LIVE_MAP_REFRESH_SECONDS, DEFAULT_LIVE_MAP_REFRESH_SECONDS)
+                ),
             ): vol.All(int, vol.Range(min=5, max=60)),
         })
-        return self.async_show_form(step_id="init", data_schema=schema)

@@ -53,6 +53,34 @@ from .const import (
     DEFAULT_LIVE_MAP_REFRESH_SECONDS,
 )
 from .coordinator import NSUpdateCoordinator
+from .types import NSConfigEntry, NSRuntimeData
+
+
+# Hub-wide options keys — these are the entries that move from
+# ConfigEntry.data (v2 layout) to ConfigEntry.options (v3 layout). Used
+# by the v2→v3 migration and by async_setup_entry to read settings.
+_OPTION_KEYS: tuple[str, ...] = (
+    CONF_SCAN_INTERVAL,
+    CONF_FAV_HOURS,
+    CONF_FETCH_COMPOSITION,
+    CONF_LIVE_TRAIN_MAP,
+    CONF_LIVE_MAP_REFRESH_SECONDS,
+)
+
+
+def _option(entry: NSConfigEntry, key: str, default: Any) -> Any:
+    """Read a hub option, preferring options over data.
+
+    After the v2→v3 migration, configurable settings live on
+    ``entry.options``. Older installs may still have them on
+    ``entry.data`` if the migration hasn't run yet on a given boot —
+    fall back so we never blow up on a half-migrated entry.
+    """
+    if entry.options and key in entry.options:
+        return entry.options[key]
+    if key in entry.data:
+        return entry.data[key]
+    return default
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,13 +97,41 @@ RAIL_MAX_AGE_SECONDS = 7 * 24 * 3600
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Lift legacy flat entries into the hub+subentries layout."""
+    """Migrate older entry layouts up to the current schema.
+
+    Migrations are idempotent and chained — each step lifts the entry
+    one version forward.
+    """
     if entry.version >= CONFIG_ENTRY_VERSION:
         return True
 
-    _LOGGER.info("Migrating NS Reisadvies entry %s from v%s to v%s",
-                 entry.entry_id, entry.version, CONFIG_ENTRY_VERSION)
+    _LOGGER.info(
+        "Migrating NS Reisadvies entry %s from v%s to v%s",
+        entry.entry_id, entry.version, CONFIG_ENTRY_VERSION,
+    )
 
+    # ---- v2 → v3 ----------------------------------------------------------
+    # Move hub-wide configurable options from ConfigEntry.data (legacy
+    # layout: everything in `data`) to ConfigEntry.options (correct
+    # layout per the Bronze "ConfigEntry.data and ConfigEntry.options"
+    # quality-scale rule). ConfigEntry.data should only carry the
+    # credentials and immutable setup fields.
+    if entry.version == 2:
+        new_data: dict[str, Any] = dict(entry.data)
+        new_options: dict[str, Any] = dict(entry.options or {})
+        for key in _OPTION_KEYS:
+            if key in new_data and key not in new_options:
+                new_options[key] = new_data.pop(key)
+        hass.config_entries.async_update_entry(
+            entry, data=new_data, options=new_options, version=3,
+        )
+        _LOGGER.debug(
+            "v2→v3 migration complete: moved %d option(s) to entry.options",
+            len(new_options),
+        )
+        return True
+
+    # ---- v1 → v2 (legacy multi-entry → hub + subentries) ------------------
     # Sort all v1 entries: oldest becomes the hub.
     legacy = [
         e for e in hass.config_entries.async_entries(DOMAIN)
@@ -244,33 +300,45 @@ async def _recover_subentries_from_storage(
             _LOGGER.warning("Could not recover subentry %s -> %s: %s", fr, to, err)
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up the hub: build a coordinator per route subentry."""
+async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
+    """Set up the hub: build a coordinator per route subentry.
+
+    Per the Bronze quality-scale rule ``runtime-data``, all per-entry
+    runtime state lives on ``entry.runtime_data`` (typed via
+    ``NSRuntimeData``). The hub-wide registrations that are scoped to
+    a single Home Assistant process — WebSocket commands, the rail-
+    cache refresh schedule, the static path and Lovelace resource —
+    still live in ``hass.data[DOMAIN]`` because they need to outlive
+    a single entry reload (``single_config_entry: true`` ensures we
+    only ever have one entry, but reloads still call setup again).
+    """
     hass.data.setdefault(DOMAIN, {})
+    runtime = NSRuntimeData()
 
     # Self-heal: if a previous (failed) migration left the hub without
     # subentries, try to rebuild them from the per-route Store files.
     await _recover_subentries_from_storage(hass, entry)
 
-    # Hub-wide config
+    # Hub-wide config: credentials live on entry.data, all configurable
+    # settings live on entry.options (post-v2→v3 migration). The
+    # _option() helper falls back to entry.data if a v2 install hasn't
+    # been migrated yet.
     api_key = entry.data.get(CONF_API_KEY)
-    scan_interval = int(entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
-    fav_hours = int(entry.data.get(CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
-    fetch_composition = bool(entry.data.get(CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION))
-    live_train_map = bool(entry.data.get(CONF_LIVE_TRAIN_MAP, DEFAULT_LIVE_TRAIN_MAP))
-    live_map_refresh = int(entry.data.get(
-        CONF_LIVE_MAP_REFRESH_SECONDS, DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+    scan_interval = int(_option(entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
+    fav_hours = int(_option(entry, CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
+    fetch_composition = bool(
+        _option(entry, CONF_FETCH_COMPOSITION, DEFAULT_FETCH_COMPOSITION)
+    )
+    live_train_map = bool(_option(entry, CONF_LIVE_TRAIN_MAP, DEFAULT_LIVE_TRAIN_MAP))
+    live_map_refresh = int(_option(
+        entry, CONF_LIVE_MAP_REFRESH_SECONDS, DEFAULT_LIVE_MAP_REFRESH_SECONDS,
     ))
 
-    # Make live_train_map flag + refresh interval visible to the sensor
-    # platform via hass.data so the card can read them from
-    # extra_state_attributes (decides whether to render the map icon
-    # and how fast to poll while it is open).
-    hass.data[DOMAIN]["_live_train_map_enabled"] = live_train_map
-    hass.data[DOMAIN]["_live_map_refresh_seconds"] = max(5, min(60, live_map_refresh))
+    runtime.live_train_map_enabled = live_train_map
+    runtime.live_map_refresh_seconds = max(5, min(60, live_map_refresh))
 
-    # Coordinator per subentry. We store them in hass.data keyed by
-    # subentry_id so the sensor platform can pick them up.
+    # Coordinator per subentry. Stored on runtime.coordinators so the
+    # sensor platform can pick them up via entry.runtime_data.
     coordinators: dict[str, NSUpdateCoordinator] = {}
     for subentry_id, subentry in (entry.subentries or {}).items():
         if subentry.subentry_type != SUBENTRY_TYPE_ROUTE:
@@ -281,6 +349,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             continue
         coordinator = NSUpdateCoordinator(
             hass,
+            entry=entry,
             api_key=api_key,
             from_station=from_st,
             to_station=to_st,
@@ -300,7 +369,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coordinator.async_refresh()
         coordinators[subentry_id] = coordinator
 
-    hass.data[DOMAIN][entry.entry_id] = coordinators
+    runtime.coordinators = coordinators
+    entry.runtime_data = runtime
 
     # Backfill: link existing entities to their subentry by unique_id.
     # Entities created before HA's subentry-aware async_add_entities have
@@ -308,8 +378,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # and the entity is shown under the right subentry in the UI.
     _backfill_entity_subentries(hass, entry)
 
-    # WebSocket commands for the live-train map. Registered once per HA.
-    if "_ws_registered" not in hass.data[DOMAIN]:
+    # WebSocket commands for the live-train map. Registered once per HA
+    # (websocket_api.async_register_command rejects duplicates). We
+    # track this via hass.data because the registration outlives the
+    # entry's runtime_data.
+    if not hass.data[DOMAIN].get("_ws_registered"):
         websocket_api.async_register_command(hass, _ws_track_train_start)
         websocket_api.async_register_command(hass, _ws_track_train_poll)
         websocket_api.async_register_command(hass, _ws_track_train_stop)
@@ -317,7 +390,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Schedule the rail-cache refresh once per HA boot. Runs ~30s after
     # setup so the integration finishes booting first, then weekly.
-    if "_rail_refresh_scheduled" not in hass.data[DOMAIN] and coordinators:
+    if not hass.data[DOMAIN].get("_rail_refresh_scheduled") and coordinators:
         hass.data[DOMAIN]["_rail_refresh_scheduled"] = True
         first_coord = next(iter(coordinators.values()))
 
@@ -330,7 +403,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     # Static path + Lovelace card auto-registration (one-shot per HA).
-    if "static_paths_registered" not in hass.data[DOMAIN]:
+    if not hass.data[DOMAIN].get("static_paths_registered"):
         path = hass.config.path("custom_components/ns_reisadvies/www")
         if os.path.isdir(path):
             await hass.http.async_register_static_paths([
@@ -366,7 +439,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 # entry, just state-machine tombstones) so ha-map can plot them. On
 # track_train_stop or session timeout, the states are removed.
 #
-# Session shape (hass.data[DOMAIN]["_live_sessions"][sid]):
+# Session shape (entry.runtime_data.live_sessions[sid]):
 #   {
 #     "train_entity_id": "device_tracker.ns_reisadvies_train_<sid>",
 #     "stop_entity_ids": ["device_tracker.ns_reisadvies_stop_<sid>_0", ...],
@@ -375,18 +448,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 #   }
 
 
+def _hub_entry(hass: HomeAssistant) -> NSConfigEntry | None:
+    """Return the (single) NS Reisadvies hub config entry, or None.
+
+    With ``single_config_entry: true`` set in the manifest, there is at
+    most one entry; we return it whenever the integration is loaded.
+    """
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        return entry  # type: ignore[return-value]
+    return None
+
+
+def _runtime(hass: HomeAssistant) -> NSRuntimeData | None:
+    """Return runtime_data of the loaded hub entry, or None if not up."""
+    entry = _hub_entry(hass)
+    if entry is None:
+        return None
+    return getattr(entry, "runtime_data", None)
+
+
 def _live_sessions(hass: HomeAssistant) -> dict[str, dict]:
+    """Return the per-HA live-train-map session map.
+
+    Backed by ``entry.runtime_data.live_sessions`` so it is torn down on
+    integration unload. If the entry isn't loaded yet (e.g. an early WS
+    callback) we fall back to a process-local dict to avoid crashes.
+    """
+    runtime = _runtime(hass)
+    if runtime is not None:
+        return runtime.live_sessions
     return hass.data.setdefault(DOMAIN, {}).setdefault("_live_sessions", {})
 
 
 def _any_coordinator(hass: HomeAssistant) -> NSUpdateCoordinator | None:
     """Return any per-route coordinator (they all share the api_key)."""
-    bucket = hass.data.get(DOMAIN, {})
-    for value in bucket.values():
-        if isinstance(value, dict):
-            for coord in value.values():
-                if isinstance(coord, NSUpdateCoordinator):
-                    return coord
+    runtime = _runtime(hass)
+    if runtime is None:
+        return None
+    for coord in runtime.coordinators.values():
+        return coord
     return None
 
 
@@ -785,9 +885,15 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Unload the hub."""
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
-    return unload_ok
+async def async_unload_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
+    """Unload the hub.
+
+    HA clears ``entry.runtime_data`` automatically once the unload
+    completes, so we only need to forward the unload to the sensor
+    platform. The hub-wide registrations stored in ``hass.data[DOMAIN]``
+    (WS commands, static paths, rail-cache schedule) are deliberately
+    not torn down here — they were registered once for the lifetime of
+    the HA process and re-registering on every reload would either
+    error or leak listeners.
+    """
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

@@ -5,6 +5,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
 import aiohttp
 import async_timeout
@@ -32,7 +33,47 @@ from .const import (
     VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL,
 )
 
+if TYPE_CHECKING:
+    from .types import NSConfigEntry
+
 _LOGGER = logging.getLogger(__name__)
+
+
+async def async_validate_api_key(hass: HomeAssistant, api_key: str) -> str | None:
+    """Probe the NS API with the supplied key.
+
+    Returns ``None`` on success, or a config-flow error code:
+
+    * ``"invalid_auth"`` — key was rejected (HTTP 401/403).
+    * ``"cannot_connect"`` — network failure or other 5xx.
+
+    Used by the config flow to satisfy the Bronze quality-scale rule
+    ``test-before-configure``: validate the credentials with the
+    upstream service before creating the entry.
+    """
+    if not api_key or not api_key.strip():
+        return "invalid_auth"
+    session = async_get_clientsession(hass)
+    headers = {"Ocp-Apim-Subscription-Key": api_key.strip()}
+    try:
+        async with async_timeout.timeout(15):
+            # /v2/stations is the lightest authenticated endpoint NS
+            # exposes — it's a static catalogue, no per-call cost, but
+            # still requires the subscription key. Perfect for a probe.
+            async with session.get(STATIONS_API_URL, headers=headers) as resp:
+                if resp.status in (401, 403):
+                    return "invalid_auth"
+                if resp.status >= 500:
+                    return "cannot_connect"
+                if resp.status != 200:
+                    _LOGGER.warning(
+                        "NS API probe returned unexpected status %s", resp.status,
+                    )
+                    return "cannot_connect"
+    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        _LOGGER.debug("NS API probe failed: %s", err)
+        return "cannot_connect"
+    return None
 
 class NSUpdateCoordinator(DataUpdateCoordinator):
     """Coordinator that fetches NS travel advice and manages favourites."""
@@ -40,6 +81,8 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
     def __init__(
         self,
         hass: HomeAssistant,
+        *,
+        entry: NSConfigEntry | None = None,
         api_key: str,
         from_station: str,
         to_station: str,
@@ -47,6 +90,11 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         fav_hours: int = 6,
         fetch_composition: bool = False,
     ) -> None:
+        # The hub config entry; used to read/write
+        # ``entry.runtime_data.stations_geo`` (the per-HA-boot stations
+        # geo cache). Optional for back-compat with older callers /
+        # tests that constructed a coordinator without an entry.
+        self._entry = entry
         self.api_key = api_key
         self.from_station = from_station
         self.to_station = to_station
@@ -356,15 +404,18 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
     #
     # These are NOT polled. They are called on-demand by WebSocket
     # commands when the user opens the map dialog in the card. The
-    # stations geo lookup is cached in hass.data[DOMAIN]["_stations_geo"]
-    # so it is fetched at most once per HA boot.
+    # stations geo lookup is cached on the hub's runtime_data so it is
+    # fetched at most once per integration setup.
 
     async def async_fetch_stations_geo(self) -> dict[str, dict]:
-        """Return a {code: {name, lat, lng}} map. Cached on hass.data."""
-        bucket = self.hass.data.setdefault(DOMAIN, {})
-        cached = bucket.get("_stations_geo")
-        if cached:
-            return cached
+        """Return a {code: {name, lat, lng}} map. Cached on runtime_data."""
+        runtime = (
+            getattr(self._entry, "runtime_data", None)
+            if self._entry is not None
+            else None
+        )
+        if runtime is not None and runtime.stations_geo:
+            return runtime.stations_geo
         if not self.api_key:
             return {}
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
@@ -402,7 +453,8 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                 out[code] = entry
             if uic:
                 out[uic] = entry
-        bucket["_stations_geo"] = out
+        if runtime is not None:
+            runtime.stations_geo = out
         _LOGGER.debug("Stations geo cache: %d entries (code+UIC)", len(out))
         return out
 

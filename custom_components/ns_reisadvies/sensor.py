@@ -1,34 +1,62 @@
-"""NS Reisadvies sensors and tracking services.
+"""NS Reisadvies sensor platform.
 
-v2: one sensor per route subentry under the hub. The unique_id is
-`f"{from}_{to}".lower()` so it remains stable across HA restarts and
-across the v1→v2 migration (the entity registry is rewritten in
-async_migrate_entry to point at this id).
+v2.9.0 layout:
+
+* One DataUpdateCoordinator per route subentry, owned by the hub.
+* One sensor per route. ``has_entity_name = True`` plus a translation
+  key (``trips``) so the entity name is rendered as
+  "<device name> <localised entity name>" — Bronze quality-scale rule
+  ``has-entity-name``.
+* Per-route DeviceInfo so each route is its own logical device under
+  the hub. Required for the Gold ``devices`` rule, but already wired
+  here because it pairs with ``has-entity-name``.
+* Coordinators are read from ``entry.runtime_data`` (Bronze rule
+  ``runtime-data``).
+
+Unique IDs use ``f"{from}_{to}".lower()`` so they remain stable across
+HA restarts and across the v1→v2→v3 migration (the entity registry was
+rewritten in async_migrate_entry to point at this id).
 """
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
-from .const import DOMAIN, SUBENTRY_TYPE_ROUTE, CONF_FROM_STATION, CONF_TO_STATION
+from .const import (
+    CONF_FROM_STATION,
+    CONF_TO_STATION,
+    DOMAIN,
+    SUBENTRY_TYPE_ROUTE,
+)
+from .coordinator import NSUpdateCoordinator
+from .types import NSConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
+# Quality-scale rule ``parallel-updates``: every entity already has its
+# own coordinator that does the actual fetching, so the platform itself
+# performs no parallel work — the value is informational here.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities
+    hass: HomeAssistant,
+    entry: NSConfigEntry,
+    async_add_entities: AddEntitiesCallback,
 ) -> bool:
     """Set up sensors for every route subentry under the hub."""
-    coordinators = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if coordinators is None:
+    runtime = getattr(entry, "runtime_data", None)
+    if runtime is None or not runtime.coordinators:
         raise ConfigEntryNotReady("Waiting for NS Reisadvies hub")
 
     # Group sensors by subentry so we can pass config_subentry_id per add call
@@ -36,20 +64,21 @@ async def async_setup_entry(
     for subentry_id, subentry in (entry.subentries or {}).items():
         if subentry.subentry_type != SUBENTRY_TYPE_ROUTE:
             continue
-        coord = coordinators.get(subentry_id)
+        coord = runtime.coordinators.get(subentry_id)
         if coord is None:
             continue
         from_st = subentry.data.get(CONF_FROM_STATION) or "?"
         to_st = subentry.data.get(CONF_TO_STATION) or "?"
         unique_id = f"{from_st}_{to_st}".lower()
-        # Suggested entity_id slug: ns_<from>_<to> with HA slugify (handles spaces,
-        # diacritics, etc). Existing entities keep their registry entity_id; this
-        # only kicks in for newly registered routes.
+        # Suggested entity_id slug: ns_<from>_<to> with HA slugify (handles
+        # spaces, diacritics). Existing entities keep their registry
+        # entity_id; this only kicks in for newly registered routes.
         suggested = f"ns_{slugify(from_st)}_{slugify(to_st)}"
         by_subentry.setdefault(subentry_id, []).append(
             NSReisadviesSensor(
                 coord,
-                name=subentry.title or f"NS {from_st} -> {to_st}",
+                from_station=from_st,
+                to_station=to_st,
                 unique_id=unique_id,
                 suggested_object_id=suggested,
             )
@@ -72,53 +101,88 @@ async def async_setup_entry(
     return True
 
 
-class NSReisadviesSensor(CoordinatorEntity, SensorEntity):
+class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
     """Sensor entity exposing NS travel advice for a configured route."""
 
     _attr_should_poll = False
+    _attr_has_entity_name = True
+    # No translation_key + no _attr_name is the canonical "use the
+    # device name verbatim as the entity friendly name" pattern when
+    # has_entity_name=True. The friendly name a user sees is therefore
+    # exactly the route name (e.g. "Hilversum → Duivendrecht").
+    _attr_name = None
 
     def __init__(
         self,
-        coordinator,
-        name: str,
+        coordinator: NSUpdateCoordinator,
+        *,
+        from_station: str,
+        to_station: str,
         unique_id: str,
         suggested_object_id: str | None = None,
     ) -> None:
+        """Initialise the sensor.
+
+        ``unique_id`` is deliberately the same as the route subentry's
+        unique_id (f"{from}_{to}".lower()) so existing entity_ids are
+        preserved across migrations.
+        """
         super().__init__(coordinator)
-        self._attr_name = name
         self._attr_unique_id = unique_id
         if suggested_object_id:
             self._attr_suggested_object_id = suggested_object_id
+        # DeviceInfo per route. The device name doubles as the entity
+        # friendly name (because _attr_name = None + has_entity_name).
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, unique_id)},
+            name=f"{from_station} → {to_station}",
+            manufacturer="NS",
+            model="NS Reisadvies route",
+            entry_type=None,
+        )
 
     @property
-    def native_value(self):
+    def native_value(self) -> str:
+        """Return the planned departure of the next trip, or a placeholder."""
         if self.coordinator.data:
             try:
-                return self.coordinator.data[0]["legs"][0]["origin"]["plannedDateTime"]
+                return self.coordinator.data[0]["legs"][0]["origin"][
+                    "plannedDateTime"
+                ]
             except (KeyError, IndexError, TypeError):
                 return "Data available"
         return "No trips"
 
     @property
-    def extra_state_attributes(self):
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Surface trips, tracked favourites, and hub-wide flags.
+
+        Hub-wide flags are exposed so the Lovelace card can decide
+        whether to render the live-train-map icon and how fast to poll
+        the live position, without needing to call extra services.
+        """
         tracked = getattr(self.coordinator, "tracked_trips", {}) or {}
         if isinstance(tracked, dict):
             tracked_list = list(tracked.keys())
         else:
             tracked_list = list(tracked)
-        # Hub-wide flags exposed so the Lovelace card can decide whether
-        # to render optional UI (e.g. the live train map icon) without
-        # having to call extra services.
-        bucket = self.coordinator.hass.data.get(DOMAIN, {})
+
+        # Read flags from the hub entry's runtime_data. We look the entry
+        # up by domain — there is at most one (single_config_entry: true).
+        live_train_map_enabled = False
+        live_map_refresh_seconds = 10
+        for entry in self.coordinator.hass.config_entries.async_entries(DOMAIN):
+            runtime = getattr(entry, "runtime_data", None)
+            if runtime is not None:
+                live_train_map_enabled = runtime.live_train_map_enabled
+                live_map_refresh_seconds = runtime.live_map_refresh_seconds
+                break
+
         return {
             "trips": self.coordinator.data or [],
             "tracked_trips": tracked_list,
-            "live_train_map_enabled": bool(
-                bucket.get("_live_train_map_enabled", False)
-            ),
-            "live_map_refresh_seconds": int(
-                bucket.get("_live_map_refresh_seconds", 10)
-            ),
+            "live_train_map_enabled": live_train_map_enabled,
+            "live_map_refresh_seconds": live_map_refresh_seconds,
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:
