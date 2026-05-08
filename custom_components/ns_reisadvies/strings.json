@@ -14,6 +14,16 @@
           "act_station": "The station where the journey starts.",
           "arr_station": "The station where the journey ends."
         }
+      },
+      "reauth_confirm": {
+        "title": "Reauthenticate NS Reisadvies",
+        "description": "The NS API rejected your stored key. Paste a fresh API key from apiportal.ns.nl to reconnect.",
+        "data": {
+          "api_key": "API key"
+        },
+        "data_description": {
+          "api_key": "Your renewed NS API subscription key."
+        }
       }
     },
     "error": {
@@ -25,7 +35,8 @@
     },
     "abort": {
       "single_instance_allowed": "NS Reisadvies is already configured. Add more routes via the integration tile.",
-      "already_configured": "This route is already configured."
+      "already_configured": "This route is already configured.",
+      "reauth_successful": "NS Reisadvies has been reconnected with the new API key."
     }
   },
   "config_subentries": {

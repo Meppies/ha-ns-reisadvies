@@ -11,6 +11,7 @@ import aiohttp
 import async_timeout
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import (
@@ -112,6 +113,12 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         # Whether the first composition error of the current refresh has
         # already been logged at warning level. Reset per refresh.
         self._composition_warned: bool = False
+
+        # Edge-detection for the Silver "log-when-unavailable" quality-
+        # scale rule. ``None`` means we haven't observed an outcome yet;
+        # otherwise it tracks the last refresh's success/failure and
+        # we only emit a log line on transitions.
+        self._was_available: bool | None = None
 
         # Persistent storage so favourites survive a Home Assistant restart.
         self._store = Store(
@@ -217,7 +224,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                         _LOGGER.warning(
                             "Journey composition fetch failed: HTTP %s for train %s. "
                             "Check that your NS API key has access to the "
-                            "/reisinformatie-api/api/v3/journey endpoint.",
+                            "/reisinformatie-api/api/v2/journey endpoint.",
                             resp.status, train_number,
                         )
                     else:
@@ -310,12 +317,40 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
 
     # ---- data fetch ----
 
+    def _note_unavailable(self, reason: str) -> None:
+        """Log once when we transition into the unavailable state.
+
+        Silver quality-scale rule ``log-when-unavailable``: log on the
+        edge, not on every refresh, so the journal isn't spammed during
+        a long upstream outage.
+        """
+        if self._was_available is False:
+            return
+        _LOGGER.warning(
+            "NS Reisadvies (%s -> %s) is unavailable: %s",
+            self.from_station, self.to_station, reason,
+        )
+        self._was_available = False
+
+    def _note_available(self) -> None:
+        """Log once when we recover from a previous outage."""
+        if self._was_available is None:
+            self._was_available = True
+            return
+        if self._was_available is False:
+            _LOGGER.info(
+                "NS Reisadvies (%s -> %s) is back online",
+                self.from_station, self.to_station,
+            )
+        self._was_available = True
+
     async def _async_update_data(self):
         """Fetch trips and pinned favourites from the NS API."""
         # Prune expired favourites first so we do not refetch them.
         self._expire_old_trips()
 
         if not self.api_key:
+            self._note_unavailable("no API key configured")
             raise UpdateFailed("No NS API key configured")
 
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
@@ -329,7 +364,19 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             async with async_timeout.timeout(20):
                 # 1) Standard trip query for the configured route.
                 async with self._session.get(API_URL, headers=headers, params=params) as response:
+                    if response.status in (401, 403):
+                        # Silver rule ``reauthentication-flow``: bubble
+                        # auth failures up so HA opens the reauth form.
+                        self._note_unavailable(
+                            f"NS API rejected the key (HTTP {response.status})"
+                        )
+                        raise ConfigEntryAuthFailed(
+                            f"NS API rejected the API key (HTTP {response.status})"
+                        )
                     if response.status != 200:
+                        self._note_unavailable(
+                            f"NS API returned HTTP {response.status}"
+                        )
                         raise UpdateFailed(
                             f"NS travel advice API returned status {response.status}"
                         )
@@ -393,11 +440,13 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                 if self.fetch_composition:
                     await self._annotate_compositions(all_trips, headers)
 
+                self._note_available()
                 return all_trips
 
-        except UpdateFailed:
+        except (UpdateFailed, ConfigEntryAuthFailed):
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            self._note_unavailable(f"network error: {err}")
             raise UpdateFailed(f"Could not reach NS API: {err}") from err
 
     # ---- live train map helpers ----

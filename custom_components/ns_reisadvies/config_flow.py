@@ -109,6 +109,43 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> dict[str, type[ConfigSubentryFlow]]:
         return {SUBENTRY_TYPE_ROUTE: NSRouteSubentryFlowHandler}
 
+    # ----- Reauthentication flow (Silver quality-scale rule) ---------
+    # Triggered when the coordinator raises ConfigEntryAuthFailed (e.g.
+    # the NS API key was rotated or revoked). HA opens this flow in
+    # the UI and asks the user to enter a fresh key, which we validate
+    # with a real probe before storing.
+
+    async def async_step_reauth(self, entry_data: dict) -> dict:
+        """Entry point: HA invoked us because the credentials are stale."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(self, user_input=None) -> dict:
+        """Ask the user for a new API key and verify it works."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            api_key = (user_input.get(CONF_API_KEY) or "").strip()
+            from .coordinator import async_validate_api_key
+            probe_error = await async_validate_api_key(self.hass, api_key)
+            if probe_error:
+                errors["base"] = probe_error
+            else:
+                existing = self._get_reauth_entry()
+                self.hass.config_entries.async_update_entry(
+                    existing,
+                    data={**existing.data, CONF_API_KEY: api_key},
+                )
+                # Force a reload so the coordinator picks up the new key.
+                self.hass.async_create_task(
+                    self.hass.config_entries.async_reload(existing.entry_id)
+                )
+                return self.async_abort(reason="reauth_successful")
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            errors=errors,
+        )
+
     async def async_step_user(self, user_input=None):
         """First-time setup: ask for API key + first route."""
         # Only one hub entry is allowed; further routes go via subentries.

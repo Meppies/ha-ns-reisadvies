@@ -4,6 +4,39 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] — 2026-05-08
+
+### Added
+- **Reauthentication flow.** When the NS API rejects the stored key
+  (HTTP 401/403), the coordinator raises `ConfigEntryAuthFailed` and
+  Home Assistant opens a "Reauthenticate NS Reisadvies" dialog. The
+  new key is validated with the same `/v2/stations` probe before it
+  is saved, then the entry is reloaded so the coordinator picks it up.
+  Silver quality-scale rule `reauthentication-flow`.
+- **Edge-detection logging.** The coordinator now logs **once** when
+  it transitions to unavailable (NS API down, network error, key
+  rejected) and **once** when it recovers. No more spam during long
+  upstream outages. Silver rule `log-when-unavailable`.
+- **Service-action exceptions.** `ns_reisadvies.track_trip` and
+  `ns_reisadvies.untrack_trip` now raise `ServiceValidationError`
+  when called with an empty `ctx_recon` instead of silently no-
+  opping. Silver rule `action-exceptions`.
+
+### Fixed
+- Cosmetic log message: the train-composition warning correctly says
+  `/v2/journey` instead of the incorrect `/v3/journey` reference.
+
+### Notes
+- `entity-unavailable` (Silver) was already covered by HA's
+  `CoordinatorEntity` — sensors now flip to `unavailable` whenever
+  `coordinator.last_update_success` is `False`. The "No trips"
+  placeholder only appears when the API succeeded but returned an
+  empty list.
+- The remaining Silver gap is `test-coverage` > 95 %. That work
+  ships in v2.10.1 / v2.11.0 alongside the Gold work, where the
+  test suite is expanded to cover diagnostics, repairs, and
+  translations.
+
 ## [2.9.0] — 2026-05-08
 
 ### Changed

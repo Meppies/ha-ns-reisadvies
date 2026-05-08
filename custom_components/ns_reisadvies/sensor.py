@@ -24,7 +24,10 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import (
+    ConfigEntryNotReady,
+    ServiceValidationError,
+)
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -186,11 +189,32 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:
-        if hasattr(self.coordinator, "track_trip"):
-            self.coordinator.track_trip(ctx_recon)
-            self.async_write_ha_state()
+        """Pin a trip as a favourite.
+
+        Silver quality-scale rule ``action-exceptions``: surface
+        validation failures via ``ServiceValidationError`` so HA shows
+        a clean message in the UI instead of silently no-opping.
+        """
+        if not ctx_recon or not str(ctx_recon).strip():
+            raise ServiceValidationError(
+                "ctx_recon must be a non-empty string"
+            )
+        if not hasattr(self.coordinator, "track_trip"):
+            raise ServiceValidationError(
+                "Coordinator does not support track_trip"
+            )
+        self.coordinator.track_trip(ctx_recon)
+        self.async_write_ha_state()
 
     async def async_untrack_trip(self, ctx_recon: str) -> None:
-        if hasattr(self.coordinator, "untrack_trip"):
-            self.coordinator.untrack_trip(ctx_recon)
-            self.async_write_ha_state()
+        """Unpin a previously favourited trip."""
+        if not ctx_recon or not str(ctx_recon).strip():
+            raise ServiceValidationError(
+                "ctx_recon must be a non-empty string"
+            )
+        if not hasattr(self.coordinator, "untrack_trip"):
+            raise ServiceValidationError(
+                "Coordinator does not support untrack_trip"
+            )
+        self.coordinator.untrack_trip(ctx_recon)
+        self.async_write_ha_state()
