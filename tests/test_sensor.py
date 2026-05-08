@@ -97,3 +97,36 @@ async def test_sensor_has_device_info_and_entity_name(hass) -> None:
     assert sensor.device_info is not None
     assert sensor.device_info["identifiers"] == {(DOMAIN, "hilversum_duivendrecht")}
     assert sensor.device_info["name"] == "Hilversum → Duivendrecht"
+
+
+async def test_sensor_excludes_trips_from_recorder(hass) -> None:
+    """The heavy `trips` blob is marked as not recorded so HA's Recorder
+    doesn't drop it with a 16384-byte size warning every refresh."""
+    coord = _stub_coordinator(hass, data=None)
+    sensor = _make_sensor(coord)
+    assert "trips" in sensor._unrecorded_attributes
+
+
+async def test_track_trip_raises_on_empty_ctx_recon(hass) -> None:
+    """Silver/Gold action-exceptions: empty ctx_recon → translated error."""
+    from homeassistant.exceptions import ServiceValidationError
+    import pytest as _pytest
+
+    coord = _stub_coordinator(hass, data=None)
+    coord.track_trip = MagicMock()  # so we can detect it was NOT called
+    sensor = _make_sensor(coord)
+    with _pytest.raises(ServiceValidationError):
+        await sensor.async_track_trip("")
+    coord.track_trip.assert_not_called()
+
+
+async def test_untrack_trip_raises_on_whitespace_ctx_recon(hass) -> None:
+    from homeassistant.exceptions import ServiceValidationError
+    import pytest as _pytest
+
+    coord = _stub_coordinator(hass, data=None)
+    coord.untrack_trip = MagicMock()
+    sensor = _make_sensor(coord)
+    with _pytest.raises(ServiceValidationError):
+        await sensor.async_untrack_trip("   ")
+    coord.untrack_trip.assert_not_called()

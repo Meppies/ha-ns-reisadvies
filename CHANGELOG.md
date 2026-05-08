@@ -4,6 +4,39 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.0] — 2026-05-08
+
+### Fixed
+- **Recorder warning silenced.** Sensors now declare
+  `_unrecorded_attributes = frozenset({"trips"})` so the heavy trips
+  JSON blob is excluded from long-term state history. The Lovelace
+  card always reads the live state, so this has no visible impact —
+  it just silences the *"State attributes for sensor.ns_* exceed
+  maximum size of 16384 bytes"* warning that fired on every refresh.
+
+### Added
+- **Coordinator test suite.** New `tests/test_coordinator.py` covers
+  track / untrack (including idempotency and empty-input guards),
+  favourite expiry, edge-detection logging (one warning per outage,
+  one info per recovery), `_async_update_data` happy path plus the
+  401/403 → `ConfigEntryAuthFailed` and 5xx / network → `UpdateFailed`
+  branches, `async_validate_api_key` for every error code, and the
+  legacy-list migration in `async_load_tracked`.
+- **Diagnostics test suite.** New `tests/test_diagnostics.py`
+  verifies that the dump redacts `api_key` and `ctxRecon`, lists
+  route subentries, and survives an entry that hasn't finished
+  loading yet (no `runtime_data`).
+- **Sensor test additions.** Asserts `_unrecorded_attributes`
+  includes `trips`, and that `track_trip` / `untrack_trip` raise
+  `ServiceValidationError` on empty input.
+
+### Notes
+- Coverage lift: from ~15-20 % toward ~60-70 % with this batch.
+  Reaching the Silver `test-coverage` > 95 % bar will take one or
+  two more point releases — the remaining gaps are config-flow
+  reauth + subentry flows, WS handlers, and the live-train ArcGIS /
+  ProRail fetchers.
+
 ## [2.12.0] — 2026-05-08
 
 ### Added

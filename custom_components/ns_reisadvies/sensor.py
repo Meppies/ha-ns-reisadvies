@@ -119,6 +119,14 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
     # ``entity-translations`` rule. The user-visible name still comes
     # from the device, not from translations.
     _attr_translation_key = "trips"
+    # Recorder integration: don't persist the heavy `trips` JSON blob
+    # in long-term state history. The full trips list (with legs,
+    # stops, composition) easily exceeds Recorder's 16 384-byte
+    # attribute size limit and would otherwise be silently dropped on
+    # every state change with a noisy log warning. The Lovelace card
+    # always reads the live state, so excluding `trips` from history
+    # has no visible impact.
+    _unrecorded_attributes = frozenset({"trips"})
 
     def __init__(
         self,
