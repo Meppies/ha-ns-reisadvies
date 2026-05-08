@@ -1,0 +1,19 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.mypy]
+python_version = "3.12"
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+exclude = ["tests/"]
+
+[[tool.mypy.overrides]]
+module = "custom_components.ns_reisadvies.*"
+disallow_untyped_defs = false
+warn_return_any = true
