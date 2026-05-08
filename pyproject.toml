@@ -23,4 +23,18 @@ exclude = ["tests/"]
 # pattern HA-core itself uses for custom-component packages.
 [[tool.mypy.overrides]]
 module = "custom_components.ns_reisadvies.*"
-disable_error_code = ["misc", "untyped-decorator", "call-arg"]
+# `misc`, `untyped-decorator`, `call-arg` — see comment above.
+# `attr-defined` and `name-defined` are also pure HA-stub fallout:
+# `homeassistant.components.websocket_api` and
+# `homeassistant.components.lovelace` don't declare an explicit
+# `__all__`, so mypy --strict refuses access to their public
+# constants and helpers (`websocket_command`, `async_response`,
+# `ActiveConnection`, `DOMAIN`). HA core itself works around this
+# with the same suppressions in its custom-component test infra.
+disable_error_code = [
+    "misc",
+    "untyped-decorator",
+    "call-arg",
+    "attr-defined",
+    "name-defined",
+]

@@ -76,7 +76,7 @@ async def async_validate_api_key(hass: HomeAssistant, api_key: str) -> str | Non
         return "cannot_connect"
     return None
 
-class NSUpdateCoordinator(DataUpdateCoordinator):
+class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
     """Coordinator that fetches NS travel advice and manages favourites."""
 
     def __init__(
@@ -121,7 +121,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         self._was_available: bool | None = None
 
         # Persistent storage so favourites survive a Home Assistant restart.
-        self._store = Store(
+        self._store: Store[dict[str, Any]] = Store(
             hass, STORAGE_VERSION, f"{STORAGE_KEY}_{from_station}_{to_station}"
         )
 

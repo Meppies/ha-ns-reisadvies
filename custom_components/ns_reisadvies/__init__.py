@@ -20,6 +20,7 @@ import secrets
 import time as _time
 from datetime import timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import voluptuous as vol
@@ -179,10 +180,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         unique_id = f"{from_st}_{to_st}".lower()
         subentries.append(
             ConfigSubentry(
-                data={
+                data=MappingProxyType({
                     CONF_FROM_STATION: from_st,
                     CONF_TO_STATION: to_st,
-                },
+                }),
                 subentry_type=SUBENTRY_TYPE_ROUTE,
                 title=f"{from_st} -> {to_st}",
                 unique_id=unique_id,
@@ -290,7 +291,9 @@ async def _recover_subentries_from_storage(
     for fr, to in routes:
         try:
             sub = ConfigSubentry(
-                data={CONF_FROM_STATION: fr, CONF_TO_STATION: to},
+                data=MappingProxyType(
+                    {CONF_FROM_STATION: fr, CONF_TO_STATION: to}
+                ),
                 subentry_type=SUBENTRY_TYPE_ROUTE,
                 title=f"{fr} -> {to}",
                 unique_id=f"{fr}_{to}".lower(),
@@ -323,7 +326,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
     # settings live on entry.options (post-v2→v3 migration). The
     # _option() helper falls back to entry.data if a v2 install hasn't
     # been migrated yet.
-    api_key = entry.data.get(CONF_API_KEY)
+    api_key = str(entry.data.get(CONF_API_KEY) or "")
     scan_interval = int(_option(entry, CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL))
     fav_hours = int(_option(entry, CONF_FAV_HOURS, DEFAULT_FAV_HOURS))
     fetch_composition = bool(
