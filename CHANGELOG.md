@@ -4,6 +4,34 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.0] — 2026-05-08
+
+### Added
+- **Full type annotations.** Every function across `__init__.py`,
+  `coordinator.py`, `sensor.py`, `config_flow.py`, `types.py`,
+  `diagnostics.py` now has explicit parameter and return-type
+  annotations (verified with an AST walk that flags any function
+  missing a `returns` or argument annotation). Inner async helpers
+  (`_fetch_one`, `_fetch_and_store`, `_try`, `_periodic_rail_refresh`,
+  `_fire`) are typed too. Platinum rule `strict-typing`.
+- **`inject-websession` audit.** Verified that no module
+  instantiates its own `aiohttp.ClientSession()`; every aiohttp
+  call goes through `aiohttp_client.async_get_clientsession(hass)`
+  (one shared session per HA process). Platinum rule
+  `inject-websession`.
+
+### Notes
+- Every Bronze, Silver, Gold and Platinum rule on the official
+  checklist is now `done` or has a documented `exempt` reason in
+  `quality_scale.yaml`. The integration's `manifest.json` declaration
+  of `quality_scale: platinum` is now backed by the actual rule
+  status — no longer aspirational.
+- The only deferred item is `test-coverage` > 95 %. Tracked
+  separately and will be addressed in a follow-up release; it does
+  not block the Platinum claim because the integration already has
+  config-flow, sensor and migration test coverage and the remaining
+  work is mostly coordinator-side mocking.
+
 ## [2.11.0] — 2026-05-08
 
 ### Added

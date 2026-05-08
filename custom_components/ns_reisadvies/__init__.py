@@ -394,7 +394,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         hass.data[DOMAIN]["_rail_refresh_scheduled"] = True
         first_coord = next(iter(coordinators.values()))
 
-        async def _periodic_rail_refresh(_now=None):
+        async def _periodic_rail_refresh(_now: Any = None) -> None:
             await _async_refresh_rail_cache(hass, first_coord)
 
         async_call_later(hass, 30, _periodic_rail_refresh)
@@ -613,7 +613,7 @@ def _arm_cleanup(hass: HomeAssistant, session_id: str, seconds: int = 600) -> No
             pass
 
     @callback
-    def _fire(_now):  # noqa: ANN001
+    def _fire(_now: Any) -> None:
         _LOGGER.debug("Auto-cleaning live train session %s", session_id)
         _cleanup_session(hass, session_id)
 

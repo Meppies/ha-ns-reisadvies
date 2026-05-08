@@ -9,11 +9,16 @@ Assistant pattern that integrations like ZHA and Bluetooth use.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigSubentryFlow, SubentryFlowResult
+from homeassistant.config_entries import (
+    ConfigFlowResult,
+    ConfigSubentryFlow,
+    SubentryFlowResult,
+)
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     SelectSelector,
@@ -115,11 +120,15 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # the UI and asks the user to enter a fresh key, which we validate
     # with a real probe before storing.
 
-    async def async_step_reauth(self, entry_data: dict) -> dict:
+    async def async_step_reauth(
+        self, entry_data: dict[str, Any]
+    ) -> ConfigFlowResult:
         """Entry point: HA invoked us because the credentials are stale."""
         return await self.async_step_reauth_confirm()
 
-    async def async_step_reauth_confirm(self, user_input=None) -> dict:
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Ask the user for a new API key and verify it works."""
         errors: dict[str, str] = {}
         if user_input is not None:
@@ -146,7 +155,9 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """First-time setup: ask for API key + first route."""
         # Only one hub entry is allowed; further routes go via subentries.
         existing = self._async_current_entries()
@@ -218,15 +229,23 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
     """Add a route subentry."""
 
-    async def async_step_user(self, user_input=None) -> SubentryFlowResult:
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
         """Initial step shown when the user clicks 'Add route'."""
         return await self._show_form(user_input)
 
-    async def async_step_reconfigure(self, user_input=None) -> SubentryFlowResult:
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
         """Edit an existing route."""
         return await self._show_form(user_input, reconfigure=True)
 
-    async def _show_form(self, user_input, reconfigure: bool = False) -> SubentryFlowResult:
+    async def _show_form(
+        self,
+        user_input: dict[str, Any] | None,
+        reconfigure: bool = False,
+    ) -> SubentryFlowResult:
         errors: dict[str, str] = {}
 
         # Bestaande routes verzamelen om duplicaten te vangen.
@@ -320,13 +339,15 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         self.entry = config_entry
 
-    def _read(self, key: str, default):
+    def _read(self, key: str, default: Any) -> Any:
         """Read a value, preferring options over data (post-v3 layout)."""
         if self.entry.options and key in self.entry.options:
             return self.entry.options[key]
         return self.entry.data.get(key, default)
 
-    async def async_step_init(self, user_input=None):
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         if user_input is not None:
             # Validate the (possibly rotated) API key before saving.
             api_key_input = (user_input.get(CONF_API_KEY) or "").strip()

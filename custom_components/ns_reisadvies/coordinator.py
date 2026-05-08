@@ -5,7 +5,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import async_timeout
@@ -299,7 +299,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         if not train_numbers:
             return
 
-        async def _fetch_and_store(num: str):
+        async def _fetch_and_store(num: str) -> tuple[str, dict[str, Any] | None]:
             comp = await self._fetch_journey_composition(num, headers)
             return num, comp
 
@@ -344,7 +344,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             )
         self._was_available = True
 
-    async def _async_update_data(self):
+    async def _async_update_data(self) -> list[dict[str, Any]]:
         """Fetch trips and pinned favourites from the NS API."""
         # Prune expired favourites first so we do not refetch them.
         self._expire_old_trips()
@@ -388,7 +388,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                 tracked_trips_data: list[dict] = []
                 trips_to_remove: set[str] = set()
 
-                async def _fetch_one(ctx: str):
+                async def _fetch_one(
+                    ctx: str,
+                ) -> tuple[str, str, dict[str, Any] | None]:
                     try:
                         async with self._session.get(
                             TRIP_API_URL,
@@ -758,7 +760,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         params = dict(base_params)
         params["route"] = str(train_number)
 
-        async def _try(url: str, q: dict):
+        async def _try(url: str, q: dict[str, Any]) -> dict[str, Any] | None:
             try:
                 async with async_timeout.timeout(15):
                     async with self._session.get(
