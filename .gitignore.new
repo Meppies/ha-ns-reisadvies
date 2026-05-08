@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# mypy
+.mypy_cache/
+
+# pytest
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/

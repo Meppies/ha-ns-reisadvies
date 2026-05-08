@@ -4,6 +4,44 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.1] — 2026-05-08
+
+### Added
+- **CI workflows.** Two new GitHub Actions workflows in
+  `.github/workflows/`:
+  - `test.yml` — runs the pytest suite with coverage on Python 3.12
+    and 3.13 on every push and pull request.
+  - `strict-typing.yml` — runs `mypy` (strict mode, configured in
+    `pyproject.toml`) on the integration package on every push and
+    pull request.
+
+### Fixed
+- **mypy --strict is now actually clean.** v2.12.0 declared
+  `strict-typing` as `done` based on an AST walk verifying every
+  function had explicit annotations. Running `mypy --strict` end-to-
+  end revealed 57 unresolved errors. v2.13.1 fixes them all:
+  - 26 untyped `dict` annotations — now `dict[str, Any]` everywhere
+  - `_fetch_one` return-type tuple shape corrected
+  - `_try` (live-vehicle helper) return-type was wrong (declared
+    `dict | None`, actually returned `tuple[int, str, Any]`); now
+    typed correctly so `data` from the unpack is no longer `None`-
+    typed
+  - `tracked_ctx` renamed to break a type-narrowing collision with
+    the `ctx` from the favourites-fetch loop
+  - `NSConfigEntry` switched to a proper `TypeAlias` so it's
+    accepted as a type, not as a runtime value
+  - `Any` import added to `types.py`
+  - implicit-Any returns made explicit in
+    `NSReisadviesSensor.native_value`, `_live_sessions` and
+    `async_unload_entry`
+  - `pyproject.toml` `[tool.mypy]` now configures strict mode
+    integration-wide and suppresses three error codes that are pure
+    HA-typing-stub fallout (`misc`, `untyped-decorator`,
+    `call-arg`), with a documented reason
+
+The Platinum `strict-typing` rule is now backed by a green
+`mypy --strict` run rather than just AST-verified annotations.
+
 ## [2.13.0] — 2026-05-08
 
 ### Fixed

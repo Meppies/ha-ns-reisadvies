@@ -1,0 +1,42 @@
+name: Strict typing
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mypy:
+    name: mypy --strict
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install the same HA stack the integration runs against, so
+          # mypy resolves real types for homeassistant.* imports.
+          pip install homeassistant aiohttp voluptuous mypy
+
+      - name: Run mypy on the integration package
+        # The Platinum quality-scale rule ``strict-typing`` requires
+        # the integration package to be mypy-strict clean. The
+        # configuration that mypy uses lives in ``pyproject.toml``
+        # (``[tool.mypy]`` section): strict mode is enabled there and
+        # error codes that are pure HA-typing-stub fallout
+        # (subclassing ``Any``-typed HA classes / HA decorators not
+        # being typed in the public ``homeassistant`` distribution)
+        # are suppressed there with a documented comment.
+        run: |
+          mypy --explicit-package-bases custom_components/ns_reisadvies

@@ -61,7 +61,7 @@ def _station_selector() -> SelectSelector:
 
 
 def _validate_route(
-    user_input: dict,
+    user_input: dict[str, Any],
     existing_routes: list[tuple[str, str]],
 ) -> dict[str, str]:
     """Return per-field validation errors for a route subentry."""
@@ -298,7 +298,7 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 )
 
         # Pre-fill bij reconfigure
-        defaults: dict = {}
+        defaults: dict[str, Any] = {}
         if reconfigure:
             try:
                 sub = self._get_reconfigure_subentry()  # type: ignore[attr-defined]

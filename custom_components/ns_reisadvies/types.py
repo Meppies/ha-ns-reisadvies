@@ -7,7 +7,7 @@ not in ``hass.data[DOMAIN][entry_id]``).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 
@@ -34,10 +34,10 @@ class NSRuntimeData:
     live_map_refresh_seconds: int = 10
 
     # /v2/stations response, cached per-HA-boot. {code: {name, lat, lng}}
-    stations_geo: dict[str, dict] | None = None
+    stations_geo: dict[str, dict[str, Any]] | None = None
 
     # Active live-train-map WebSocket sessions. Keyed by session_id.
-    live_sessions: dict[str, dict] = field(default_factory=dict)
+    live_sessions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     # One-shot guards: True after the corresponding registration ran in
     # this HA process. Survives reloads of this entry because
@@ -50,5 +50,8 @@ class NSRuntimeData:
 
 # Aliased ConfigEntry that exposes ``runtime_data`` typed as
 # ``NSRuntimeData``. HA's ConfigEntry is generic; integrations type their
-# runtime_data via an alias for full mypy support.
-NSConfigEntry = ConfigEntry[NSRuntimeData]
+# runtime_data via an alias for full mypy support. Annotated as
+# ``TypeAlias`` so mypy --strict treats it as a type, not a runtime value.
+from typing import TypeAlias  # noqa: E402
+
+NSConfigEntry: TypeAlias = ConfigEntry[NSRuntimeData]

@@ -109,7 +109,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         # Train composition cache: train_number -> dict (per refresh).
         # Cleared at the start of each _async_update_data run so that
         # the same train fetched twice in one refresh hits the cache.
-        self._composition_cache: dict[str, dict | None] = {}
+        self._composition_cache: dict[str, dict[str, Any] | None] = {}
         # Whether the first composition error of the current refresh has
         # already been logged at warning level. Reset per refresh.
         self._composition_warned: bool = False
@@ -187,7 +187,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
 
     # ---- composition (train carriages) ----
 
-    async def _fetch_journey_composition(self, train_number: str, headers: dict) -> dict | None:
+    async def _fetch_journey_composition(self, train_number: str, headers: dict[str, Any]) -> dict[str, Any] | None:
         """Fetch carriage composition for a single train number.
 
         Returns a slim dict suitable for the sensor attributes:
@@ -280,7 +280,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         self._composition_cache[train_number] = slim
         return slim
 
-    async def _annotate_compositions(self, all_trips: list[dict], headers: dict) -> None:
+    async def _annotate_compositions(self, all_trips: list[dict[str, Any]], headers: dict[str, Any]) -> None:
         """Add a `composition` field to every leg with a known train number."""
         if not self.fetch_composition:
             return
@@ -385,7 +385,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
 
                 # 2) Pinned favourites — fetched in parallel.
                 # Trips that the API no longer recognises (400/404) are pruned.
-                tracked_trips_data: list[dict] = []
+                tracked_trips_data: list[dict[str, Any]] = []
                 trips_to_remove: set[str] = set()
 
                 async def _fetch_one(
@@ -427,8 +427,8 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
                 }
                 all_trips = list(normal_trips)
                 for tracked_trip in tracked_trips_data:
-                    ctx = tracked_trip.get("ctxRecon")
-                    if ctx and ctx not in normal_ctx_recons:
+                    tracked_ctx = tracked_trip.get("ctxRecon")
+                    if tracked_ctx and tracked_ctx not in normal_ctx_recons:
                         all_trips.append(tracked_trip)
 
                 all_trips.sort(
@@ -458,15 +458,14 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
     # stations geo lookup is cached on the hub's runtime_data so it is
     # fetched at most once per integration setup.
 
-    async def async_fetch_stations_geo(self) -> dict[str, dict]:
+    async def async_fetch_stations_geo(self) -> dict[str, dict[str, Any]]:
         """Return a {code: {name, lat, lng}} map. Cached on runtime_data."""
-        runtime = (
-            getattr(self._entry, "runtime_data", None)
-            if self._entry is not None
-            else None
-        )
+        runtime: Any = None
+        if self._entry is not None:
+            runtime = getattr(self._entry, "runtime_data", None)
         if runtime is not None and runtime.stations_geo:
-            return runtime.stations_geo
+            cached: dict[str, dict[str, Any]] = runtime.stations_geo
+            return cached
         if not self.api_key:
             return {}
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
@@ -483,7 +482,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("Stations API unreachable: %s", err)
             return {}
 
-        out: dict[str, dict] = {}
+        out: dict[str, dict[str, Any]] = {}
         # /v2/stations payload shape: {"payload": [ {code, UICCode, namen:{lang,middel,kort}, land, lat, lng, ...}, ... ]}
         # We index by NS short code AND UIC code so callers can look up
         # stops returned by /v3/trips (uicCode) or /v2/journey (stationCode).
@@ -509,14 +508,14 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         _LOGGER.debug("Stations geo cache: %d entries (code+UIC)", len(out))
         return out
 
-    async def async_fetch_full_rail_network(self) -> dict | None:
+    async def async_fetch_full_rail_network(self) -> dict[str, Any] | None:
         """Download every ProRail Spoorbaanhartlijn feature in NL.
 
         Returns a GeoJSON FeatureCollection or None on hard failure.
         Pages through the FeatureServer in chunks of 2000 — the server
         caps each request to that size — until exhausted.
         """
-        features: list[dict] = []
+        features: list[dict[str, Any]] = []
         offset = 0
         page_size = 2000
         max_pages = 20  # safety cap (~40 000 features)
@@ -563,7 +562,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         )
         return {"type": "FeatureCollection", "features": features}
 
-    async def async_fetch_arcgis_position(self, train_number: str) -> dict | None:
+    async def async_fetch_arcgis_position(self, train_number: str) -> dict[str, Any] | None:
         """Live train GPS via ProRail's public ArcGIS NS_treinlocaties.
 
         Returns smooth lat/lng + speed (km/h) + heading (degrees) +
@@ -620,7 +619,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
             "source": "prorail-obis",
         }
 
-    async def async_fetch_journey_route(self, train_number: str) -> list[dict]:
+    async def async_fetch_journey_route(self, train_number: str) -> list[dict[str, Any]]:
         """Return the FULL list of stops the given train makes today.
 
         Each stop includes name + lat/lng + a `passed` flag so the card
@@ -652,7 +651,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
 
-        def _passed(stop: dict) -> bool:
+        def _passed(stop: dict[str, Any]) -> bool:
             # Trust an explicit status value first.
             status = (stop.get("status") or "").upper()
             if status in {"PASSED", "PASSING_PASSED", "DEPARTED"}:
@@ -684,7 +683,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         # foreign or recently renamed stations).
         by_name = {v["name"].casefold(): v for v in geo.values()}
 
-        out: list[dict] = []
+        out: list[dict[str, Any]] = []
         unresolved: list[str] = []
         for stop in stops_raw:
             station = stop.get("station") or {}
@@ -725,7 +724,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
 
     async def async_fetch_live_train(
         self, train_number: str, anchor_iso: str | None = None
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Return the live GPS position for a single train.
 
         Primary: /virtual-train-api/vehicle?route=<ritnummer> — the same
@@ -760,7 +759,10 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
         params = dict(base_params)
         params["route"] = str(train_number)
 
-        async def _try(url: str, q: dict[str, Any]) -> dict[str, Any] | None:
+        async def _try(
+            url: str, q: dict[str, Any]
+        ) -> tuple[int, str, Any]:
+            """Return (status, body-or-error-text, parsed-json-or-None)."""
             try:
                 async with async_timeout.timeout(15):
                     async with self._session.get(
@@ -898,7 +900,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator):
 
     async def _async_station_based_position(
         self, train_number: str, anchor_iso: str | None = None,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Fallback: derive a position from the train's current station
         via /v1/trein/{nr} (composition endpoint) + cached /v2/stations.
 

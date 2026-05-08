@@ -6,3 +6,10 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Tooling caches
+.mypy_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/

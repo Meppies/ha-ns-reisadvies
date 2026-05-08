@@ -162,9 +162,10 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
         """Return the planned departure of the next trip, or a placeholder."""
         if self.coordinator.data:
             try:
-                return self.coordinator.data[0]["legs"][0]["origin"][
+                value = self.coordinator.data[0]["legs"][0]["origin"][
                     "plannedDateTime"
                 ]
+                return str(value) if value else "Data available"
             except (KeyError, IndexError, TypeError):
                 return "Data available"
         return "No trips"

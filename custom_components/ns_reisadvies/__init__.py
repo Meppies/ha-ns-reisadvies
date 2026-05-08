@@ -467,7 +467,7 @@ def _runtime(hass: HomeAssistant) -> NSRuntimeData | None:
     return getattr(entry, "runtime_data", None)
 
 
-def _live_sessions(hass: HomeAssistant) -> dict[str, dict]:
+def _live_sessions(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
     """Return the per-HA live-train-map session map.
 
     Backed by ``entry.runtime_data.live_sessions`` so it is torn down on
@@ -477,7 +477,10 @@ def _live_sessions(hass: HomeAssistant) -> dict[str, dict]:
     runtime = _runtime(hass)
     if runtime is not None:
         return runtime.live_sessions
-    return hass.data.setdefault(DOMAIN, {}).setdefault("_live_sessions", {})
+    fallback: dict[str, dict[str, Any]] = (
+        hass.data.setdefault(DOMAIN, {}).setdefault("_live_sessions", {})
+    )
+    return fallback
 
 
 def _any_coordinator(hass: HomeAssistant) -> NSUpdateCoordinator | None:
@@ -490,7 +493,7 @@ def _any_coordinator(hass: HomeAssistant) -> NSUpdateCoordinator | None:
     return None
 
 
-def _resolve_stops(stops: list[dict], geo: dict[str, dict]) -> list[dict]:
+def _resolve_stops(stops: list[dict[str, Any]], geo: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     """Normalise the stop list the card sent, falling back to the
     /v2/stations geo cache only when the stop did not include lat/lng.
 
@@ -515,7 +518,7 @@ def _resolve_stops(stops: list[dict], geo: dict[str, dict]) -> list[dict]:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed < now
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for s in stops or []:
         name = (s.get("name") or "").strip()
         uic = (s.get("uicCode") or s.get("code") or "").upper()
@@ -545,7 +548,7 @@ def _resolve_stops(stops: list[dict], geo: dict[str, dict]) -> list[dict]:
 
 
 def _set_train_state(
-    hass: HomeAssistant, entity_id: str, friendly_name: str, pos: dict
+    hass: HomeAssistant, entity_id: str, friendly_name: str, pos: dict[str, Any]
 ) -> None:
     """Write a transient state representing the train's live position."""
     hass.states.async_set(
@@ -630,7 +633,7 @@ def _arm_cleanup(hass: HomeAssistant, session_id: str, seconds: int = 600) -> No
 )
 @websocket_api.async_response
 async def _ws_track_train_start(
-    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
     coord = _any_coordinator(hass)
     if coord is None:
@@ -638,7 +641,7 @@ async def _ws_track_train_start(
         return
 
     train_number = str(msg["train_number"])
-    raw_stops: list[dict] = msg.get("stops") or []
+    raw_stops: list[dict[str, Any]] = msg.get("stops") or []
     anchor_iso: str | None = msg.get("anchor") or None
 
     geo = await coord.async_fetch_stations_geo()
@@ -720,7 +723,7 @@ async def _ws_track_train_start(
 )
 @websocket_api.async_response
 async def _ws_track_train_poll(
-    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
     sessions = _live_sessions(hass)
     sess = sessions.get(msg["session_id"])
@@ -754,7 +757,7 @@ async def _ws_track_train_poll(
 )
 @callback
 def _ws_track_train_stop(
-    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
 ) -> None:
     _cleanup_session(hass, msg["session_id"])
     connection.send_result(msg["id"], {"ok": True})
@@ -896,4 +899,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
     the HA process and re-registering on every reload would either
     error or leak listeners.
     """
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok: bool = await hass.config_entries.async_unload_platforms(
+        entry, PLATFORMS,
+    )
+    return unload_ok
