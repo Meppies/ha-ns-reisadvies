@@ -140,6 +140,19 @@
     },
     "api_unreachable": {
       "message": "Could not reach the NS API: {error}."
+    },
+    "empty_ctx_recon": {
+      "message": "ctx_recon must be a non-empty string."
+    },
+    "coordinator_unavailable": {
+      "message": "The NS Reisadvies coordinator is not ready. Try again once the integration has finished loading."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "trips": {
+        "name": "Trips"
+      }
     }
   }
 }

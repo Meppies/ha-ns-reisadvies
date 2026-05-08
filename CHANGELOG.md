@@ -4,6 +4,50 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0] — 2026-05-08
+
+### Added
+- **`diagnostics.py`.** Settings → Devices & services → NS Reisadvies →
+  ⋮ → Download diagnostics now produces a redacted JSON dump
+  containing the entry shape, options, per-route coordinator status,
+  trip count, last-update success/failure and the first trip in
+  redacted form. The API key and `ctxRecon` identifiers are stripped
+  out. Gold rule `diagnostics`.
+- **`icons.json`.** Sensors render with `mdi:train` by default via
+  the `translation_key=trips` mapping, so existing instances pick up
+  the icon without requiring per-entity `_attr_icon` overrides. Gold
+  rule `icon-translations`.
+- **Translatable exceptions.** `track_trip` / `untrack_trip` raise
+  `ServiceValidationError` with `translation_domain=ns_reisadvies` +
+  `translation_key=empty_ctx_recon` / `coordinator_unavailable`,
+  with corresponding messages declared in `strings.json`. Gold rule
+  `exception-translations`.
+- **Entity translations.** Sensor declares
+  `_attr_translation_key = "trips"` and `strings.json` has an
+  `entity.sensor.trips.name` entry. The user-visible friendly name
+  still comes from the route's `DeviceInfo` (so it stays "Hilversum →
+  Duivendrecht"); the translation_key drives icon mapping and the
+  entity-registry's `translation_key` field. Gold rule
+  `entity-translations`.
+
+### Changed
+- **README expanded.** Five new sections aligned with the Gold doc
+  rules: `Supported functions`, `Use cases`, `Known limitations`,
+  `Troubleshooting` (with the new diagnostics dump call-out), and
+  `How data is updated`. Plus an `Examples` section with two
+  copy-pastable automation snippets.
+
+### Notes
+- Repair issues (Gold rule `repair-issues`) are marked exempt. The
+  one user-fixable error class (NS API key revoked / rotated) is
+  already handled by the Silver-tier reauth flow that opens a UI
+  prompt automatically. Other failures are non-actionable for the
+  user and surfaced via edge-detection log messages instead.
+- After v2.11.0 only Platinum-tier rules remain on the checklist:
+  `strict-typing` (full mypy `--strict` clean) and verification of
+  `inject-websession` everywhere. Plus the deferred `test-coverage`
+  > 95 % bar.
+
 ## [2.10.0] — 2026-05-08
 
 ### Added

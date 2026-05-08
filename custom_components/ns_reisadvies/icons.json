@@ -1,0 +1,9 @@
+{
+  "entity": {
+    "sensor": {
+      "trips": {
+        "default": "mdi:train"
+      }
+    }
+  }
+}

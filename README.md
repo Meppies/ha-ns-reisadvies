@@ -141,14 +141,167 @@ options (set via the visual editor or YAML):
 
 Both are entity-services; target a `sensor.ns_*` entity.
 
+## Supported functions
+
+Each route (subentry) under the hub creates exactly one entity:
+
+- **`sensor.ns_<from>_<to>`** — primary entity. State is the planned
+  departure of the next upcoming trip; `extra_state_attributes`
+  carries the full trips list (for the card), the list of pinned
+  favourites, and the hub-wide `live_train_map_enabled` /
+  `live_map_refresh_seconds` flags.
+
+The integration also exposes:
+
+- **`ns_reisadvies.track_trip`** and **`ns_reisadvies.untrack_trip`**
+  service actions to pin / unpin a trip by `ctx_recon`. Used by the
+  Lovelace card's heart icon — you usually do not call these
+  directly.
+- **WebSocket commands** `ns_reisadvies/track_train_{start,poll,stop}`
+  used by the live train map modal to fetch the GPS position of a
+  specific train on demand (only while the modal is open).
+
+## Use cases
+
+- **Daily commute display** — pin one or two routes on a wall-mounted
+  HA dashboard so you see the next trains plus their delays at a
+  glance, without opening the NS app.
+- **"Time to leave" automation** — trigger a TTS notification a few
+  minutes before your usual train departs, scaling the warning by the
+  current delay value (so you get extra heads-up when the train is
+  late).
+- **Live train map for kids** — pair the live-map icon with a tablet
+  in the hallway so children can see the train approaching on a real
+  rail map before you head out the door.
+- **Travel-cost reporting** — combine the `Total travel time` and
+  `total km` attributes with HA statistics to track how much time
+  you actually spend on rails per week or per month.
+
+## Known limitations
+
+- **Live-map GPS is OBIS-only.** The live train map uses ProRail's
+  public `NS_treinlocaties` feed (the same source `treinposities.nl`
+  uses). Trains operated by DB ICE, NMBS or Eurostar across foreign
+  routes are not on this feed; the live-map icon is hidden for those
+  legs.
+- **Composition data has gaps.** Some trains do not appear in the
+  `/v2/journey` endpoint (typically older NS rolling-stock or trains
+  outside the active timetable window). The integration logs one
+  warning the first time and falls back gracefully — the trip itself
+  still renders without the carriage breakdown.
+- **Trips list is not persisted by Recorder.** Per-trip details are
+  exposed via `extra_state_attributes` for the Lovelace card, but
+  the JSON blob exceeds Recorder's 16 384-byte limit and Recorder
+  drops it. State history (`sensor.ns_*` itself) is recorded
+  normally; only the rich attribute history is dropped.
+- **NS API quota.** The free `Ns-App` subscription limits requests
+  per minute. Default poll cadence (5 min) is well within the limit
+  for a reasonable number of routes; very aggressive intervals
+  combined with many routes plus `fetch_composition: true` can hit
+  the cap.
+
+## Troubleshooting
+
+- **"Configuration error" on the card after a Home Assistant
+  update** — usually means the Lovelace resource path was lost. Try
+  *Settings → Devices & services → NS Reisadvies → ⋮ → Reload*. If
+  that doesn't help, manually re-register the resource:
+  *Settings → Dashboards → Resources → Add resource*, URL
+  `/ns_reisadvies/ns-reisadvies-card.js?v=2.11.0`, type "JavaScript
+  Module".
+- **Sensor goes unavailable repeatedly** — check
+  *Settings → System → Logs* for `ns_reisadvies` warnings. The
+  coordinator logs the first failure and the recovery only (Silver
+  rule), so a long sequence of `unavailable` log lines means NS is
+  actually returning errors. Verify your API key on
+  <https://apiportal.ns.nl/> and try the reauth flow if the key was
+  rotated.
+- **Reauth dialog appears unexpectedly** — Home Assistant opens it
+  whenever NS returns HTTP 401/403. Paste a fresh key from
+  apiportal.ns.nl into the dialog; it is verified with a real probe
+  before being saved.
+- **Live-map icon is missing on some legs** — the operator runs on a
+  network that's not in ProRail's OBIS feed (DB ICE, NMBS, Eurostar).
+  Expected behaviour, not a bug.
+- **Train composition images do not load** — the most likely cause
+  is that the NS API key does not have the `Reisinformatie API
+  v2/v3` subscription beyond the standard `Ns-App` tier. Either
+  enable the relevant subscription on `apiportal.ns.nl` or turn off
+  *Fetch train composition* in the integration options.
+
+For everything else, attach the integration's *Diagnostics* dump to
+your bug report (*Settings → Devices & services → NS Reisadvies →
+⋮ → Download diagnostics*). The dump redacts the API key and the
+opaque `ctxRecon` identifiers.
+
+## Examples
+
+A "leaving in 5 minutes" notification driven by the next departure:
+
+```yaml
+automation:
+  - alias: "Warn me 5 min before my morning train"
+    trigger:
+      - platform: template
+        value_template: >-
+          {% set next = state_attr('sensor.ns_hilversum_duivendrecht', 'trips')[0] %}
+          {% set planned = next.legs[0].origin.plannedDateTime %}
+          {{ as_timestamp(planned) - as_timestamp(now()) | int < 300 }}
+    condition:
+      - condition: time
+        weekday: [mon, tue, wed, thu, fri]
+        after: '06:30:00'
+        before: '09:30:00'
+    action:
+      - service: notify.mobile_app_phone
+        data:
+          title: "Train leaves in 5 min"
+          message: >-
+            {% set t = state_attr('sensor.ns_hilversum_duivendrecht', 'trips')[0] %}
+            Platform {{ t.legs[0].origin.actualTrack or t.legs[0].origin.plannedTrack }},
+            delay {{ t.legs[0].origin.actualDateTime != t.legs[0].origin.plannedDateTime }}
+```
+
+Pin a trip from a script (the same call the heart icon makes):
+
+```yaml
+script:
+  pin_my_morning_trip:
+    sequence:
+      - service: ns_reisadvies.track_trip
+        target:
+          entity_id: sensor.ns_hilversum_duivendrecht
+        data:
+          ctx_recon: "VXJpY2..."
+```
+
+## How data is updated
+
+- A `DataUpdateCoordinator` per route polls the NS travel-advice API
+  every `scan_interval_minuten` minutes (default 5, range 1 – 60).
+  Each coordinator fetches `/v3/trips`, then per-pinned-favourite
+  `/v3/trips/trip` calls in parallel, optionally followed by
+  `/v2/journey` for carriage composition.
+- The stations geo cache (`/v2/stations`) is fetched at most once per
+  Home Assistant boot, on demand from the live train map.
+- The full NL rail network (`ProRail Spoorbaanhartlijn`) is cached
+  weekly to disk under `custom_components/ns_reisadvies/www/rail.geojson`
+  and served via the integration's static path so the Lovelace card
+  can render it as a base layer without re-downloading.
+- Live train GPS is polled only while the live-map modal is open, at
+  `live_map_refresh_seconds` cadence (default 10 s, range 5 – 60).
+- On transient NS API failures the coordinator logs **once** when it
+  flips to unavailable and **once** when it recovers. Sensors flip to
+  `unavailable` while the coordinator is failing, then flip back.
+
 ## Quality
 
 This integration declares
 [`quality_scale: platinum`](https://developers.home-assistant.io/docs/core/integration-quality-scale)
-in the manifest. That covers, among other things, full async,
-DataUpdateCoordinator-based polling, graceful degradation on transient
-NS API outages, type-hinted Python, automated test coverage of the
-config flow + sensor + migration, and entity-translation strings.
+in the manifest. The actual rule-by-rule status lives in
+[`quality_scale.yaml`](custom_components/ns_reisadvies/quality_scale.yaml)
+in the integration root and is kept honest as work progresses
+(`done` / `todo` / `exempt` with reasons).
 
 ## Data sources
 

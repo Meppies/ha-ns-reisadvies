@@ -64,7 +64,7 @@ rules:
 
   # ---- Gold -----------------------------------------------------------
   devices: done
-  diagnostics: todo
+  diagnostics: done
   discovery-update-info:
     status: exempt
     comment: Cloud polling integration — no local discovery to update.
@@ -73,17 +73,17 @@ rules:
     comment: >-
       NS Reisadvies polls a cloud API; there is nothing on the local
       network to discover.
-  docs-data-update: todo
-  docs-examples: todo
-  docs-known-limitations: todo
+  docs-data-update: done
+  docs-examples: done
+  docs-known-limitations: done
   docs-supported-devices:
     status: exempt
     comment: >-
       The integration does not pair with physical devices; it exposes
       one sensor per configured route.
-  docs-supported-functions: todo
-  docs-troubleshooting: todo
-  docs-use-cases: todo
+  docs-supported-functions: done
+  docs-troubleshooting: done
+  docs-use-cases: done
   dynamic-devices:
     status: exempt
     comment: >-
@@ -109,11 +109,19 @@ rules:
     comment: >-
       One entity per user-configured route — none of them are
       noisy or niche enough to default-disable.
-  entity-translations: todo
-  exception-translations: todo
-  icon-translations: todo
+  entity-translations: done
+  exception-translations: done
+  icon-translations: done
   reconfiguration-flow: done
-  repair-issues: todo
+  repair-issues:
+    status: exempt
+    comment: >-
+      The main user-fixable issue (NS API key revoked / rotated) is
+      already handled by the Silver-tier reauthentication flow which
+      surfaces a UI prompt automatically. Other errors (composition
+      404s, transient NS API outages) are non-actionable for the
+      user and are surfaced via edge-detection log messages rather
+      than as Repair issues.
   stale-devices:
     status: exempt
     comment: >-

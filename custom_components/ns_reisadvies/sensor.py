@@ -109,11 +109,16 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
 
     _attr_should_poll = False
     _attr_has_entity_name = True
-    # No translation_key + no _attr_name is the canonical "use the
-    # device name verbatim as the entity friendly name" pattern when
-    # has_entity_name=True. The friendly name a user sees is therefore
-    # exactly the route name (e.g. "Hilversum → Duivendrecht").
+    # No _attr_name is the canonical "use the device name verbatim as
+    # the entity friendly name" pattern when ``has_entity_name=True``.
+    # The friendly name a user sees is therefore exactly the route
+    # name (e.g. "Hilversum → Duivendrecht").
     _attr_name = None
+    # ``translation_key`` is set so ``icons.json`` can map the entity
+    # to ``mdi:train`` and so the entity is groupable for the Gold
+    # ``entity-translations`` rule. The user-visible name still comes
+    # from the device, not from translations.
+    _attr_translation_key = "trips"
 
     def __init__(
         self,
@@ -194,14 +199,20 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
         Silver quality-scale rule ``action-exceptions``: surface
         validation failures via ``ServiceValidationError`` so HA shows
         a clean message in the UI instead of silently no-opping.
+
+        Gold rule ``exception-translations``: the error is raised with
+        a translation key (declared in ``strings.json`` under
+        ``exceptions``) so the message can be localised by HA.
         """
         if not ctx_recon or not str(ctx_recon).strip():
             raise ServiceValidationError(
-                "ctx_recon must be a non-empty string"
+                translation_domain=DOMAIN,
+                translation_key="empty_ctx_recon",
             )
         if not hasattr(self.coordinator, "track_trip"):
             raise ServiceValidationError(
-                "Coordinator does not support track_trip"
+                translation_domain=DOMAIN,
+                translation_key="coordinator_unavailable",
             )
         self.coordinator.track_trip(ctx_recon)
         self.async_write_ha_state()
@@ -210,11 +221,13 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
         """Unpin a previously favourited trip."""
         if not ctx_recon or not str(ctx_recon).strip():
             raise ServiceValidationError(
-                "ctx_recon must be a non-empty string"
+                translation_domain=DOMAIN,
+                translation_key="empty_ctx_recon",
             )
         if not hasattr(self.coordinator, "untrack_trip"):
             raise ServiceValidationError(
-                "Coordinator does not support untrack_trip"
+                translation_domain=DOMAIN,
+                translation_key="coordinator_unavailable",
             )
         self.coordinator.untrack_trip(ctx_recon)
         self.async_write_ha_state()
