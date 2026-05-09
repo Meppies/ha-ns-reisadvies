@@ -1374,14 +1374,27 @@ class NSReisadviesCard extends HTMLElement {
   _renderRailLayerInto(map) {
     const r = NSReisadviesCard._railResult;
     if (!r || !r.railPolylines || !r.railPolylines.length) return null;
+    // v2.15.3: render the grey rail base into its own dedicated pane.
+    // Earlier versions called layer.addTo(map).bringToBack() in one
+    // tick, which crashes in Leaflet 1.9.x with
+    // "Cannot read properties of undefined (reading 'parentNode')"
+    // when the SVG renderer hasn't attached the parent yet. Using a
+    // pane with a z-index below overlayPane (400) keeps the rail layer
+    // visually under the colored route without needing bringToBack().
+    const PANE_NAME = "ns_rail_base";
+    if (!map.getPane(PANE_NAME)) {
+      map.createPane(PANE_NAME);
+      const pane = map.getPane(PANE_NAME);
+      if (pane) pane.style.zIndex = 250;
+    }
     const layer = window.L.polyline(r.railPolylines, {
       color: "#5a6a7a",
       weight: 1.6,
       opacity: 0.55,
       interactive: false,
+      pane: PANE_NAME,
     });
     layer.addTo(map);
-    layer.bringToBack();
     return layer;
   }
 
@@ -2139,7 +2152,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.7.3 ",
+  "%c NS-REISADVIES-CARD %c v2.15.3 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

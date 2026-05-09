@@ -4,6 +4,36 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.3] — 2026-05-09
+
+### Fixed — live train map black-screen / load timeout
+The live train map modal was opening empty (no basemap, no route, no
+train marker) and would hang for up to a minute. Live debugging via
+the browser console identified the root cause: **the grey rail base
+layer crashed on render** with a `TypeError: Cannot read properties of
+undefined (reading 'parentNode')` deep inside Leaflet 1.9.x's
+`bringToBack()`. The crash happened on the first `addTo(map)` →
+`bringToBack()` chain in the same event-loop tick: with the full NL
+rail-network polyline (~5 MB GeoJSON) the SVG renderer had not yet
+attached its parent container when `bringToBack` walked the DOM.
+Because the crash bubbled up through `_renderMapInto`, every line of
+code after it (colored route, train marker, position label) was
+silently skipped — explaining the empty modal and the missing yellow
+"already-passed" segment.
+
+Fix: render the rail base into a dedicated Leaflet
+`pane` (`ns_rail_base`) with `z-index: 250`. Stacking is now handled
+declaratively by the pane, so we no longer need `bringToBack()` and
+the timing race is gone. The colored route still renders on the
+default `overlayPane` (z-index 400), which keeps the visual order
+intact (rail base behind, colored route in front).
+
+Bonus: bumped the card's hardcoded console banner from `v2.7.3` to
+`v2.15.3` — it had been stuck since v2.7.3 and was misleading when
+debugging.
+
+No Python-side changes; tests / coverage / mypy unchanged.
+
 ## [2.15.2] — 2026-05-09
 
 ### Changed — full weekday names + configurable first day of week
