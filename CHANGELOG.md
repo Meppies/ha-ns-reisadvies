@@ -4,6 +4,23 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.4] — 2026-05-09
+
+### Fixed — live train map ReferenceError on render
+After the v2.15.3 pane fix exposed the rest of the render path,
+`_applyMapData` threw `ReferenceError: leg is not defined` because
+that helper was reading `leg.product.shortCategoryName` despite never
+receiving `leg` as a parameter. The earlier `parentNode` crash had
+been masking this latent bug.
+
+Fix: `_renderMapInto` now stashes `leg.product` on
+`this._activeMap.legProduct`, and `_applyMapData` reads from
+`ctx.legProduct?.shortCategoryName`. Polling and wall-clock
+interpolation already had `ctx` available, so they pick the change up
+for free.
+
+Also bumped the card's hardcoded console banner to `v2.15.4`.
+
 ## [2.15.3] — 2026-05-09
 
 ### Fixed — live train map black-screen / load timeout

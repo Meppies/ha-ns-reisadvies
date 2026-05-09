@@ -1221,6 +1221,11 @@ class NSReisadviesCard extends HTMLElement {
     // which keys on a non-unique ritnummer.
     this._activeMap.legStopsRaw = (Array.isArray(leg.stops) ? leg.stops : [])
       .filter(s => !s.passing);
+    // v2.15.4: store leg.product on the active-map context so
+    // _applyMapData (called repeatedly from polling + interpolation)
+    // can read shortCategoryName without needing leg in scope. The
+    // earlier parentNode crash hid this latent ReferenceError.
+    this._activeMap.legProduct = leg.product || null;
     // Prefer real GPS (ProRail OBIS via ArcGIS) when the backend
     // returns a position; fall back to wall-clock interpolation when
     // the ArcGIS feed has no recent fix for this train (briefly during
@@ -1703,7 +1708,7 @@ class NSReisadviesCard extends HTMLElement {
             <circle cx="56" cy="36" r="3.5" fill="#1c1c1c"/>
             <circle cx="70" cy="36" r="3.5" fill="#1c1c1c"/>
           </svg>`;
-        const cat = (trainPos.train_type || leg?.product?.shortCategoryName || "").toString().slice(0, 4);
+        const cat = (trainPos.train_type || ctx.legProduct?.shortCategoryName || "").toString().slice(0, 4);
         const icon = L.divIcon({
           className: "ns-leaflet-train-wrap",
           html: `<div class="ns-leaflet-train">${tile}<span class="ns-cat">${cat}</span></div>`,
@@ -2152,7 +2157,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.15.3 ",
+  "%c NS-REISADVIES-CARD %c v2.15.4 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
