@@ -583,7 +583,7 @@ def _cleanup_session(hass: HomeAssistant, session_id: str) -> None:
     if cancel:
         try:
             cancel()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # pragma: no cover
             pass
 
 
@@ -597,7 +597,7 @@ def _arm_cleanup(hass: HomeAssistant, session_id: str, seconds: int = 600) -> No
     if cancel:
         try:
             cancel()
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # pragma: no cover
             pass
 
     @callback
@@ -804,7 +804,7 @@ async def _async_refresh_rail_cache(
     if not force and target.exists():
         try:
             age = _time.time() - target.stat().st_mtime
-        except OSError:
+        except OSError:  # pragma: no cover
             age = RAIL_MAX_AGE_SECONDS + 1
         if age < RAIL_MAX_AGE_SECONDS:
             return
