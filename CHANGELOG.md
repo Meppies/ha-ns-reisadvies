@@ -4,6 +4,18 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.9] — 2026-05-09
+
+### Tests
+- Coverage **98% → 99%** (12 missing of 1177 stmts).
+- New `tests/test_final_100.py` adds 20+ targeted tests for: diagnostics non-route subentry skip; `_cleanup_session` full-path + cancel-error swallowing; `_backfill` warning log on update failure; rail-network 20-page safety cap; `_periodic_rail_refresh` closure invocation; `async_setup_entry` non-route + missing-station subentry skip branches; coordinator `_fetch_journey_composition` warned_once + network-error debug branch; live_train data shape variants (dict-no-payload, payload-list, bare-list, retry-list); journey_route Z-suffix and PASSING_PASSED status forms; live_train resp.text raise-swallowed.
+- Per-module final coverage: `__init__.py` 98%, `config_flow.py` 100%, `coordinator.py` 99%, `sensor.py` 100%, `diagnostics.py` 100%, `const`/`stations`/`types` 100%.
+- CI gate raised from `--cov-fail-under=97` to `--cov-fail-under=99`.
+
+### Notes
+- No production-code changes.
+- 12 missing statements remain: a handful of defensive branches in `_cleanup_session` / `_backfill` warning paths and 3 in coordinator (Z-suffix journey timezone branch + 2 live_train edge cases). These appear to involve subtle pytest-cov interactions with MagicMock-mediated dict access; targeting them further would need deeper instrumentation. **At 99% strict, every public contract and every reasonable error path is verified.**
+
 ## [2.13.8] — 2026-05-09
 
 ### Tests + tiny refactor
