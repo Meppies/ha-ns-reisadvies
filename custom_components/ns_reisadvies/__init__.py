@@ -814,13 +814,18 @@ async def _async_refresh_rail_cache(
     """
     www_dir = hass.config.path("custom_components/ns_reisadvies/www")
     target = Path(www_dir) / RAIL_FILE
-    if not force and target.exists():
+    if not force:
         try:
-            age = _time.time() - target.stat().st_mtime
-        except OSError:  # pragma: no cover
-            age = RAIL_MAX_AGE_SECONDS + 1
-        if age < RAIL_MAX_AGE_SECONDS:
-            return
+            target_exists = target.exists()
+        except OSError:
+            target_exists = False
+        if target_exists:
+            try:
+                age = _time.time() - target.stat().st_mtime
+            except OSError:  # pragma: no cover
+                age = RAIL_MAX_AGE_SECONDS + 1
+            if age < RAIL_MAX_AGE_SECONDS:
+                return
     data = await coord.async_fetch_full_rail_network()
     if not data:
         return

@@ -76,7 +76,7 @@ def test_parse_date_invalid_returns_none():
 # ---- coordinator constructor parses filter args -----------------------------
 
 
-def test_coordinator_stores_parsed_filter_fields(hass: HomeAssistant) -> None:
+async def test_coordinator_stores_parsed_filter_fields(hass: HomeAssistant) -> None:
     coord = _coord(
         hass,
         filter_days=[0, 2, 4],
@@ -90,14 +90,14 @@ def test_coordinator_stores_parsed_filter_fields(hass: HomeAssistant) -> None:
     assert coord.filter_date == date(2026, 12, 24)
 
 
-def test_coordinator_clamps_window_to_valid_range(hass: HomeAssistant) -> None:
+async def test_coordinator_clamps_window_to_valid_range(hass: HomeAssistant) -> None:
     coord = _coord(hass, filter_window_minutes=999)
     assert coord.filter_window_minutes == 360  # capped
     coord2 = _coord(hass, filter_window_minutes=-10)
     assert coord2.filter_window_minutes == 0  # floored
 
 
-def test_coordinator_filter_defaults_when_no_args(hass: HomeAssistant) -> None:
+async def test_coordinator_filter_defaults_when_no_args(hass: HomeAssistant) -> None:
     coord = _coord(hass)
     assert coord.filter_days == []
     assert coord.filter_time is None
@@ -105,7 +105,7 @@ def test_coordinator_filter_defaults_when_no_args(hass: HomeAssistant) -> None:
     assert coord.filter_date is None
 
 
-def test_coordinator_handles_invalid_filter_strings(hass: HomeAssistant) -> None:
+async def test_coordinator_handles_invalid_filter_strings(hass: HomeAssistant) -> None:
     coord = _coord(
         hass,
         filter_time="garbage",
