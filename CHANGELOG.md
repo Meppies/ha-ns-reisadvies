@@ -4,6 +4,19 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.7] — 2026-05-09
+
+### Tests
+- **Silver `test-coverage` > 95% bar achieved.** Coverage: **94% → 96%** (50 missing of 1173 stmts).
+- New `tests/test_sensor_setup.py` covers `sensor.async_setup_entry` end-to-end (sensor 95% → 100%).
+- New coordinator edge-case tests covering `async_fetch_live_train` empty-then-retry / no-match / lat-missing fallbacks, `async_fetch_journey_route` PASSING_PASSED status form, and `async_fetch_stations_geo` debug log line.
+- Per-module coverage: `__init__.py` 93%, `config_flow.py` 100%, `coordinator.py` 95%, `sensor.py` 100%, `diagnostics.py` 95%, `const`/`stations`/`types` 100%.
+- CI gate raised from `--cov-fail-under=90` to `--cov-fail-under=95`. The Platinum quality-scale claim in `manifest.json` is now backed by a satisfied test-coverage rule.
+
+### Notes
+- No production-code changes; manifest version bump only.
+- Final 50 missing statements concentrated in defensive logging branches and `__init__.py` static-path registration block. Closing them to 100% would need either real `hass.http` infrastructure or a small extract-helper refactor — deferred.
+
 ## [2.13.6] — 2026-05-09
 
 ### Tests

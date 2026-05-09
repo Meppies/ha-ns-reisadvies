@@ -425,3 +425,79 @@ async def test_update_data_tracked_trip_network_error_skipped(hass):
     out = await coord._async_update_data()
     # Tracked trip stays (skip != gone)
     assert "FAV1" in coord.tracked_trips
+
+
+async def test_live_train_empty_then_filter_off_also_empty_logs_warning(hass):
+    """vehicle URL returns empty, retry without filter also empty -> station-based fallback."""
+    coord = _make(hass)
+    coord._session = MagicMock()
+    # First call: route filter empty; retry: no filter, also empty; then station-based call returns empty too.
+    coord._session.get = MagicMock(side_effect=[
+        _resp(200, {"payload": {"treinen": []}}),
+        _resp(200, {"payload": {"treinen": []}}),
+        _resp(200, {"payload": {}}),  # station-based: no station_code -> None
+    ])
+    out = await coord.async_fetch_live_train("100")
+    assert out is None
+
+
+async def test_live_train_filter_no_match_multiple_vehicles(hass):
+    """Multiple vehicles, none match the route, none with single fallback -> station-based."""
+    coord = _make(hass)
+    payload = {"payload": {"treinen": [
+        {"route": "999", "lat": 52, "lng": 5},
+        {"route": "888", "lat": 52, "lng": 5},
+    ]}}
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(side_effect=[
+        _resp(200, payload),
+        _resp(200, {"payload": {}}),  # station-based: no station -> None
+    ])
+    out = await coord.async_fetch_live_train("100")
+    assert out is None
+
+
+async def test_live_train_match_has_no_lat_falls_back(hass):
+    """Match found by route but lat is None -> station-based fallback."""
+    coord = _make(hass)
+    payload = {"payload": {"treinen": [{"route": "100"}]}}  # No lat/lng
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(side_effect=[
+        _resp(200, payload),
+        _resp(200, {"payload": {}}),
+    ])
+    out = await coord.async_fetch_live_train("100")
+    assert out is None
+
+
+async def test_journey_route_with_status_passing_passed_flag(hass):
+    """Status PASSING_PASSED (extended status form) -> passed=True."""
+    coord = _make(hass)
+    coord._entry = None
+    payload = {"payload": {"stops": [
+        {"station": {"uicCode": "8400001", "stationCode": "AAA", "name": "Stop A"},
+         "status": "PASSING_PASSED"},
+    ]}}
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(side_effect=[
+        _resp(200, payload),
+        _resp(200, {"payload": [{"code": "AAA", "UICCode": "8400001", "namen": {"lang": "Stop A"}, "lat": 52.0, "lng": 4.0}]}),
+    ])
+    out = await coord.async_fetch_journey_route("100")
+    assert len(out) == 1
+    assert out[0]["passed"] is True
+
+
+async def test_stations_geo_logs_count(hass, caplog):
+    """Successful stations_geo logs entry count at debug level (line 507)."""
+    import logging
+    coord = _make(hass)
+    coord._entry = None
+    payload = {"payload": [
+        {"code": "AAA", "UICCode": "8400001", "namen": {"lang": "A"}, "lat": 52, "lng": 4},
+    ]}
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, payload))
+    caplog.set_level(logging.DEBUG, logger="custom_components.ns_reisadvies.coordinator")
+    await coord.async_fetch_stations_geo()
+    assert any("Stations geo cache" in (r.message or "") for r in caplog.records)
