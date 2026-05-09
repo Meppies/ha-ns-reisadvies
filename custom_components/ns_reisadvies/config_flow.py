@@ -409,7 +409,13 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                                 SelectOptionDict(value="5", label="Sat"),
                                 SelectOptionDict(value="6", label="Sun"),
                             ],
-                            mode=SelectSelectorMode.LIST,
+                            # Dropdown mode renders selected days as chips
+                            # that sit next to each other and wrap to a new
+                            # line once they overflow — much more compact
+                            # than the list-mode vertical checkbox stack on
+                            # narrow screens. Native horizontal checkbox-grid
+                            # mode is not (yet) available in HA selectors.
+                            mode=SelectSelectorMode.DROPDOWN,
                             multiple=True,
                             translation_key="filter_days",
                         ),

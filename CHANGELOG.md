@@ -4,6 +4,20 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.1] — 2026-05-09
+
+### Changed — compacter dagen-selector
+- The *Days of the week* filter now uses a dropdown multi-select
+  (`SelectSelectorMode.DROPDOWN` + `multiple=True`) instead of a
+  vertical list of checkboxes. Selected days appear as chips that sit
+  next to each other and wrap to a new line once they overflow —
+  noticeably more compact on narrow screens. Underlying value shape
+  unchanged (still a list of weekday strings); existing routes keep
+  their saved selection.
+
+No behavioural changes outside the form rendering. Coverage gate stays
+at 100%.
+
 ## [2.15.0] — 2026-05-09
 
 ### Added — optional route name
