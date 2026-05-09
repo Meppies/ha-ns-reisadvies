@@ -4,6 +4,61 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.0] — 2026-05-09
+
+### Added — optional route name
+Each route (subentry) now carries an optional **name** field. When set:
+
+- The sensor's friendly name becomes that name (e.g. *Werk*) instead
+  of *Hilversum → Duivendrecht*.
+- The entity_id slug is derived from the name
+  (`sensor.ns_werk` instead of `sensor.ns_hilversum_duivendrecht`).
+- **Multiple routes between the same stations** are allowed as long
+  as their names differ. This unlocks combining one route per filter
+  (e.g. a *Werk* route on Mon–Fri 08:00 ±60 min, plus a *Weekend*
+  route on the same stations with no filter).
+
+Leaving the field blank keeps v2.13.x / v2.14.x behaviour byte-for-byte
+— same friendly name, same entity_id, same unique_id.
+
+### Implementation
+- New constant `CONF_ROUTE_NAME` in `const.py`.
+- `config_flow.py`: optional `TextSelector` field above the stations on
+  both the *Add a route* and *Reconfigure route* steps. Title and
+  unique_id derive from the name when supplied
+  (`f"{from}_{to}_{slug(name)}"` instead of `f"{from}_{to}"`).
+- `_validate_route` duplicate-check now compares on `(from, to, name)`,
+  so two unnamed routes between the same stations still collide while
+  *Werk* and *Weekend* between the same stations do not.
+- `sensor.py`: `NSReisadviesSensor` accepts an optional `route_name`,
+  uses it for `DeviceInfo.name` (which doubles as the entity friendly
+  name when `has_entity_name=True`), and surfaces `route_name`,
+  `from_station`, `to_station` as state attributes for the Lovelace
+  card.
+- `ns-reisadvies-card.js`: when a route has a custom name, the card
+  renders a per-route heading (large name + small *<from> → <to>*
+  subtitle) above the trips. Unnamed routes keep their existing layout.
+
+### Tests
+- New `tests/test_subentry_flow_route_name.py`: title + unique_id
+  derivation with/without name, slugification of special characters,
+  reconfigure pre-fill, two named routes between the same stations
+  both succeeding.
+- New `tests/test_sensor_route_name.py`: `DeviceInfo.name`,
+  `_route_name`, and `extra_state_attributes` exposure.
+- `tests/test_config_flow_validate.py`: duplicate-check now exercises
+  the `(from, to, name)` triple — same stations + different names
+  passes, same stations + same name (case-insensitive) fails.
+- `tests/test_sensor_setup.py`: extra happy path covering the named
+  branch in `async_setup_entry`.
+- Coverage gate stays at `--cov-fail-under=100`.
+
+### Docs
+- README: new *Optional route name (v2.15.0)* subsection under
+  *Per-route configuration*; *Use cases* mentions the multiple-variants
+  pattern; *Supported functions* updated to describe the
+  `sensor.ns_<slug>` shape and the new state attributes.
+
 ## [2.14.2] — 2026-05-09
 
 ### Changed — collapsible filter section with header

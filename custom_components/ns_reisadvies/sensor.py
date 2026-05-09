@@ -37,6 +37,7 @@ from homeassistant.util import slugify
 
 from .const import (
     CONF_FROM_STATION,
+    CONF_ROUTE_NAME,
     CONF_TO_STATION,
     DOMAIN,
     SUBENTRY_TYPE_ROUTE,
@@ -72,16 +73,26 @@ async def async_setup_entry(
             continue
         from_st = subentry.data.get(CONF_FROM_STATION) or "?"
         to_st = subentry.data.get(CONF_TO_STATION) or "?"
-        unique_id = f"{from_st}_{to_st}".lower()
-        # Suggested entity_id slug: ns_<from>_<to> with HA slugify (handles
-        # spaces, diacritics). Existing entities keep their registry
-        # entity_id; this only kicks in for newly registered routes.
-        suggested = f"ns_{slugify(from_st)}_{slugify(to_st)}"
+        # Custom route name (v2.15.0) — when supplied, used as the basis
+        # for both the sensor's friendly name and its entity_id slug.
+        route_name = (subentry.data.get(CONF_ROUTE_NAME) or "").strip() or None
+        # unique_id mirrors the subentry's unique_id so existing entity
+        # registry entries from v2.13.x / v2.14.x continue to match
+        # for unnamed routes; named routes get their slug appended.
+        if route_name:
+            unique_id = f"{from_st}_{to_st}_{slugify(route_name)}".lower()
+            # Short, readable entity_id derived from the name only:
+            # `sensor.ns_werk` rather than `sensor.ns_hilversum_duivendrecht_werk`.
+            suggested = f"ns_{slugify(route_name)}"
+        else:
+            unique_id = f"{from_st}_{to_st}".lower()
+            suggested = f"ns_{slugify(from_st)}_{slugify(to_st)}"
         by_subentry.setdefault(subentry_id, []).append(
             NSReisadviesSensor(
                 coord,
                 from_station=from_st,
                 to_station=to_st,
+                route_name=route_name,
                 unique_id=unique_id,
                 suggested_object_id=suggested,
             )
@@ -134,14 +145,22 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
         *,
         from_station: str,
         to_station: str,
+        route_name: str | None = None,
         unique_id: str,
         suggested_object_id: str | None = None,
     ) -> None:
         """Initialise the sensor.
 
         ``unique_id`` is deliberately the same as the route subentry's
-        unique_id (f"{from}_{to}".lower()) so existing entity_ids are
-        preserved across migrations.
+        unique_id (``f"{from}_{to}".lower()`` for unnamed routes,
+        ``f"{from}_{to}_{slug(name)}".lower()`` for named ones) so
+        existing entity_ids are preserved across migrations.
+
+        ``route_name`` (v2.15.0): when supplied, becomes the device's
+        ``name`` (and therefore the sensor's friendly name, because
+        ``has_entity_name=True`` + ``_attr_name=None`` reuses the device
+        name verbatim). When not supplied the device name falls back to
+        the legacy ``"<from> → <to>"`` shape.
         """
         super().__init__(coordinator)
         self._attr_unique_id = unique_id
@@ -149,13 +168,21 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
             self._attr_suggested_object_id = suggested_object_id
         # DeviceInfo per route. The device name doubles as the entity
         # friendly name (because _attr_name = None + has_entity_name).
+        device_name = (
+            route_name if route_name else f"{from_station} → {to_station}"
+        )
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, unique_id)},
-            name=f"{from_station} → {to_station}",
+            name=device_name,
             manufacturer="NS",
             model="NS Reisadvies route",
             entry_type=None,
         )
+        # Stored for the Lovelace card to surface the custom name even
+        # when HA strips it from the device for translation reasons.
+        self._route_name = route_name
+        self._from_station = from_station
+        self._to_station = to_station
 
     @property
     def native_value(self) -> str:
@@ -200,6 +227,14 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
             "tracked_trips": tracked_list,
             "live_train_map_enabled": live_train_map_enabled,
             "live_map_refresh_seconds": live_map_refresh_seconds,
+            # v2.15.0: surface the route's components so the Lovelace
+            # card can render a custom heading for routes that have a
+            # name. ``route_name`` is None when the user hasn't given
+            # the route a custom name — the card falls back to the
+            # "<from> → <to>" shape in that case.
+            "route_name": self._route_name,
+            "from_station": self._from_station,
+            "to_station": self._to_station,
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:

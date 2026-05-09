@@ -21,6 +21,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
+from homeassistant.util import slugify
 from homeassistant.helpers.selector import (
     DateSelector,
     NumberSelector,
@@ -30,6 +31,9 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
     TimeSelector,
 )
 
@@ -49,6 +53,7 @@ from .const import (
     CONF_FILTER_TIME,
     CONF_FILTER_WINDOW_MINUTES,
     CONF_FILTER_DATE,
+    CONF_ROUTE_NAME,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
     DEFAULT_FETCH_COMPOSITION,
@@ -74,12 +79,18 @@ def _station_selector() -> SelectSelector:
 
 def _validate_route(
     user_input: dict[str, Any],
-    existing_routes: list[tuple[str, str]],
+    existing_routes: list[tuple[str, str, str]],
 ) -> dict[str, str]:
-    """Return per-field validation errors for a route subentry."""
+    """Return per-field validation errors for a route subentry.
+
+    ``existing_routes`` is a list of ``(from, to, name)`` tuples — name
+    may be an empty string for routes that have no custom name. The
+    duplicate check requires the full triple to match before flagging.
+    """
     errors: dict[str, str] = {}
     raw_from = (user_input.get(CONF_FROM_STATION) or "").strip()
     raw_to = (user_input.get(CONF_TO_STATION) or "").strip()
+    raw_name = (user_input.get(CONF_ROUTE_NAME) or "").strip()
     lookup = {s.lower(): s for s in STATIONS}
 
     if raw_from and raw_from.lower() not in lookup:
@@ -94,8 +105,12 @@ def _validate_route(
         # Normalise to the canonical casing
         user_input[CONF_FROM_STATION] = lookup[raw_from.lower()]
         user_input[CONF_TO_STATION] = lookup[raw_to.lower()]
-        for fr, to in existing_routes:
-            if fr.lower() == raw_from.lower() and to.lower() == raw_to.lower():
+        for fr, to, nm in existing_routes:
+            if (
+                fr.lower() == raw_from.lower()
+                and to.lower() == raw_to.lower()
+                and nm.strip().lower() == raw_name.lower()
+            ):
                 errors["base"] = "duplicate_route"
                 break
 
@@ -260,9 +275,12 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
     ) -> SubentryFlowResult:
         errors: dict[str, str] = {}
 
-        # Bestaande routes verzamelen om duplicaten te vangen.
+        # Bestaande routes verzamelen om duplicaten te vangen. Each entry
+        # is a (from, to, name) triple — name "" when the route has no
+        # custom name, so two unnamed routes between the same stations
+        # still collide.
         parent: config_entries.ConfigEntry | None = self._get_entry() if hasattr(self, "_get_entry") else None
-        existing: list[tuple[str, str]] = []
+        existing: list[tuple[str, str, str]] = []
         try:
             parent = parent or self._get_reconfigure_entry()  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001
@@ -280,8 +298,9 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                     continue
                 fr = sub.data.get(CONF_FROM_STATION)
                 to = sub.data.get(CONF_TO_STATION)
+                nm = sub.data.get(CONF_ROUTE_NAME) or ""
                 if fr and to:
-                    existing.append((fr, to))
+                    existing.append((fr, to, nm))
 
         if user_input is not None:
             # Filter fields are now grouped under a section() — they arrive
@@ -296,7 +315,11 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
             if not errors:
                 from_st = user_input[CONF_FROM_STATION]
                 to_st = user_input[CONF_TO_STATION]
-                title = f"{from_st} -> {to_st}"
+                # Custom route name (v2.15.0). Optional. When supplied,
+                # used as the subentry title and as the basis for the
+                # sensor's friendly name and entity_id slug.
+                _route_name = (user_input.get(CONF_ROUTE_NAME) or "").strip()
+                title = _route_name if _route_name else f"{from_st} -> {to_st}"
                 # Build the route data dict, preserving filter fields when set.
                 # Empty/None filter fields are dropped so subentries created in
                 # earlier versions stay byte-identical when the user re-saves.
@@ -304,6 +327,8 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_FROM_STATION: from_st,
                     CONF_TO_STATION: to_st,
                 }
+                if _route_name:
+                    route_data[CONF_ROUTE_NAME] = _route_name
                 _filter_days = src.get(CONF_FILTER_DAYS) or []
                 if _filter_days:
                     route_data[CONF_FILTER_DAYS] = [int(d) for d in _filter_days]
@@ -328,10 +353,22 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                         data=route_data,
                         title=title,
                     )
+                # unique_id includes the route name slug when set so two
+                # routes between the same stations but with different
+                # names (e.g. "Werk" and "Weekend") get distinct IDs and
+                # therefore distinct sensor entities. Routes without a
+                # name keep the legacy "from_to" unique_id so existing
+                # entity registry entries from v2.13.x / v2.14.x continue
+                # to match.
+                if _route_name:
+                    name_slug = slugify(_route_name)
+                    unique_id = f"{from_st}_{to_st}_{name_slug}".lower()
+                else:
+                    unique_id = f"{from_st}_{to_st}".lower()
                 return self.async_create_entry(
                     title=title,
                     data=route_data,
-                    unique_id=f"{from_st}_{to_st}".lower(),
+                    unique_id=unique_id,
                 )
 
         # Pre-fill bij reconfigure
@@ -344,6 +381,10 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 defaults = {}
 
         schema = vol.Schema({
+            vol.Optional(
+                CONF_ROUTE_NAME,
+                default=defaults.get(CONF_ROUTE_NAME, vol.UNDEFINED),
+            ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
             vol.Required(
                 CONF_FROM_STATION,
                 default=defaults.get(CONF_FROM_STATION, vol.UNDEFINED),

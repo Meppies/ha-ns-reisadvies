@@ -38,10 +38,12 @@
           "title": "Add a route",
           "description": "Configure the departure and arrival station for a new route.",
           "data": {
+            "route_name": "Route name (optional)",
             "act_station": "Departure station",
             "arr_station": "Arrival station"
           },
           "data_description": {
+            "route_name": "Optional. Give this route a short, recognisable name (e.g. \"Werk\", \"Weekend\"). When set, it becomes the sensor's friendly name and entity_id slug — and it lets you have multiple routes between the same stations with different filters.",
             "act_station": "The station where this route starts.",
             "arr_station": "The station where this route ends."
           },
@@ -68,10 +70,12 @@
           "title": "Reconfigure route",
           "description": "Adjust this route.",
           "data": {
+            "route_name": "Route name (optional)",
             "act_station": "Departure station",
             "arr_station": "Arrival station"
           },
           "data_description": {
+            "route_name": "Optional. Give this route a short, recognisable name (e.g. \"Werk\", \"Weekend\"). When set, it becomes the sensor's friendly name and entity_id slug — and it lets you have multiple routes between the same stations with different filters.",
             "act_station": "The station where this route starts.",
             "arr_station": "The station where this route ends."
           },

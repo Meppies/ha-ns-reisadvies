@@ -38,10 +38,12 @@
           "title": "Route toevoegen",
           "description": "Stel het vertrek- en aankomststation in voor een nieuwe route.",
           "data": {
+            "route_name": "Naam voor deze route (optioneel)",
             "act_station": "Vertrekstation",
             "arr_station": "Aankomststation"
           },
           "data_description": {
+            "route_name": "Optioneel. Geef deze route een korte, herkenbare naam (bv. \"Werk\", \"Weekend\"). Met een naam wordt dat de sensor-naam en entity_id-slug — en kun je meerdere routes tussen dezelfde stations hebben met verschillende filters.",
             "act_station": "Het station waar deze route begint.",
             "arr_station": "Het station waar deze route eindigt."
           },
@@ -68,10 +70,12 @@
           "title": "Route aanpassen",
           "description": "Pas deze route aan.",
           "data": {
+            "route_name": "Naam voor deze route (optioneel)",
             "act_station": "Vertrekstation",
             "arr_station": "Aankomststation"
           },
           "data_description": {
+            "route_name": "Optioneel. Geef deze route een korte, herkenbare naam (bv. \"Werk\", \"Weekend\"). Met een naam wordt dat de sensor-naam en entity_id-slug — en kun je meerdere routes tussen dezelfde stations hebben met verschillende filters.",
             "act_station": "Het station waar deze route begint.",
             "arr_station": "Het station waar deze route eindigt."
           },

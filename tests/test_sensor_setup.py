@@ -85,6 +85,39 @@ async def test_sensor_setup_happy_path_creates_sensor():
     assert kwargs.get("config_subentry_id") == "sub1"
 
 
+async def test_sensor_setup_with_route_name_uses_name_slug():
+    """v2.15.0: when subentry.data has CONF_ROUTE_NAME, the sensor's
+    suggested_object_id is derived from that name (e.g. "ns_werk")
+    rather than from the station pair."""
+    from custom_components.ns_reisadvies.const import CONF_ROUTE_NAME
+    hass = MagicMock()
+    coord = MagicMock()
+    runtime = MagicMock(); runtime.coordinators = {"sub1": coord}
+    sub = MagicMock(); sub.subentry_type = SUBENTRY_TYPE_ROUTE
+    sub.data = {
+        CONF_FROM_STATION: "Hilversum",
+        CONF_TO_STATION: "Duivendrecht",
+        CONF_ROUTE_NAME: "Werk",
+    }
+    entry = MagicMock(); entry.runtime_data = runtime
+    entry.subentries = {"sub1": sub}
+    captured: dict = {}
+    def add(sensors, **kwargs):
+        captured["sensors"] = list(sensors)
+    add_entities = MagicMock(side_effect=add)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "custom_components.ns_reisadvies.sensor.entity_platform.async_get_current_platform",
+            lambda: MagicMock(),
+        )
+        result = await async_setup_entry(hass, entry, add_entities)
+    assert result is True
+    sensor = captured["sensors"][0]
+    assert sensor._attr_unique_id == "hilversum_duivendrecht_werk"
+    assert sensor._attr_suggested_object_id == "ns_werk"
+    assert sensor._attr_device_info["name"] == "Werk"
+
+
 async def test_sensor_setup_falls_back_on_typeerror():
     """Old HA without config_subentry_id support -> TypeError -> fallback call."""
     hass = MagicMock()

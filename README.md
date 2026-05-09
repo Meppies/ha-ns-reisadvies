@@ -111,9 +111,33 @@ Re-open *Configure* on the integration tile to tweak:
 
 ### Per-route configuration
 
-Each route (subentry) can be reconfigured (change from/to) or removed
-from the integration tile. Sensor entity_ids stay stable thanks to
-deterministic unique_ids.
+Each route (subentry) can be reconfigured (change from/to, name, or
+filters) or removed from the integration tile. Sensor entity_ids stay
+stable thanks to deterministic unique_ids.
+
+#### Optional route name (v2.15.0)
+
+A route can carry an optional **name**. When set:
+
+- the sensor's friendly name becomes that name (e.g. *Werk*) instead of
+  *Hilversum → Duivendrecht*;
+- the entity_id slug is derived from the name (`sensor.ns_werk` instead
+  of `sensor.ns_hilversum_duivendrecht`);
+- you may have **multiple routes between the same stations** as long
+  as their names differ — useful for combining one route per filter
+  (for example: a *Werk* route filtered to Mon–Fri 08:00 ±60 min, plus
+  a *Weekend* route on the same stations with no filter).
+
+Leave the field blank to keep the v2.13.x / v2.14.x default behaviour
+(name = `<from> → <to>`, entity_id = `sensor.ns_<from>_<to>`).
+
+#### Optional per-route trip filters (v2.14.0)
+
+Each route can be pinned to specific weekdays, a time of day with a
+margin window (0–360 min in 15-min steps), or a single date. Filters
+are combinable; leaving them blank keeps the default *next trip from
+now* behaviour. Filters are exposed inside the route form under a
+collapsible **Optional filters** section.
 
 ## Lovelace card
 
@@ -145,11 +169,13 @@ Both are entity-services; target a `sensor.ns_*` entity.
 
 Each route (subentry) under the hub creates exactly one entity:
 
-- **`sensor.ns_<from>_<to>`** — primary entity. State is the planned
-  departure of the next upcoming trip; `extra_state_attributes`
-  carries the full trips list (for the card), the list of pinned
-  favourites, and the hub-wide `live_train_map_enabled` /
-  `live_map_refresh_seconds` flags.
+- **`sensor.ns_<slug>`** — primary entity. The slug is `<from>_<to>`
+  for unnamed routes, or `<route_name>` when a custom name is set.
+  State is the planned departure of the next upcoming trip;
+  `extra_state_attributes` carries the full trips list (for the card),
+  the list of pinned favourites, the route components (`route_name`,
+  `from_station`, `to_station`), and the hub-wide
+  `live_train_map_enabled` / `live_map_refresh_seconds` flags.
 
 The integration also exposes:
 
@@ -163,6 +189,10 @@ The integration also exposes:
 
 ## Use cases
 
+- **Multiple variants of the same route** — give each one a name and
+  its own filter. *Werk* (Hilversum → Duivendrecht, Mon–Fri 08:00 ±60
+  min) and *Weekend* (same stations, no filter) sit side by side on
+  the dashboard with their own headings.
 - **Daily commute display** — pin one or two routes on a wall-mounted
   HA dashboard so you see the next trains plus their delays at a
   glance, without opening the NS app.

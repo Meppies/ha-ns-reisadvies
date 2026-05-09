@@ -688,8 +688,29 @@ class NSReisadviesCard extends HTMLElement {
           position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
           padding: 20px; text-align: center; font-size: 0.95em; color: var(--secondary-text-color);
         }
+        /* v2.15.0: per-route heading shown only when the route has a
+           custom name. Two routes between the same stations with
+           different filters can sit on the same dashboard with their
+           own visible identities. */
+        .route-heading { padding: 8px 0 12px 0; border-bottom: 1px solid var(--divider-color); margin-bottom: 16px; }
+        .route-heading .route-name { font-size: 1.15em; font-weight: 700; color: var(--primary-text-color); line-height: 1.2; }
+        .route-heading .route-stations { font-size: 0.85em; color: var(--secondary-text-color); margin-top: 2px; }
       </style>
       <div class="ns-container">`;
+
+    // v2.15.0: render an explicit per-route heading when the user gave
+    // the route a custom name. For unnamed routes we skip this — the
+    // default Home Assistant card title (the entity friendly name) is
+    // already "<from> → <to>" and would otherwise duplicate.
+    const routeName = stateObj.attributes.route_name;
+    const fromStation = stateObj.attributes.from_station;
+    const toStation = stateObj.attributes.to_station;
+    if (routeName && fromStation && toStation) {
+      html += `<div class="route-heading">`
+            + `<div class="route-name">${routeName}</div>`
+            + `<div class="route-stations">${fromStation} → ${toStation}</div>`
+            + `</div>`;
+    }
 
     const unknownLabel = t("unknown", this._hass);
     const platformLabel = t("platform", this._hass);

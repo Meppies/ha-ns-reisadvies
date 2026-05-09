@@ -24,6 +24,13 @@ SUBENTRY_TYPE_ROUTE = "route"
 CONF_API_KEY = "api_key"
 CONF_FROM_STATION = "act_station"
 CONF_TO_STATION = "arr_station"
+
+# Optional human-readable name for the route subentry (v2.15.0).
+# When set, the sensor's friendly name and entity_id are derived from
+# this rather than from the station pair, allowing multiple routes
+# between the same stations (e.g. "Werk" + "Weekend" both Hilversum →
+# Duivendrecht with different filters).
+CONF_ROUTE_NAME = "route_name"
 CONF_SCAN_INTERVAL = "scan_interval_minuten"
 CONF_FAV_HOURS = "fav_hours"
 CONF_FETCH_COMPOSITION = "fetch_composition"
