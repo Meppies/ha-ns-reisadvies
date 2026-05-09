@@ -79,6 +79,39 @@ def _station_selector() -> SelectSelector:
     )
 
 
+def _weekday_options(first_weekday: Any) -> list[SelectOptionDict]:
+    """Return the seven weekday SelectOptionDicts rotated so the chosen
+    first day appears at the top of the list.
+
+    ``first_weekday`` may be a string or int (Python weekday convention:
+    0 = Monday … 6 = Sunday). Anything that cannot be parsed back into
+    that range falls back to Monday.
+    """
+    try:
+        start = int(first_weekday)
+    except (TypeError, ValueError):
+        start = 0
+    if not 0 <= start <= 6:
+        start = 0
+    order = [(i + start) % 7 for i in range(7)]
+    return [SelectOptionDict(value=str(d), label=str(d)) for d in order]
+
+
+def _read_first_weekday(parent: Any) -> str:
+    """Pull CONF_FIRST_WEEKDAY off the hub entry's options safely.
+
+    Defensive reads — both the entry and its options attribute may be
+    missing during a fresh subentry add (no parent attached yet) or in
+    test fixtures. Always returns a string.
+    """
+    if parent is None:
+        return DEFAULT_FIRST_WEEKDAY
+    try:
+        return str(parent.options.get(CONF_FIRST_WEEKDAY, DEFAULT_FIRST_WEEKDAY))
+    except Exception:  # noqa: BLE001
+        return DEFAULT_FIRST_WEEKDAY
+
+
 def _validate_route(
     user_input: dict[str, Any],
     existing_routes: list[tuple[str, str, str]],
@@ -382,29 +415,11 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
             except Exception:  # noqa: BLE001
                 defaults = {}
 
-        # First-day-of-week preference (v2.15.2). Read from the hub
-        # entry's options so users in locales that start the week on
-        # Sunday can flip the order of the day-picker accordingly.
-        # Display only — does not change the integer convention
-        # (0=Mon … 6=Sun) used everywhere else in the integration.
-        first_weekday = DEFAULT_FIRST_WEEKDAY
-        if parent is not None:
-            try:
-                first_weekday = str(
-                    parent.options.get(CONF_FIRST_WEEKDAY, DEFAULT_FIRST_WEEKDAY)
-                )
-            except Exception:  # noqa: BLE001
-                first_weekday = DEFAULT_FIRST_WEEKDAY
-        try:
-            _start = int(first_weekday)
-        except (TypeError, ValueError):
-            _start = 0
-        # Build the rotated 0..6 sequence so the chosen weekday comes first.
-        weekday_order = [(i + _start) % 7 for i in range(7)]
-        weekday_options = [
-            SelectOptionDict(value=str(d), label=str(d))
-            for d in weekday_order
-        ]
+        # First-day-of-week preference (v2.15.2). Display-only — the
+        # day-picker rotation reflects the user's locale (NL/EU = Mon,
+        # US = Sun). Helpers are pure so the rotation can be unit-tested
+        # without spinning up the form.
+        weekday_options = _weekday_options(_read_first_weekday(parent))
 
         schema = vol.Schema({
             vol.Optional(

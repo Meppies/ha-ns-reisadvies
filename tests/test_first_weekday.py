@@ -8,20 +8,89 @@ from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.ns_reisadvies.config_flow import (
     NSReisadviesOptionsFlowHandler,
-    NSRouteSubentryFlowHandler,
+    _read_first_weekday,
+    _weekday_options,
 )
 from custom_components.ns_reisadvies.const import (
     CONF_API_KEY,
     CONF_FAV_HOURS,
     CONF_FETCH_COMPOSITION,
     CONF_FIRST_WEEKDAY,
-    CONF_FROM_STATION,
     CONF_LIVE_MAP_REFRESH_SECONDS,
     CONF_LIVE_TRAIN_MAP,
     CONF_SCAN_INTERVAL,
-    CONF_TO_STATION,
     DEFAULT_FIRST_WEEKDAY,
 )
+
+
+# ---- _weekday_options pure helper ------------------------------------------
+
+
+def test_weekday_options_default_starts_monday():
+    """Default ('0') keeps the natural 0-6 order."""
+    opts = _weekday_options(DEFAULT_FIRST_WEEKDAY)
+    values = [opt["value"] for opt in opts]
+    assert values == ["0", "1", "2", "3", "4", "5", "6"]
+
+
+def test_weekday_options_sunday_rotates_to_top():
+    """first_weekday=6 → Sunday first, then Mon..Sat."""
+    opts = _weekday_options("6")
+    values = [opt["value"] for opt in opts]
+    assert values == ["6", "0", "1", "2", "3", "4", "5"]
+
+
+def test_weekday_options_int_input_works():
+    """Accepts int as well as string."""
+    opts = _weekday_options(2)
+    values = [opt["value"] for opt in opts]
+    assert values == ["2", "3", "4", "5", "6", "0", "1"]
+
+
+def test_weekday_options_garbage_string_falls_back_to_monday():
+    opts = _weekday_options("not-a-number")
+    values = [opt["value"] for opt in opts]
+    assert values == ["0", "1", "2", "3", "4", "5", "6"]
+
+
+def test_weekday_options_none_falls_back_to_monday():
+    opts = _weekday_options(None)
+    values = [opt["value"] for opt in opts]
+    assert values == ["0", "1", "2", "3", "4", "5", "6"]
+
+
+def test_weekday_options_out_of_range_clamps_to_monday():
+    """Values < 0 or > 6 are silently clamped — Monday wins."""
+    assert [o["value"] for o in _weekday_options("9")][0] == "0"
+    assert [o["value"] for o in _weekday_options("-3")][0] == "0"
+
+
+# ---- _read_first_weekday helper --------------------------------------------
+
+
+def test_read_first_weekday_none_parent():
+    assert _read_first_weekday(None) == DEFAULT_FIRST_WEEKDAY
+
+
+def test_read_first_weekday_default_when_missing():
+    parent = MagicMock()
+    parent.options = {}
+    assert _read_first_weekday(parent) == DEFAULT_FIRST_WEEKDAY
+
+
+def test_read_first_weekday_returns_stored_value():
+    parent = MagicMock()
+    parent.options = {CONF_FIRST_WEEKDAY: "6"}
+    assert _read_first_weekday(parent) == "6"
+
+
+def test_read_first_weekday_handles_options_attribute_error():
+    """parent.options blowing up at access time falls back to default."""
+    parent = MagicMock()
+    type(parent).options = property(
+        lambda _self: (_ for _ in ()).throw(RuntimeError("nope"))
+    )
+    assert _read_first_weekday(parent) == DEFAULT_FIRST_WEEKDAY
 
 
 # ---- OptionsFlow stores first_weekday --------------------------------------
@@ -50,7 +119,7 @@ async def test_options_persists_first_weekday(hass):
         CONF_FETCH_COMPOSITION: False,
         CONF_LIVE_TRAIN_MAP: False,
         CONF_LIVE_MAP_REFRESH_SECONDS: 10,
-        CONF_FIRST_WEEKDAY: "6",  # Sunday
+        CONF_FIRST_WEEKDAY: "6",
     }
     with patch(
         "custom_components.ns_reisadvies.coordinator.async_validate_api_key",
@@ -66,126 +135,8 @@ async def test_options_default_first_weekday_when_not_supplied(hass):
     """When the user doesn't change the field, the default Monday survives."""
     flow = _make_options(hass)
     schema = flow._build_schema()
-    # Schema dict's default for first_weekday → "0" (Monday).
     for key, _ in schema.schema.items():
         if str(key) == CONF_FIRST_WEEKDAY:
             assert key.default() == DEFAULT_FIRST_WEEKDAY
             return
     pytest.fail("first_weekday field not found in OptionsFlow schema")
-
-
-# ---- Subentry day-picker is rotated by first_weekday ------------------------
-
-
-class _Flow(NSRouteSubentryFlowHandler):
-    _test_parent = None
-
-    def _get_entry(self):
-        return self._test_parent
-
-    def _get_reconfigure_entry(self):
-        if self._test_parent is None:
-            raise RuntimeError("x")
-        return self._test_parent
-
-    def _get_reconfigure_subentry(self):
-        raise RuntimeError("x")
-
-    @property
-    def _reconfigure_subentry_id(self):
-        return "sid-test"
-
-
-def _mk_subflow(parent_options=None):
-    parent = MagicMock()
-    parent.subentries = {}
-    parent.options = parent_options or {}
-    f = _Flow()
-    f.hass = MagicMock()
-    f._test_parent = parent
-    f.async_create_entry = MagicMock(
-        return_value={"type": FlowResultType.CREATE_ENTRY},
-    )
-    f.async_show_form = MagicMock(
-        return_value={"type": FlowResultType.FORM, "step_id": "user", "errors": {}},
-    )
-    f.async_update_and_abort = MagicMock(
-        return_value={"type": FlowResultType.ABORT},
-    )
-    return f
-
-
-async def test_day_picker_default_starts_with_monday():
-    """Without an explicit first_weekday option, the rotation starts at Mon."""
-    f = _mk_subflow()
-    await f.async_step_user(user_input=None)
-    f.async_show_form.assert_called_once()
-    # Schema is built; the values "0".."6" should appear in the order
-    # Mon, Tue, …, Sun. We verify by inspecting the rendered schema.
-    _, kwargs = f.async_show_form.call_args
-    schema = kwargs["data_schema"]
-    # Find the section's inner schema and the filter_days option order.
-    found = False
-    for key, val in schema.schema.items():
-        # The "filters" section is wrapped — its options live underneath.
-        if str(key) == "filters":
-            inner = val.schema
-            for inner_key, inner_val in inner.schema.items():
-                if str(inner_key) == "filter_days":
-                    config = inner_val.config
-                    values = [opt["value"] for opt in config.options]
-                    assert values == ["0", "1", "2", "3", "4", "5", "6"]
-                    found = True
-    assert found
-
-
-async def test_day_picker_starts_with_sunday_when_configured():
-    """First_weekday=6 → rotation Sun, Mon, Tue, …, Sat."""
-    f = _mk_subflow(parent_options={CONF_FIRST_WEEKDAY: "6"})
-    await f.async_step_user(user_input=None)
-    _, kwargs = f.async_show_form.call_args
-    schema = kwargs["data_schema"]
-    for key, val in schema.schema.items():
-        if str(key) == "filters":
-            for inner_key, inner_val in val.schema.schema.items():
-                if str(inner_key) == "filter_days":
-                    values = [opt["value"] for opt in inner_val.config.options]
-                    # Rotation starting at 6 (Sunday): 6, 0, 1, 2, 3, 4, 5
-                    assert values == ["6", "0", "1", "2", "3", "4", "5"]
-
-
-async def test_day_picker_invalid_first_weekday_falls_back_to_monday():
-    """A non-numeric / unparseable first_weekday is treated as Monday."""
-    f = _mk_subflow(parent_options={CONF_FIRST_WEEKDAY: "garbage"})
-    await f.async_step_user(user_input=None)
-    _, kwargs = f.async_show_form.call_args
-    schema = kwargs["data_schema"]
-    for key, val in schema.schema.items():
-        if str(key) == "filters":
-            for inner_key, inner_val in val.schema.schema.items():
-                if str(inner_key) == "filter_days":
-                    values = [opt["value"] for opt in inner_val.config.options]
-                    assert values == ["0", "1", "2", "3", "4", "5", "6"]
-
-
-async def test_day_picker_handles_options_attribute_error():
-    """parent.options raising attribute error → falls back to default."""
-    parent = MagicMock()
-    parent.subentries = {}
-    # Make options access raise.
-    type(parent).options = property(lambda _self: (_ for _ in ()).throw(RuntimeError("nope")))
-    f = _Flow()
-    f.hass = MagicMock()
-    f._test_parent = parent
-    f.async_show_form = MagicMock(
-        return_value={"type": FlowResultType.FORM, "step_id": "user", "errors": {}},
-    )
-    await f.async_step_user(user_input=None)
-    _, kwargs = f.async_show_form.call_args
-    schema = kwargs["data_schema"]
-    for key, val in schema.schema.items():
-        if str(key) == "filters":
-            for inner_key, inner_val in val.schema.schema.items():
-                if str(inner_key) == "filter_days":
-                    values = [opt["value"] for opt in inner_val.config.options]
-                    assert values[0] == "0"  # Monday — default fallback
