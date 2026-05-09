@@ -37,6 +37,13 @@ CONF_FETCH_COMPOSITION = "fetch_composition"
 CONF_LIVE_TRAIN_MAP = "live_train_map"
 CONF_LIVE_MAP_REFRESH_SECONDS = "live_map_refresh_seconds"
 
+# Hub-wide UI preference (v2.15.2): which weekday should appear first
+# in the route subentry's "Days of the week" dropdown. Stored as a
+# single-character string ("0" = Monday … "6" = Sunday) for parity with
+# Python's weekday() convention. Display-only — does not change the
+# semantics of filter_days values.
+CONF_FIRST_WEEKDAY = "first_weekday"
+
 # Per-route filter (v2.14.0). All optional, all combinable.
 # - filter_days: list[int] of weekday numbers (0=Mon … 6=Sun). Empty/None = every day.
 # - filter_time: ISO time string "HH:MM" or None.
@@ -56,6 +63,7 @@ DEFAULT_FETCH_COMPOSITION = False  # extra API calls — opt in
 DEFAULT_LIVE_TRAIN_MAP = False  # on-demand only, but icon is opt-in
 DEFAULT_LIVE_MAP_REFRESH_SECONDS = 10  # poll cadence while modal is open
 DEFAULT_FILTER_WINDOW_MINUTES = 0  # default: no fuzz around the target
+DEFAULT_FIRST_WEEKDAY = "0"  # Monday — NL/EU default; users in US locales can override
 
 # API URLs
 API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips"

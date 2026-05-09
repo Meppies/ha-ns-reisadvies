@@ -53,6 +53,7 @@ from .const import (
     CONF_FILTER_TIME,
     CONF_FILTER_WINDOW_MINUTES,
     CONF_FILTER_DATE,
+    CONF_FIRST_WEEKDAY,
     CONF_ROUTE_NAME,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
@@ -60,6 +61,7 @@ from .const import (
     DEFAULT_LIVE_TRAIN_MAP,
     DEFAULT_LIVE_MAP_REFRESH_SECONDS,
     DEFAULT_FILTER_WINDOW_MINUTES,
+    DEFAULT_FIRST_WEEKDAY,
 )
 from .stations import STATIONS
 
@@ -380,6 +382,30 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
             except Exception:  # noqa: BLE001
                 defaults = {}
 
+        # First-day-of-week preference (v2.15.2). Read from the hub
+        # entry's options so users in locales that start the week on
+        # Sunday can flip the order of the day-picker accordingly.
+        # Display only — does not change the integer convention
+        # (0=Mon … 6=Sun) used everywhere else in the integration.
+        first_weekday = DEFAULT_FIRST_WEEKDAY
+        if parent is not None:
+            try:
+                first_weekday = str(
+                    parent.options.get(CONF_FIRST_WEEKDAY, DEFAULT_FIRST_WEEKDAY)
+                )
+            except Exception:  # noqa: BLE001
+                first_weekday = DEFAULT_FIRST_WEEKDAY
+        try:
+            _start = int(first_weekday)
+        except (TypeError, ValueError):
+            _start = 0
+        # Build the rotated 0..6 sequence so the chosen weekday comes first.
+        weekday_order = [(i + _start) % 7 for i in range(7)]
+        weekday_options = [
+            SelectOptionDict(value=str(d), label=str(d))
+            for d in weekday_order
+        ]
+
         schema = vol.Schema({
             vol.Optional(
                 CONF_ROUTE_NAME,
@@ -400,15 +426,15 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                         default=[str(d) for d in defaults.get(CONF_FILTER_DAYS, [])],
                     ): SelectSelector(
                         SelectSelectorConfig(
-                            options=[
-                                SelectOptionDict(value="0", label="Mon"),
-                                SelectOptionDict(value="1", label="Tue"),
-                                SelectOptionDict(value="2", label="Wed"),
-                                SelectOptionDict(value="3", label="Thu"),
-                                SelectOptionDict(value="4", label="Fri"),
-                                SelectOptionDict(value="5", label="Sat"),
-                                SelectOptionDict(value="6", label="Sun"),
-                            ],
+                            # Options are rotated so the user's preferred
+                            # first day of the week (set on the hub
+                            # OptionsFlow, defaults to Monday) appears at
+                            # the top of the dropdown. The labels are
+                            # placeholders — HA replaces them with the
+                            # translated full weekday names (Monday /
+                            # Maandag / …) via the ``selector.filter_days``
+                            # translation block in strings.json.
+                            options=weekday_options,
                             # Dropdown mode renders selected days as chips
                             # that sit next to each other and wrap to a new
                             # line once they overflow — much more compact
@@ -536,4 +562,20 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
                     self._read(CONF_LIVE_MAP_REFRESH_SECONDS, DEFAULT_LIVE_MAP_REFRESH_SECONDS)
                 ),
             ): vol.All(int, vol.Range(min=5, max=60)),
+            # First day of week (v2.15.2). Display-only — controls the
+            # rotation of the day picker on the per-route filter form.
+            vol.Required(
+                CONF_FIRST_WEEKDAY,
+                default=str(self._read(CONF_FIRST_WEEKDAY, DEFAULT_FIRST_WEEKDAY)),
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(value="0", label="Monday"),
+                        SelectOptionDict(value="6", label="Sunday"),
+                    ],
+                    mode=SelectSelectorMode.DROPDOWN,
+                    multiple=False,
+                    translation_key="first_weekday",
+                ),
+            ),
         })

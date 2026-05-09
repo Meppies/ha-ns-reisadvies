@@ -137,7 +137,8 @@
           "fav_hours": "Favourite retention (hours)",
           "fetch_composition": "Fetch train composition (carriages)",
           "live_train_map": "Show live train map (per leg)",
-          "live_map_refresh_seconds": "Live map refresh interval (seconds)"
+          "live_map_refresh_seconds": "Live map refresh interval (seconds)",
+          "first_weekday": "First day of the week"
         },
         "data_description": {
           "api_key": "Your NS API subscription key. Replace if it has been rotated.",
@@ -145,8 +146,28 @@
           "fav_hours": "How long to keep a pinned favourite before it is removed automatically. Set to 0 to disable expiry.",
           "fetch_composition": "Adds an extra NS API call per unique train per refresh to retrieve the actual carriage composition (number of carriages, rolling-stock type, image). Off by default to save API quota.",
           "live_train_map": "Adds a small map icon under the departure platform of each leg. Tapping it opens a map showing the route, stops, and the live train position. The position is only fetched while the map is open.",
-          "live_map_refresh_seconds": "How often to refresh the train's GPS position while the live map is open. Faster means smoother movement but slightly more network traffic. Range: 5 to 60 seconds."
+          "live_map_refresh_seconds": "How often to refresh the train's GPS position while the live map is open. Faster means smoother movement but slightly more network traffic. Range: 5 to 60 seconds.",
+          "first_weekday": "Which weekday should appear at the top of the day-picker on the per-route filter form. Display only — does not change anything else."
         }
+      }
+    }
+  },
+  "selector": {
+    "filter_days": {
+      "options": {
+        "0": "Monday",
+        "1": "Tuesday",
+        "2": "Wednesday",
+        "3": "Thursday",
+        "4": "Friday",
+        "5": "Saturday",
+        "6": "Sunday"
+      }
+    },
+    "first_weekday": {
+      "options": {
+        "0": "Monday",
+        "6": "Sunday"
       }
     }
   },

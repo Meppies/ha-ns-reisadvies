@@ -4,6 +4,41 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.2] — 2026-05-09
+
+### Changed — full weekday names + configurable first day of week
+- Day-picker labels are now the full weekday names (Monday / Tuesday /
+  … in EN, Maandag / Dinsdag / … in NL) via the standard HA selector
+  translation pattern. Hardcoded three-letter abbreviations are gone.
+- New hub option **First day of the week** (Monday / Sunday) under
+  *NS Reisadvies options*. Controls the rotation order of the
+  *Days of the week* dropdown on every per-route filter form. Display
+  only — does not change the underlying weekday integers (still 0=Mon
+  … 6=Sun) and does not affect saved routes.
+- Default = Monday (NL/EU norm). Existing installations behave
+  identically until the user explicitly switches.
+
+### Implementation
+- `const.py`: `CONF_FIRST_WEEKDAY` + `DEFAULT_FIRST_WEEKDAY`.
+- `config_flow.py`:
+  - OptionsFlow gets a `SelectSelector` with options *Monday* / *Sunday*
+    and `translation_key="first_weekday"`.
+  - Subentry flow reads `parent.options[CONF_FIRST_WEEKDAY]`,
+    rotates the 0..6 sequence so the chosen day is on top, and feeds
+    that order to the dropdown's `options=…` list.
+  - Dropdown uses `translation_key="filter_days"`; HA picks the
+    translated full weekday names from the new `selector.filter_days`
+    block in `strings.json` / `translations/{en,nl}.json`.
+- `strings.json` + `translations/{en,nl}.json`: `selector.filter_days`
+  and `selector.first_weekday` translation blocks; *First day of the
+  week* label + description on the OptionsFlow.
+
+### Tests
+- New `tests/test_first_weekday.py`: persistence into entry.options,
+  default fallback, day-picker rotation for Mon-start, Sun-start,
+  garbage value, and parent.options raising. Coverage gate stays at
+  100%.
+
 ## [2.15.1] — 2026-05-09
 
 ### Changed — compacter dagen-selector
