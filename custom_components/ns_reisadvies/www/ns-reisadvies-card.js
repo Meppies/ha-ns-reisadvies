@@ -1335,11 +1335,23 @@ class NSReisadviesCard extends HTMLElement {
         }
       }
 
-      // Build full-NL graph once. 4-decimal precision (~11 m) auto-
-      // merges junction endpoints from neighbouring rail features.
+      // Build full-NL graph once.
+      //
+      // v2.15.6: lowered key precision from 4-decimal (~11 m) to
+      // 3-decimal (~110 m). The 4-decimal version was leaving
+      // disjoint sub-graphs because adjacent rail features in the
+      // ProRail GeoJSON sometimes terminate 12–15 m apart (different
+      // surveyors, slightly different coordinate snapping). That left
+      // long-distance routes (Hilversum → Duivendrecht direct,
+      // anything to/from Emmen) without a connected path so the A*
+      // search returned null and the live map fell back to a straight
+      // line between stations. 110 m precision still discriminates
+      // between separate parallel tracks in big stations (≥150 m
+      // apart) but reliably welds neighbouring features into one
+      // connected NL-wide network.
       const graph = new Map();
       const nodeCoords = new Map();
-      const k = c => `${c[0].toFixed(4)},${c[1].toFixed(4)}`;
+      const k = c => `${c[0].toFixed(3)},${c[1].toFixed(3)}`;
       const haversine = (a, b) => {
         const R = 6371000.0;
         const r = Math.PI / 180;
@@ -2157,7 +2169,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.15.4 ",
+  "%c NS-REISADVIES-CARD %c v2.15.6 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

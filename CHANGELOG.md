@@ -4,6 +4,33 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.6] — 2026-05-09
+
+### Fixed — long-distance rail-snap (Hilversum → Rotterdam, Hilversum → Emmen)
+Live debugging on the Mac mini showed the rail-snap A* search was
+returning `null` for long-distance routes — the IC Direct
+*Hilversum → Duivendrecht* leg and every Emmen-bound trip — even
+though all 25 snap-candidate combinations had been exhausted and the
+closest snaps were within 4–10 m of a graph node. The map fell back to
+straight lines between stations.
+
+Root cause: the rail graph built junctions with **4-decimal precision
+(~11 m)** which left sub-graphs disjoint. Adjacent ProRail
+Spoorbaanhartlijn features sometimes terminate 12–15 m apart (different
+surveyors, minor coordinate snapping differences), so what looked like
+a continuous track was actually a chain of unconnected components.
+Locally short routes (Hilversum → Hilversum Media Park → Bussum Zuid)
+happened to be inside a single component and worked; cross-component
+routes (Diemen Zuid → Weesp, Hilversum → Duivendrecht) did not.
+
+Fix: bumped the junction key precision from 4-decimal to **3-decimal
+(~110 m)** in `_ensureRailReady`. That reliably welds neighbouring
+features into one connected NL-wide network while still keeping
+parallel tracks at large stations distinct (those are spaced ≥150 m
+apart in the data).
+
+Console banner bumped to v2.15.6.
+
 ## [2.15.5] — 2026-05-09
 
 ### Fixed — live train map straight-line fallback (rail cache 404)
