@@ -406,25 +406,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         )
 
     # Static path + Lovelace card auto-registration (one-shot per HA).
-    if not hass.data[DOMAIN].get("static_paths_registered"):
-        path = hass.config.path("custom_components/ns_reisadvies/www")
-        if os.path.isdir(path):
-            await hass.http.async_register_static_paths([
-                StaticPathConfig(
-                    url_path="/ns_reisadvies",
-                    path=path,
-                    cache_headers=False,
-                )
-            ])
-            hass.data[DOMAIN]["static_paths_registered"] = True
-
-            try:
-                integration = await async_get_integration(hass, DOMAIN)
-                version = str(integration.version or "0")
-            except Exception:  # noqa: BLE001
-                version = "0"
-            await _async_register_card_resource(hass, version)
-            hass.data[DOMAIN]["card_url_registered"] = True
+    await _async_register_static_paths(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -889,6 +871,35 @@ async def _async_register_card_resource(hass: HomeAssistant, version: str) -> No
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload the hub when global options change."""
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def _async_register_static_paths(hass: HomeAssistant) -> None:
+    """One-shot per HA: register the /ns_reisadvies static path + Lovelace card.
+
+    Extracted from async_setup_entry so the body is independently testable
+    without booting the full HA http stack.
+    """
+    if hass.data[DOMAIN].get("static_paths_registered"):
+        return
+    path = hass.config.path("custom_components/ns_reisadvies/www")
+    if not os.path.isdir(path):
+        return
+    await hass.http.async_register_static_paths([
+        StaticPathConfig(
+            url_path="/ns_reisadvies",
+            path=path,
+            cache_headers=False,
+        )
+    ])
+    hass.data[DOMAIN]["static_paths_registered"] = True
+
+    try:
+        integration = await async_get_integration(hass, DOMAIN)
+        version = str(integration.version or "0")
+    except Exception:  # noqa: BLE001
+        version = "0"
+    await _async_register_card_resource(hass, version)
+    hass.data[DOMAIN]["card_url_registered"] = True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:

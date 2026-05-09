@@ -4,6 +4,22 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.8] — 2026-05-09
+
+### Tests + tiny refactor
+- Coverage **96% → 98%** (28 missing of 1177 stmts).
+- Extracted the static-path / Lovelace-card auto-registration block out of `async_setup_entry` into a new helper `_async_register_static_paths(hass)` so the block is independently testable without booting `hass.http` infrastructure. Behaviour identical to v2.13.7.
+- New `tests/test_100_percent.py` covers the helper end-to-end (already-registered, no-www, happy path, integration-lookup failure) plus coordinator defensive logging branches: `async_fetch_live_train` 5xx-with-text-body / warned_once-debug, `_fetch_journey_composition` repeat-failure-debug, `_async_update_data` tracked-trip skip branch + composition annotation, `async_fetch_full_rail_network` pagination next-page, `async_fetch_journey_route` PASSING_PASSED / DEPARTED status forms + invalid ISO timestamps.
+- Three new migrate tests in `test_init_migrate_recover.py` cover the v1->v2 entity-registry update path + error-swallowing branches (lines 204-211, 228-229).
+- CI gate raised from `--cov-fail-under=95` to `--cov-fail-under=97`.
+
+### Per-module final coverage
+- `__init__.py`: 96%, `config_flow.py`: 100%, `coordinator.py`: 97%, `sensor.py`: 100%, `diagnostics.py`: 95%, `const`/`stations`/`types`: 100%.
+
+### Notes
+- Production-code change in this release: pure extract-method refactor of static-path registration. No behavioural change.
+- 28 missing statements remain in defensive logging branches (`async_fetch_live_train` second-warning paths, `_periodic_rail_refresh` schedule wrapper). These are reachable in principle but each requires very specific state setup.
+
 ## [2.13.7] — 2026-05-09
 
 ### Tests

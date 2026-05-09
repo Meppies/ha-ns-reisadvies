@@ -145,3 +145,58 @@ async def test_recover_swallows_add_subentry_errors():
     fake_hass.config_entries.async_add_subentry = MagicMock(side_effect=ValueError("boom"))
     entry = MagicMock(); entry.subentries = {}
     await _recover_subentries_from_storage(fake_hass, entry)  # should not raise
+
+
+async def test_migrate_v1_updates_entity_registry_for_legacy_entries():
+    """Cover entity_registry update branch (lines 204-211)."""
+    fake_hass = MagicMock()
+    primary = MagicMock()
+    primary.version = 1; primary.entry_id = "a"
+    primary.data = {CONF_API_KEY: "k", CONF_FROM_STATION: "Hilversum", CONF_TO_STATION: "Duivendrecht"}
+    primary.options = {}
+    fake_hass.config_entries.async_entries.return_value = [primary]
+    fake_hass.config_entries.async_update_entry = MagicMock()
+    fake_hass.config_entries.async_add_subentry = MagicMock()
+    fake_hass.async_create_task = MagicMock()
+    ent = MagicMock(); ent.entity_id = "sensor.x"
+    ent_reg = MagicMock()
+    ent_reg.async_update_entity = MagicMock()
+    with patch("custom_components.ns_reisadvies.er.async_get", return_value=ent_reg), \
+         patch("custom_components.ns_reisadvies.er.async_entries_for_config_entry", return_value=[ent]):
+        assert await async_migrate_entry(fake_hass, primary) is True
+    ent_reg.async_update_entity.assert_called_once()
+
+
+async def test_migrate_v1_swallows_entity_update_error():
+    """Entity update raising -> warning logged, migration continues (lines 210-211)."""
+    fake_hass = MagicMock()
+    primary = MagicMock()
+    primary.version = 1; primary.entry_id = "a"
+    primary.data = {CONF_API_KEY: "k", CONF_FROM_STATION: "Hilversum", CONF_TO_STATION: "Duivendrecht"}
+    primary.options = {}
+    fake_hass.config_entries.async_entries.return_value = [primary]
+    fake_hass.config_entries.async_update_entry = MagicMock()
+    fake_hass.config_entries.async_add_subentry = MagicMock()
+    fake_hass.async_create_task = MagicMock()
+    ent = MagicMock(); ent.entity_id = "sensor.x"
+    ent_reg = MagicMock()
+    ent_reg.async_update_entity = MagicMock(side_effect=ValueError("boom"))
+    with patch("custom_components.ns_reisadvies.er.async_get", return_value=ent_reg), \
+         patch("custom_components.ns_reisadvies.er.async_entries_for_config_entry", return_value=[ent]):
+        assert await async_migrate_entry(fake_hass, primary) is True
+
+
+async def test_migrate_v1_swallows_add_subentry_error():
+    """async_add_subentry raises -> warning logged (lines 228-229)."""
+    fake_hass = MagicMock()
+    primary = MagicMock()
+    primary.version = 1; primary.entry_id = "a"
+    primary.data = {CONF_API_KEY: "k", CONF_FROM_STATION: "Hilversum", CONF_TO_STATION: "Duivendrecht"}
+    primary.options = {}
+    fake_hass.config_entries.async_entries.return_value = [primary]
+    fake_hass.config_entries.async_update_entry = MagicMock()
+    fake_hass.config_entries.async_add_subentry = MagicMock(side_effect=ValueError("boom"))
+    fake_hass.async_create_task = MagicMock()
+    with patch("custom_components.ns_reisadvies.er.async_get", return_value=MagicMock()), \
+         patch("custom_components.ns_reisadvies.er.async_entries_for_config_entry", return_value=[]):
+        assert await async_migrate_entry(fake_hass, primary) is True
