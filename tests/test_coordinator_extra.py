@@ -384,3 +384,44 @@ async def test_validate_api_key_unexpected_status(hass):
     fake.get = MagicMock(return_value=_resp(418))
     with patch("custom_components.ns_reisadvies.coordinator.async_get_clientsession", return_value=fake):
         assert await async_validate_api_key(hass, "k") == "cannot_connect"
+
+
+async def test_composition_warned_second_failure_logs_debug(hass, caplog):
+    """Second composition failure of same train number with cache hit -> no second warning."""
+    import logging
+    coord = _make(hass)
+    coord._composition_warned = True
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(403))
+    caplog.set_level(logging.DEBUG, logger="custom_components.ns_reisadvies.coordinator")
+    assert await coord._fetch_journey_composition("x", {}) is None
+    debug = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert any("HTTP" in (r.message or "") for r in debug)
+
+
+async def test_annotate_compositions_skips_legs_without_number(hass):
+    coord = _make(hass, fetch_composition=True)
+    trips = [{"legs": [{"product": {"number": 100}}, {"product": {}}]}]
+    fake = {"trainType": "VIRM", "parts": [{"image": "x", "type": "VIRM-IV"}]}
+    async def _stub(num, headers):
+        return fake
+    coord._fetch_journey_composition = _stub
+    await coord._annotate_compositions(trips, {})
+    # Leg 0 gets composition; leg 1 skipped (no number).
+    assert trips[0]["legs"][0]["composition"] == fake
+    assert "composition" not in trips[0]["legs"][1]
+
+
+async def test_update_data_tracked_trip_network_error_skipped(hass):
+    """Network error while fetching a tracked trip -> 'skip' status, kept in tracked_trips."""
+    coord = _make(hass)
+    coord.tracked_trips = {"FAV1": time.time()}
+    coord._session = MagicMock()
+    # First GET ok (normal trips), second GET errors
+    coord._session.get = MagicMock(side_effect=[
+        _resp(200, {"trips": []}),
+        aiohttp.ClientError("net"),
+    ])
+    out = await coord._async_update_data()
+    # Tracked trip stays (skip != gone)
+    assert "FAV1" in coord.tracked_trips
