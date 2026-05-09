@@ -36,14 +36,14 @@
       "step": {
         "user": {
           "title": "Route toevoegen",
-          "description": "Stel het vertrek- en aankomststation in voor een nieuwe route. De filter-velden hieronder zijn optioneel — leeg laten betekent: laat alle aankomende reizen zien.",
+          "description": "Stel het vertrek- en aankomststation in voor een nieuwe route.\n\nAlle velden onder de twee stations zijn **optioneel** — leeg laten = standaardgedrag (elke dag, eerstvolgende reis vanaf nu). Invullen verschuift welke reizen de sensor laat zien; details per veld hieronder.",
           "data": {
             "act_station": "Vertrekstation",
             "arr_station": "Aankomststation",
-            "filter_days": "Filteren op dagen van de week",
-            "filter_time": "Filteren op tijdstip",
+            "filter_days": "Dagen van de week",
+            "filter_time": "Tijdstip",
             "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
-            "filter_date": "Filteren op een specifieke datum"
+            "filter_date": "Specifieke datum"
           },
           "data_description": {
             "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
@@ -54,13 +54,14 @@
         },
         "reconfigure": {
           "title": "Route aanpassen",
+          "description": "Pas deze route aan.\n\nAlle velden onder de twee stations zijn **optioneel** — leeg laten = standaardgedrag (elke dag, eerstvolgende reis vanaf nu). Invullen verschuift welke reizen de sensor laat zien; details per veld hieronder.",
           "data": {
             "act_station": "Vertrekstation",
             "arr_station": "Aankomststation",
-            "filter_days": "Filteren op dagen van de week",
-            "filter_time": "Filteren op tijdstip",
+            "filter_days": "Dagen van de week",
+            "filter_time": "Tijdstip",
             "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
-            "filter_date": "Filteren op een specifieke datum"
+            "filter_date": "Specifieke datum"
           },
           "data_description": {
             "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",

@@ -4,6 +4,21 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.1] — 2026-05-09
+
+### Changed — UX polish on the route subentry form
+- Filter labels no longer carry the redundant `Filter on …` prefix.
+  Renamed: *Days of the week*, *Time of day*, *Margin around the chosen
+  time (± minutes)*, *Specific date*.
+- The "all fields below the two stations are optional" hint is now
+  stated explicitly at the top of both the **Add a route** and
+  **Reconfigure route** steps. Previously only the Add step had a hint
+  and it was less prominent.
+- Mirrored across `strings.json`, `translations/en.json`, and
+  `translations/nl.json`.
+
+No behavioural changes — pure UI/translation polish.
+
 ## [2.14.0] — 2026-05-09
 
 ### Added — per-route trip filter
