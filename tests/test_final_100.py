@@ -309,10 +309,17 @@ async def test_journey_route_status_passing_passed_lower(hass):
 
 
 async def test_periodic_rail_refresh_closure_invokes_refresh(hass):
-    """Capture and invoke the _periodic_rail_refresh closure (line 401)."""
+    """Capture and invoke the _periodic_rail_refresh closure.
+
+    v2.15.5 added a separate _initial_rail_refresh that gets passed to
+    async_call_later, so we now capture _periodic_rail_refresh from
+    async_track_time_interval instead — that's the one whose body
+    contains the bare `await _async_refresh_rail_cache(hass, coord)`
+    line that needs covering.
+    """
     from custom_components.ns_reisadvies import async_setup_entry
     captured = {}
-    def _capture_call_later(_hass, _delay, fn):
+    def _capture_track_interval(_hass, fn, _interval):
         captured["fn"] = fn
         return MagicMock()
     fake_hass = MagicMock()
@@ -331,16 +338,16 @@ async def test_periodic_rail_refresh_closure_invokes_refresh(hass):
     fake_hass.config.path.return_value = "/nope"
     fake_hass.config_entries.async_forward_entry_setups = AsyncMock()
     with patch("custom_components.ns_reisadvies.NSUpdateCoordinator", return_value=coord), \
-         patch("custom_components.ns_reisadvies.async_call_later", side_effect=_capture_call_later), \
-         patch("custom_components.ns_reisadvies.async_track_time_interval"), \
+         patch("custom_components.ns_reisadvies.async_call_later"), \
+         patch("custom_components.ns_reisadvies.async_track_time_interval", side_effect=_capture_track_interval), \
          patch("custom_components.ns_reisadvies._recover_subentries_from_storage", new=AsyncMock()), \
          patch("custom_components.ns_reisadvies._backfill_entity_subentries"), \
          patch("custom_components.ns_reisadvies.os.path.isdir", return_value=False), \
          patch("custom_components.ns_reisadvies.websocket_api.async_register_command"):
         await async_setup_entry(fake_hass, entry)
-    # Invoke the captured closure to cover line 401
-    if "fn" in captured:
-        await captured["fn"](None)
+    # Invoke the captured periodic-refresh closure to cover its body.
+    assert "fn" in captured
+    await captured["fn"](None)
 
 
 async def test_async_setup_entry_skips_non_route_subentry(hass):
