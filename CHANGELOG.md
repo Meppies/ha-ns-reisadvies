@@ -4,6 +4,17 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.5] — 2026-05-09
+
+### Tests
+- New `tests/test_coordinator_extra.py` (~38 tests) covering `_fetch_journey_composition`, `_annotate_compositions`, `async_fetch_stations_geo`, `async_fetch_arcgis_position`, `async_fetch_full_rail_network`, `async_fetch_journey_route`, and `_async_update_data` tracked-trips merge / 404 cleanup / dedup. Brought `coordinator.py` coverage 29% → 74%.
+- New `tests/test_init_helpers.py` (~25 tests) for `_option`, `_hub_entry`, `_runtime`, `_live_sessions`, `_any_coordinator`, `_resolve_stops`, `_set_train_state`, `_set_stop_state`, `_cleanup_session`. Lifted `__init__.py` coverage 32% → 48%.
+- **Total coverage: 39% → 62%.** CI now gates regressions via `--cov-fail-under=60` so coverage cannot silently slide back.
+
+### Notes
+- No production-code changes; manifest version bump only.
+- The Silver `test-coverage` > 95% bar is still open. Remaining gap is primarily in `__init__.py` (`async_setup_entry` / WS handlers / `_async_register_card_resource`) and `config_flow.py` (subentry + reauth flows) — both need the HA frontend / lovelace fixture work that is tracked separately.
+
 ## [2.13.4] — 2026-05-08
 
 ### Fixed

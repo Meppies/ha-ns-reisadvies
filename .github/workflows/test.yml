@@ -41,6 +41,7 @@ jobs:
             --cov=custom_components/ns_reisadvies \
             --cov-report=term-missing \
             --cov-report=xml \
+          --cov-fail-under=60 \
             -v
 
       - name: Upload coverage report (3.13 only)
