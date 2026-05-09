@@ -170,3 +170,40 @@ async def test_async_update_listener_reloads_entry():
     entry = MagicMock(); entry.entry_id = "e1"
     await _async_update_listener(fake_hass, entry)
     fake_hass.config_entries.async_reload.assert_called_once_with("e1")
+
+
+async def test_rail_cache_writes_actually_invokes_write(tmp_path):
+    """executor_job actually invokes _write so the file is written."""
+    target_dir = tmp_path / "www"
+    fake_hass = MagicMock()
+    fake_hass.config.path.return_value = str(target_dir)
+    # Make executor_job actually invoke the inner function.
+    async def _exec(fn, *args):
+        return fn(*args)
+    fake_hass.async_add_executor_job = _exec
+    coord = MagicMock()
+    coord.async_fetch_full_rail_network = AsyncMock(return_value={"type": "FeatureCollection", "features": [{"x": 1}]})
+    await _async_refresh_rail_cache(fake_hass, coord, force=True)
+    target = target_dir / "rail.geojson"
+    assert target.exists()
+
+
+async def test_rail_cache_stat_oserror_triggers_refresh(tmp_path, monkeypatch):
+    """OSError on stat() forces a refresh (treats file as expired)."""
+    from pathlib import Path as _P
+    target_dir = tmp_path / "www"; target_dir.mkdir()
+    target = target_dir / "rail.geojson"
+    target.write_text("{}")
+    real_stat = _P.stat
+    def _stat(self, *a, **kw):
+        if str(self).endswith("rail.geojson"):
+            raise OSError("boom")
+        return real_stat(self, *a, **kw)
+    monkeypatch.setattr(_P, "stat", _stat)
+    fake_hass = MagicMock()
+    fake_hass.config.path.return_value = str(target_dir)
+    fake_hass.async_add_executor_job = AsyncMock()
+    coord = MagicMock()
+    coord.async_fetch_full_rail_network = AsyncMock(return_value={"type": "FeatureCollection", "features": [{}]})
+    await _async_refresh_rail_cache(fake_hass, coord, force=False)
+    coord.async_fetch_full_rail_network.assert_called_once()

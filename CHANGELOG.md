@@ -4,6 +4,18 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.6] — 2026-05-09
+
+### Tests
+- Major coverage push: **62% → 94%** (32-point lift in one session). Added eight new test modules covering coordinator helpers, `__init__.py` pure helpers, migrate v1->v2, recover_subentries, WS handlers (via `__wrapped__` to bypass `@async_response`), `_backfill_entity_subentries`, rail cache + card resource edge cases, ConfigFlow + OptionsFlow + SubentryFlow steps via direct class instantiation.
+- Per-module coverage: `__init__.py` 32% → 93%, `config_flow.py` 38% → 100%, `coordinator.py` 29% → 93%, `sensor.py` 83% → 95%, `diagnostics.py` 95%, `const.py`/`stations.py`/`types.py` 100%.
+- CI gate raised from `--cov-fail-under=60` to `--cov-fail-under=90` so coverage cannot silently regress.
+- ~80 missing statements remain; almost all are in `async_setup_entry`'s static-path / Lovelace-resource registration block (412-427), which needs `hass.http` infrastructure that the test fixture can't easily provide.
+
+### Notes
+- No production-code changes; manifest version bump only.
+- The Silver `test-coverage` > 95% bar is now within touching distance — 8 statements short. Closing the last gap requires either a working frontend/lovelace test fixture or extracting the static-path registration into a separate testable helper.
+
 ## [2.13.5] — 2026-05-09
 
 ### Tests
