@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import date as _dt_date, datetime, time as _dt_time, timedelta
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -19,6 +19,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
+from ._filter import apply_window_filter, compute_target_datetime
 from .const import (
     API_URL,
     ARCGIS_TREINEN_URL,
@@ -38,6 +39,27 @@ if TYPE_CHECKING:
     from .types import NSConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _parse_time(value: str | None) -> _dt_time | None:
+    """Parse a "HH:MM" string into a ``time`` object, or return None."""
+    if not value:
+        return None
+    try:
+        parts = str(value).split(":")
+        return _dt_time(int(parts[0]), int(parts[1]))
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_date(value: str | None) -> _dt_date | None:
+    """Parse a "YYYY-MM-DD" string into a ``date`` object, or return None."""
+    if not value:
+        return None
+    try:
+        return _dt_date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 async def async_validate_api_key(hass: HomeAssistant, api_key: str) -> str | None:
@@ -90,6 +112,10 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         scan_interval_minutes: int = 5,
         fav_hours: int = 6,
         fetch_composition: bool = False,
+        filter_days: list[int] | None = None,
+        filter_time: str | None = None,
+        filter_window_minutes: int = 0,
+        filter_date: str | None = None,
     ) -> None:
         # The hub config entry; used to read/write
         # ``entry.runtime_data.stations_geo`` (the per-HA-boot stations
@@ -101,6 +127,14 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self.to_station = to_station
         self.fav_hours = fav_hours
         self.fetch_composition = fetch_composition
+
+        # Per-route filter (v2.14.0). Stored as parsed Python types so
+        # _async_update_data can pass them straight to compute_target_datetime
+        # without re-parsing on every refresh.
+        self.filter_days: list[int] = list(filter_days or [])
+        self.filter_time: _dt_time | None = _parse_time(filter_time)
+        self.filter_window_minutes: int = max(0, min(360, int(filter_window_minutes or 0)))
+        self.filter_date: _dt_date | None = _parse_date(filter_date)
 
         # Central in-memory store for pinned favourites.
         # Mapping: ctx_recon -> epoch seconds at which it was pinned.
@@ -354,10 +388,21 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             raise UpdateFailed("No NS API key configured")
 
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        # If the route declares a per-route filter (days / time / date),
+        # compute the next valid moment and use it as the NS trip-search
+        # anchor. Falls back to "now" when the filter would be entirely
+        # in the past for a specific-date pin or when nothing is set.
+        target_dt = compute_target_datetime(
+            datetime.now(),
+            days=self.filter_days,
+            target_time=self.filter_time,
+            window_minutes=self.filter_window_minutes,
+            specific_date=self.filter_date,
+        ) or datetime.now()
         params = {
             "fromStation": self.from_station,
             "toStation": self.to_station,
-            "dateTime": datetime.now().isoformat(),
+            "dateTime": target_dt.isoformat(),
         }
 
         try:
@@ -436,6 +481,20 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                         x.get("legs") or [{}]
                     )[0].get("origin", {}).get("plannedDateTime", "")
                 )
+
+                # Per-route filter: keep only trips matching the
+                # requested window. Skipped entirely when the route
+                # declares no filter (preserves the v2.13.x behaviour
+                # of "show whatever NS gives us around now").
+                if (
+                    self.filter_days
+                    or self.filter_time is not None
+                    or self.filter_date is not None
+                    or self.filter_window_minutes > 0
+                ):
+                    all_trips = apply_window_filter(
+                        all_trips, target_dt, self.filter_window_minutes,
+                    )
 
                 # Optional: annotate each leg with carriage composition.
                 # Mutates legs in place by adding a `composition` key.

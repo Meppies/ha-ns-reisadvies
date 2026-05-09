@@ -47,11 +47,16 @@ from .const import (
     CONF_FETCH_COMPOSITION,
     CONF_LIVE_TRAIN_MAP,
     CONF_LIVE_MAP_REFRESH_SECONDS,
+    CONF_FILTER_DAYS,
+    CONF_FILTER_TIME,
+    CONF_FILTER_WINDOW_MINUTES,
+    CONF_FILTER_DATE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
     DEFAULT_FETCH_COMPOSITION,
     DEFAULT_LIVE_TRAIN_MAP,
     DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+    DEFAULT_FILTER_WINDOW_MINUTES,
 )
 from .coordinator import NSUpdateCoordinator
 from .types import NSConfigEntry, NSRuntimeData
@@ -359,6 +364,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
             scan_interval_minutes=scan_interval,
             fav_hours=fav_hours,
             fetch_composition=fetch_composition,
+            filter_days=subentry.data.get(CONF_FILTER_DAYS),
+            filter_time=subentry.data.get(CONF_FILTER_TIME),
+            filter_window_minutes=int(
+                subentry.data.get(
+                    CONF_FILTER_WINDOW_MINUTES, DEFAULT_FILTER_WINDOW_MINUTES,
+                )
+            ),
+            filter_date=subentry.data.get(CONF_FILTER_DATE),
         )
         await coordinator.async_load_tracked()
         # Use async_refresh (which never throws) instead of

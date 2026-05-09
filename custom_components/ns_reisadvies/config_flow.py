@@ -21,9 +21,14 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    DateSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TimeSelector,
 )
 
 from .const import (
@@ -38,11 +43,16 @@ from .const import (
     CONF_FETCH_COMPOSITION,
     CONF_LIVE_TRAIN_MAP,
     CONF_LIVE_MAP_REFRESH_SECONDS,
+    CONF_FILTER_DAYS,
+    CONF_FILTER_TIME,
+    CONF_FILTER_WINDOW_MINUTES,
+    CONF_FILTER_DATE,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
     DEFAULT_FETCH_COMPOSITION,
     DEFAULT_LIVE_TRAIN_MAP,
     DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+    DEFAULT_FILTER_WINDOW_MINUTES,
 )
 from .stations import STATIONS
 
@@ -278,22 +288,40 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 from_st = user_input[CONF_FROM_STATION]
                 to_st = user_input[CONF_TO_STATION]
                 title = f"{from_st} -> {to_st}"
+                # Build the route data dict, preserving filter fields when set.
+                # Empty/None filter fields are dropped so subentries created in
+                # earlier versions stay byte-identical when the user re-saves.
+                route_data: dict[str, Any] = {
+                    CONF_FROM_STATION: from_st,
+                    CONF_TO_STATION: to_st,
+                }
+                _filter_days = user_input.get(CONF_FILTER_DAYS) or []
+                if _filter_days:
+                    route_data[CONF_FILTER_DAYS] = [int(d) for d in _filter_days]
+                _filter_time = (user_input.get(CONF_FILTER_TIME) or "").strip()
+                if _filter_time:
+                    route_data[CONF_FILTER_TIME] = _filter_time
+                _filter_window = int(
+                    user_input.get(
+                        CONF_FILTER_WINDOW_MINUTES, DEFAULT_FILTER_WINDOW_MINUTES,
+                    )
+                )
+                if _filter_window:
+                    route_data[CONF_FILTER_WINDOW_MINUTES] = _filter_window
+                _filter_date = (user_input.get(CONF_FILTER_DATE) or "").strip()
+                if _filter_date:
+                    route_data[CONF_FILTER_DATE] = _filter_date
+
                 if reconfigure:
                     return self.async_update_and_abort(
                         self._get_reconfigure_entry(),  # type: ignore[attr-defined]
                         self._get_reconfigure_subentry(),  # type: ignore[attr-defined]
-                        data={
-                            CONF_FROM_STATION: from_st,
-                            CONF_TO_STATION: to_st,
-                        },
+                        data=route_data,
                         title=title,
                     )
                 return self.async_create_entry(
                     title=title,
-                    data={
-                        CONF_FROM_STATION: from_st,
-                        CONF_TO_STATION: to_st,
-                    },
+                    data=route_data,
                     unique_id=f"{from_st}_{to_st}".lower(),
                 )
 
@@ -315,6 +343,47 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 CONF_TO_STATION,
                 default=defaults.get(CONF_TO_STATION, vol.UNDEFINED),
             ): _station_selector(),
+            vol.Optional(
+                CONF_FILTER_DAYS,
+                default=[str(d) for d in defaults.get(CONF_FILTER_DAYS, [])],
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        {"value": "0", "label": "Mon"},
+                        {"value": "1", "label": "Tue"},
+                        {"value": "2", "label": "Wed"},
+                        {"value": "3", "label": "Thu"},
+                        {"value": "4", "label": "Fri"},
+                        {"value": "5", "label": "Sat"},
+                        {"value": "6", "label": "Sun"},
+                    ],
+                    mode=SelectSelectorMode.LIST,
+                    multiple=True,
+                    translation_key="filter_days",
+                ),
+            ),
+            vol.Optional(
+                CONF_FILTER_TIME,
+                default=defaults.get(CONF_FILTER_TIME, vol.UNDEFINED),
+            ): TimeSelector(),
+            vol.Optional(
+                CONF_FILTER_WINDOW_MINUTES,
+                default=int(
+                    defaults.get(CONF_FILTER_WINDOW_MINUTES, DEFAULT_FILTER_WINDOW_MINUTES)
+                ),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0,
+                    max=360,
+                    step=15,
+                    unit_of_measurement="min",
+                    mode=NumberSelectorMode.SLIDER,
+                ),
+            ),
+            vol.Optional(
+                CONF_FILTER_DATE,
+                default=defaults.get(CONF_FILTER_DATE, vol.UNDEFINED),
+            ): DateSelector(),
         })
         step_id = "reconfigure" if reconfigure else "user"
         return self.async_show_form(step_id=step_id, data_schema=schema, errors=errors)

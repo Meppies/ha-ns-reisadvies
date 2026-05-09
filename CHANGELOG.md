@@ -4,6 +4,58 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0] — 2026-05-09
+
+### Added — per-route trip filter
+Each route subentry now accepts four optional, fully combinable filters
+that decide which trips the sensor surfaces and what `dateTime` anchor
+the integration sends to the NS API:
+
+- **Days of the week** (multi-select Mon–Sun). Once today's selection
+  has elapsed (including its window), the sensor rolls forward to the
+  next selected day.
+- **Time of day** (HH:MM). Combined with the window slider this defines
+  the search anchor.
+- **Window** (slider, 0–360 min in 15-minute steps). 0 means "no fuzz —
+  hide trips before the anchor". A non-zero value keeps trips inside
+  `[anchor − window, anchor + window]`.
+- **Specific date** (YYYY-MM-DD). Pins the route to one date and
+  short-circuits the rolling-day behaviour. Once that date plus the
+  window has fully passed the sensor falls back to "now".
+
+Combinations make sense — e.g. *Mon + Wed + Fri at 08:00 ±60 min* for
+a commuter route, or *26 December 2026 at 14:00* for a one-off trip.
+Empty filters preserve the existing v2.13.x behaviour byte-for-byte.
+
+### Implementation
+- New pure module `_filter.py` with `compute_target_datetime()` and
+  `apply_window_filter()`. Zero Home Assistant or aiohttp imports —
+  fully testable in isolation.
+- `coordinator.py`: constructor accepts the four filter args, parses
+  them once at setup, applies them on every refresh.
+- `config_flow.py` (subentry): adds `SelectSelector` (days, multi),
+  `TimeSelector`, `NumberSelector` slider, `DateSelector`. Reconfigure
+  pre-fills existing values.
+- `__init__.py`: passes filter fields from `subentry.data` to the
+  coordinator at setup.
+- `strings.json` + translations (`en`, `nl`): full label + description
+  coverage for the new fields.
+
+### Tests
+- New `tests/test_filter.py` (~13 tests) covers every branch of
+  `compute_target_datetime` and `apply_window_filter`.
+- New `tests/test_coordinator_filter.py` covers `_parse_time` /
+  `_parse_date` helpers, constructor parsing, and `_async_update_data`
+  with and without filters (verifies API `dateTime` and post-filtering).
+- New `tests/test_subentry_flow_filter.py` covers the new schema
+  branches in the subentry flow.
+- Coverage gate **stays at `--cov-fail-under=100`**.
+
+### Notes
+- All four filter fields are optional. Existing routes upgraded from
+  v2.13.x keep working without any user action.
+- Manifest version bumped 2.13.11 → 2.14.0 (minor: new feature).
+
 ## [2.13.11] — 2026-05-09
 
 ### Tests

@@ -49,25 +49,41 @@
       "step": {
         "user": {
           "title": "Add a route",
-          "description": "Configure the departure and arrival station for a new route.",
+          "description": "Configure the departure and arrival station for a new route. The filter fields below are optional — leave them blank to see all upcoming trips.",
           "data": {
             "act_station": "Departure station",
-            "arr_station": "Arrival station"
+            "arr_station": "Arrival station",
+            "filter_days": "Filter on days of the week",
+            "filter_time": "Filter on time of day",
+            "filter_window_minutes": "Window around the chosen time (± minutes)",
+            "filter_date": "Filter on a specific date"
           },
           "data_description": {
             "act_station": "The station where this route starts.",
-            "arr_station": "The station where this route ends."
+            "arr_station": "The station where this route ends.",
+            "filter_days": "Pick one or more weekdays. The sensor jumps to the next selected day once today's selection is in the past. Leave empty to allow every day.",
+            "filter_time": "Anchor moment for the trip search. Combined with the window slider below. Leave empty to use the current time.",
+            "filter_window_minutes": "How many minutes before and after the chosen time to keep in the result. 0 means: only show trips at or after the anchor.",
+            "filter_date": "Pin the route to one specific date. Day-of-week and rolling behaviour are skipped — the sensor goes empty once that date plus its window has passed."
           }
         },
         "reconfigure": {
           "title": "Reconfigure route",
           "data": {
             "act_station": "Departure station",
-            "arr_station": "Arrival station"
+            "arr_station": "Arrival station",
+            "filter_days": "Filter on days of the week",
+            "filter_time": "Filter on time of day",
+            "filter_window_minutes": "Window around the chosen time (± minutes)",
+            "filter_date": "Filter on a specific date"
           },
           "data_description": {
             "act_station": "The station where this route starts.",
-            "arr_station": "The station where this route ends."
+            "arr_station": "The station where this route ends.",
+            "filter_days": "Pick one or more weekdays. The sensor jumps to the next selected day once today's selection is in the past. Leave empty to allow every day.",
+            "filter_time": "Anchor moment for the trip search. Combined with the window slider below. Leave empty to use the current time.",
+            "filter_window_minutes": "How many minutes before and after the chosen time to keep in the result. 0 means: only show trips at or after the anchor.",
+            "filter_date": "Pin the route to one specific date. Day-of-week and rolling behaviour are skipped — the sensor goes empty once that date plus its window has passed."
           }
         }
       },

@@ -30,12 +30,25 @@ CONF_FETCH_COMPOSITION = "fetch_composition"
 CONF_LIVE_TRAIN_MAP = "live_train_map"
 CONF_LIVE_MAP_REFRESH_SECONDS = "live_map_refresh_seconds"
 
+# Per-route filter (v2.14.0). All optional, all combinable.
+# - filter_days: list[int] of weekday numbers (0=Mon … 6=Sun). Empty/None = every day.
+# - filter_time: ISO time string "HH:MM" or None.
+# - filter_window_minutes: int 0-360 (steps of 15). Window applies on
+#   both sides of the target moment when filtering returned trips.
+# - filter_date: ISO date "YYYY-MM-DD" or None. Pinning to a single
+#   date overrides the rolling-day behaviour for that route.
+CONF_FILTER_DAYS = "filter_days"
+CONF_FILTER_TIME = "filter_time"
+CONF_FILTER_WINDOW_MINUTES = "filter_window_minutes"
+CONF_FILTER_DATE = "filter_date"
+
 # Defaults
 DEFAULT_SCAN_INTERVAL = 5
 DEFAULT_FAV_HOURS = 6  # 0 disables expiry
 DEFAULT_FETCH_COMPOSITION = False  # extra API calls — opt in
 DEFAULT_LIVE_TRAIN_MAP = False  # on-demand only, but icon is opt-in
 DEFAULT_LIVE_MAP_REFRESH_SECONDS = 10  # poll cadence while modal is open
+DEFAULT_FILTER_WINDOW_MINUTES = 0  # default: no fuzz around the target
 
 # API URLs
 API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips"
