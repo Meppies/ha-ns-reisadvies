@@ -4,6 +4,28 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.2] — 2026-05-09
+
+### Changed — collapsible filter section with header
+- The four optional filter fields (days / time / margin / specific
+  date) are now grouped under an explicit, collapsible **Optional
+  filters** section inside the route subentry form. The section header
+  reads *"Optional filters — leave blank for default behaviour"* and
+  carries a one-line summary that explains what leaving them blank
+  does. Section starts expanded.
+- Sits **directly between** the two station fields and the filters,
+  so the "all of these are optional" message is right where the user
+  is looking, not at the top of the page.
+- Implemented via Home Assistant's `data_entry_flow.section()` helper.
+  User input arrives nested as `user_input["filters"][filter_*]`; the
+  parser also accepts the legacy flat shape so older callers keep
+  working.
+- Mirrored across `strings.json`, `translations/en.json`, and
+  `translations/nl.json`.
+
+No behavioural changes — pure UI restructuring. Saved subentry data
+stays flat (backwards compatible with v2.13.x and v2.14.x routes).
+
 ## [2.14.1] — 2026-05-09
 
 ### Changed — UX polish on the route subentry form

@@ -49,42 +49,62 @@
       "step": {
         "user": {
           "title": "Add a route",
-          "description": "Configure the departure and arrival station for a new route.\n\nAll fields below the two stations are **optional** — leave them blank to keep the default behaviour (every day, the next trip from now). Filling them in shifts which trips the sensor returns; details per field below.",
+          "description": "Configure the departure and arrival station for a new route.",
           "data": {
             "act_station": "Departure station",
-            "arr_station": "Arrival station",
-            "filter_days": "Days of the week",
-            "filter_time": "Time of day",
-            "filter_window_minutes": "Margin around the chosen time (± minutes)",
-            "filter_date": "Specific date"
+            "arr_station": "Arrival station"
           },
           "data_description": {
             "act_station": "The station where this route starts.",
-            "arr_station": "The station where this route ends.",
-            "filter_days": "Pick one or more weekdays. The sensor rolls forward to the next selected day once today's selection is in the past. Leave empty to allow every day.",
-            "filter_time": "Anchor moment for the trip search. Combined with the margin slider below. Leave empty to use the current time.",
-            "filter_window_minutes": "How many minutes before and after the chosen time to keep in the result. 0 means: only show trips at or after the anchor.",
-            "filter_date": "Pin the route to one specific date. Day-of-week and rolling behaviour are skipped — the sensor empties once that date plus its margin has passed."
+            "arr_station": "The station where this route ends."
+          },
+          "sections": {
+            "filters": {
+              "name": "Optional filters — leave blank for default behaviour",
+              "description": "All four fields below are optional. Leave them all blank to see the next trip from now, every day. Fill them in to pin the sensor to specific weekdays, a time of day, a date, or a margin around a time.",
+              "data": {
+                "filter_days": "Days of the week",
+                "filter_time": "Time of day",
+                "filter_window_minutes": "Margin around the chosen time (± minutes)",
+                "filter_date": "Specific date"
+              },
+              "data_description": {
+                "filter_days": "Pick one or more weekdays. The sensor rolls forward to the next selected day once today's selection is in the past. Leave empty to allow every day.",
+                "filter_time": "Anchor moment for the trip search. Combined with the margin slider below. Leave empty to use the current time.",
+                "filter_window_minutes": "How many minutes before and after the chosen time to keep in the result. 0 means: only show trips at or after the anchor.",
+                "filter_date": "Pin the route to one specific date. Day-of-week and rolling behaviour are skipped — the sensor empties once that date plus its margin has passed."
+              }
+            }
           }
         },
         "reconfigure": {
           "title": "Reconfigure route",
-          "description": "Adjust this route.\n\nAll fields below the two stations are **optional** — leave them blank to keep the default behaviour (every day, the next trip from now). Filling them in shifts which trips the sensor returns; details per field below.",
+          "description": "Adjust this route.",
           "data": {
             "act_station": "Departure station",
-            "arr_station": "Arrival station",
-            "filter_days": "Days of the week",
-            "filter_time": "Time of day",
-            "filter_window_minutes": "Margin around the chosen time (± minutes)",
-            "filter_date": "Specific date"
+            "arr_station": "Arrival station"
           },
           "data_description": {
             "act_station": "The station where this route starts.",
-            "arr_station": "The station where this route ends.",
-            "filter_days": "Pick one or more weekdays. The sensor rolls forward to the next selected day once today's selection is in the past. Leave empty to allow every day.",
-            "filter_time": "Anchor moment for the trip search. Combined with the margin slider below. Leave empty to use the current time.",
-            "filter_window_minutes": "How many minutes before and after the chosen time to keep in the result. 0 means: only show trips at or after the anchor.",
-            "filter_date": "Pin the route to one specific date. Day-of-week and rolling behaviour are skipped — the sensor empties once that date plus its margin has passed."
+            "arr_station": "The station where this route ends."
+          },
+          "sections": {
+            "filters": {
+              "name": "Optional filters — leave blank for default behaviour",
+              "description": "All four fields below are optional. Leave them all blank to see the next trip from now, every day. Fill them in to pin the sensor to specific weekdays, a time of day, a date, or a margin around a time.",
+              "data": {
+                "filter_days": "Days of the week",
+                "filter_time": "Time of day",
+                "filter_window_minutes": "Margin around the chosen time (± minutes)",
+                "filter_date": "Specific date"
+              },
+              "data_description": {
+                "filter_days": "Pick one or more weekdays. The sensor rolls forward to the next selected day once today's selection is in the past. Leave empty to allow every day.",
+                "filter_time": "Anchor moment for the trip search. Combined with the margin slider below. Leave empty to use the current time.",
+                "filter_window_minutes": "How many minutes before and after the chosen time to keep in the result. 0 means: only show trips at or after the anchor.",
+                "filter_date": "Pin the route to one specific date. Day-of-week and rolling behaviour are skipped — the sensor empties once that date plus its margin has passed."
+              }
+            }
           }
         }
       },

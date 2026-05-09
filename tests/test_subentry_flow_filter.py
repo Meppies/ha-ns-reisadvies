@@ -59,18 +59,22 @@ def _mk(parent=None, sub=None):
 
 
 async def test_user_step_with_filter_fields_persists_them():
+    """v2.14.2: filter fields arrive nested under "filters" section."""
     f = _mk()
     await f.async_step_user(user_input={
         CONF_FROM_STATION: "Hilversum",
         CONF_TO_STATION: "Duivendrecht",
-        CONF_FILTER_DAYS: ["0", "2", "4"],
-        CONF_FILTER_TIME: "08:00",
-        CONF_FILTER_WINDOW_MINUTES: 60,
-        CONF_FILTER_DATE: "2026-12-24",
+        "filters": {
+            CONF_FILTER_DAYS: ["0", "2", "4"],
+            CONF_FILTER_TIME: "08:00",
+            CONF_FILTER_WINDOW_MINUTES: 60,
+            CONF_FILTER_DATE: "2026-12-24",
+        },
     })
     f.async_create_entry.assert_called_once()
     _, kwargs = f.async_create_entry.call_args
     data = kwargs["data"]
+    # Subentry data stays FLAT (backwards compat with v2.13.x routes).
     assert data[CONF_FILTER_DAYS] == [0, 2, 4]
     assert data[CONF_FILTER_TIME] == "08:00"
     assert data[CONF_FILTER_WINDOW_MINUTES] == 60
@@ -78,15 +82,17 @@ async def test_user_step_with_filter_fields_persists_them():
 
 
 async def test_user_step_filter_fields_omitted_when_empty():
-    """Empty/zero filter values are not stored — keeps subentry tidy."""
+    """Empty section values are not stored — keeps subentry tidy."""
     f = _mk()
     await f.async_step_user(user_input={
         CONF_FROM_STATION: "Hilversum",
         CONF_TO_STATION: "Duivendrecht",
-        CONF_FILTER_DAYS: [],
-        CONF_FILTER_TIME: "",
-        CONF_FILTER_WINDOW_MINUTES: 0,
-        CONF_FILTER_DATE: "",
+        "filters": {
+            CONF_FILTER_DAYS: [],
+            CONF_FILTER_TIME: "",
+            CONF_FILTER_WINDOW_MINUTES: 0,
+            CONF_FILTER_DATE: "",
+        },
     })
     f.async_create_entry.assert_called_once()
     _, kwargs = f.async_create_entry.call_args
@@ -111,7 +117,7 @@ async def test_reconfigure_prefills_existing_filter_values():
         CONF_FILTER_DATE: "2026-12-24",
     }
     f = _mk(parent=parent, sub=sub)
-    result = await f.async_step_reconfigure(user_input=None)
+    await f.async_step_reconfigure(user_input=None)
     f.async_show_form.assert_called_once()
     # The schema is built; the test verifies no crash and correct step.
     _, kwargs = f.async_show_form.call_args
@@ -119,13 +125,32 @@ async def test_reconfigure_prefills_existing_filter_values():
 
 
 async def test_user_step_filter_window_int_coerced():
-    """A string-like number from the slider is coerced to int."""
+    """A string-like number from the slider is coerced to int (nested)."""
     f = _mk()
     await f.async_step_user(user_input={
         CONF_FROM_STATION: "Hilversum",
         CONF_TO_STATION: "Duivendrecht",
-        CONF_FILTER_WINDOW_MINUTES: "45",  # NumberSelector may yield str
+        "filters": {
+            CONF_FILTER_WINDOW_MINUTES: "45",  # NumberSelector may yield str
+        },
     })
     f.async_create_entry.assert_called_once()
     _, kwargs = f.async_create_entry.call_args
     assert kwargs["data"][CONF_FILTER_WINDOW_MINUTES] == 45
+
+
+async def test_user_step_flat_filter_input_still_works():
+    """Hybrid path: flat user_input (no "filters" section key) still parses
+    — covers the backwards-compat fallback in _show_form."""
+    f = _mk()
+    await f.async_step_user(user_input={
+        CONF_FROM_STATION: "Hilversum",
+        CONF_TO_STATION: "Duivendrecht",
+        CONF_FILTER_TIME: "09:30",
+        CONF_FILTER_WINDOW_MINUTES: 15,
+    })
+    f.async_create_entry.assert_called_once()
+    _, kwargs = f.async_create_entry.call_args
+    data = kwargs["data"]
+    assert data[CONF_FILTER_TIME] == "09:30"
+    assert data[CONF_FILTER_WINDOW_MINUTES] == 15

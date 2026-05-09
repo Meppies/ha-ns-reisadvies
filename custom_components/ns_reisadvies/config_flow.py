@@ -20,6 +20,7 @@ from homeassistant.config_entries import (
     SubentryFlowResult,
 )
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers.selector import (
     DateSelector,
     NumberSelector,
@@ -283,6 +284,13 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                     existing.append((fr, to))
 
         if user_input is not None:
+            # Filter fields are now grouped under a section() — they arrive
+            # nested as user_input["filters"][...]. Older callers (and tests
+            # that pre-date v2.14.2) still pass them flat, so accept either.
+            _section = user_input.get("filters")
+            src: dict[str, Any] = (
+                _section if isinstance(_section, dict) else user_input
+            )
             errs = _validate_route(user_input, existing_routes=existing)
             errors.update(errs)
             if not errors:
@@ -296,20 +304,20 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                     CONF_FROM_STATION: from_st,
                     CONF_TO_STATION: to_st,
                 }
-                _filter_days = user_input.get(CONF_FILTER_DAYS) or []
+                _filter_days = src.get(CONF_FILTER_DAYS) or []
                 if _filter_days:
                     route_data[CONF_FILTER_DAYS] = [int(d) for d in _filter_days]
-                _filter_time = (user_input.get(CONF_FILTER_TIME) or "").strip()
+                _filter_time = (src.get(CONF_FILTER_TIME) or "").strip()
                 if _filter_time:
                     route_data[CONF_FILTER_TIME] = _filter_time
                 _filter_window = int(
-                    user_input.get(
+                    src.get(
                         CONF_FILTER_WINDOW_MINUTES, DEFAULT_FILTER_WINDOW_MINUTES,
                     )
                 )
                 if _filter_window:
                     route_data[CONF_FILTER_WINDOW_MINUTES] = _filter_window
-                _filter_date = (user_input.get(CONF_FILTER_DATE) or "").strip()
+                _filter_date = (src.get(CONF_FILTER_DATE) or "").strip()
                 if _filter_date:
                     route_data[CONF_FILTER_DATE] = _filter_date
 
@@ -344,47 +352,56 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 CONF_TO_STATION,
                 default=defaults.get(CONF_TO_STATION, vol.UNDEFINED),
             ): _station_selector(),
-            vol.Optional(
-                CONF_FILTER_DAYS,
-                default=[str(d) for d in defaults.get(CONF_FILTER_DAYS, [])],
-            ): SelectSelector(
-                SelectSelectorConfig(
-                    options=[
-                        SelectOptionDict(value="0", label="Mon"),
-                        SelectOptionDict(value="1", label="Tue"),
-                        SelectOptionDict(value="2", label="Wed"),
-                        SelectOptionDict(value="3", label="Thu"),
-                        SelectOptionDict(value="4", label="Fri"),
-                        SelectOptionDict(value="5", label="Sat"),
-                        SelectOptionDict(value="6", label="Sun"),
-                    ],
-                    mode=SelectSelectorMode.LIST,
-                    multiple=True,
-                    translation_key="filter_days",
-                ),
+            vol.Required("filters"): section(
+                vol.Schema({
+                    vol.Optional(
+                        CONF_FILTER_DAYS,
+                        default=[str(d) for d in defaults.get(CONF_FILTER_DAYS, [])],
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=[
+                                SelectOptionDict(value="0", label="Mon"),
+                                SelectOptionDict(value="1", label="Tue"),
+                                SelectOptionDict(value="2", label="Wed"),
+                                SelectOptionDict(value="3", label="Thu"),
+                                SelectOptionDict(value="4", label="Fri"),
+                                SelectOptionDict(value="5", label="Sat"),
+                                SelectOptionDict(value="6", label="Sun"),
+                            ],
+                            mode=SelectSelectorMode.LIST,
+                            multiple=True,
+                            translation_key="filter_days",
+                        ),
+                    ),
+                    vol.Optional(
+                        CONF_FILTER_TIME,
+                        default=defaults.get(CONF_FILTER_TIME, vol.UNDEFINED),
+                    ): TimeSelector(),
+                    vol.Optional(
+                        CONF_FILTER_WINDOW_MINUTES,
+                        default=int(
+                            defaults.get(
+                                CONF_FILTER_WINDOW_MINUTES,
+                                DEFAULT_FILTER_WINDOW_MINUTES,
+                            )
+                        ),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=0,
+                            max=360,
+                            step=15,
+                            unit_of_measurement="min",
+                            mode=NumberSelectorMode.SLIDER,
+                        ),
+                    ),
+                    vol.Optional(
+                        CONF_FILTER_DATE,
+                        default=defaults.get(CONF_FILTER_DATE, vol.UNDEFINED),
+                    ): DateSelector(),
+                }),
+                # Section is shown expanded by default.
+                {"collapsed": False},
             ),
-            vol.Optional(
-                CONF_FILTER_TIME,
-                default=defaults.get(CONF_FILTER_TIME, vol.UNDEFINED),
-            ): TimeSelector(),
-            vol.Optional(
-                CONF_FILTER_WINDOW_MINUTES,
-                default=int(
-                    defaults.get(CONF_FILTER_WINDOW_MINUTES, DEFAULT_FILTER_WINDOW_MINUTES)
-                ),
-            ): NumberSelector(
-                NumberSelectorConfig(
-                    min=0,
-                    max=360,
-                    step=15,
-                    unit_of_measurement="min",
-                    mode=NumberSelectorMode.SLIDER,
-                ),
-            ),
-            vol.Optional(
-                CONF_FILTER_DATE,
-                default=defaults.get(CONF_FILTER_DATE, vol.UNDEFINED),
-            ): DateSelector(),
         })
         step_id = "reconfigure" if reconfigure else "user"
         return self.async_show_form(step_id=step_id, data_schema=schema, errors=errors)

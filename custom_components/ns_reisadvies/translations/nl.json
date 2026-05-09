@@ -36,38 +36,62 @@
       "step": {
         "user": {
           "title": "Route toevoegen",
-          "description": "Stel het vertrek- en aankomststation in voor een nieuwe route.\n\nAlle velden onder de twee stations zijn **optioneel** — leeg laten = standaardgedrag (elke dag, eerstvolgende reis vanaf nu). Invullen verschuift welke reizen de sensor laat zien; details per veld hieronder.",
+          "description": "Stel het vertrek- en aankomststation in voor een nieuwe route.",
           "data": {
             "act_station": "Vertrekstation",
-            "arr_station": "Aankomststation",
-            "filter_days": "Dagen van de week",
-            "filter_time": "Tijdstip",
-            "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
-            "filter_date": "Specifieke datum"
+            "arr_station": "Aankomststation"
           },
           "data_description": {
-            "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
-            "filter_time": "Ankermoment voor de reis-zoekopdracht. Werkt samen met de marge-slider hieronder. Leeg laten betekent: gebruik de huidige tijd.",
-            "filter_window_minutes": "Hoeveel minuten vóór en na de gekozen tijd in de resultaten blijven. 0 betekent: laat alleen reizen op of ná het ankermoment zien.",
-            "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is."
+            "act_station": "Het station waar deze route begint.",
+            "arr_station": "Het station waar deze route eindigt."
+          },
+          "sections": {
+            "filters": {
+              "name": "Optionele filters — leeg laten voor standaardgedrag",
+              "description": "Alle vier velden hieronder zijn optioneel. Leeg laten = eerstvolgende reis vanaf nu, elke dag. Invullen pint de sensor op specifieke weekdagen, een tijdstip, een datum of een marge rondom een tijd.",
+              "data": {
+                "filter_days": "Dagen van de week",
+                "filter_time": "Tijdstip",
+                "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
+                "filter_date": "Specifieke datum"
+              },
+              "data_description": {
+                "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
+                "filter_time": "Ankermoment voor de reis-zoekopdracht. Werkt samen met de marge-slider hieronder. Leeg laten betekent: gebruik de huidige tijd.",
+                "filter_window_minutes": "Hoeveel minuten vóór en na de gekozen tijd in de resultaten blijven. 0 betekent: laat alleen reizen op of ná het ankermoment zien.",
+                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is."
+              }
+            }
           }
         },
         "reconfigure": {
           "title": "Route aanpassen",
-          "description": "Pas deze route aan.\n\nAlle velden onder de twee stations zijn **optioneel** — leeg laten = standaardgedrag (elke dag, eerstvolgende reis vanaf nu). Invullen verschuift welke reizen de sensor laat zien; details per veld hieronder.",
+          "description": "Pas deze route aan.",
           "data": {
             "act_station": "Vertrekstation",
-            "arr_station": "Aankomststation",
-            "filter_days": "Dagen van de week",
-            "filter_time": "Tijdstip",
-            "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
-            "filter_date": "Specifieke datum"
+            "arr_station": "Aankomststation"
           },
           "data_description": {
-            "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
-            "filter_time": "Ankermoment voor de reis-zoekopdracht. Werkt samen met de marge-slider hieronder. Leeg laten betekent: gebruik de huidige tijd.",
-            "filter_window_minutes": "Hoeveel minuten vóór en na de gekozen tijd in de resultaten blijven. 0 betekent: laat alleen reizen op of ná het ankermoment zien.",
-            "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is."
+            "act_station": "Het station waar deze route begint.",
+            "arr_station": "Het station waar deze route eindigt."
+          },
+          "sections": {
+            "filters": {
+              "name": "Optionele filters — leeg laten voor standaardgedrag",
+              "description": "Alle vier velden hieronder zijn optioneel. Leeg laten = eerstvolgende reis vanaf nu, elke dag. Invullen pint de sensor op specifieke weekdagen, een tijdstip, een datum of een marge rondom een tijd.",
+              "data": {
+                "filter_days": "Dagen van de week",
+                "filter_time": "Tijdstip",
+                "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
+                "filter_date": "Specifieke datum"
+              },
+              "data_description": {
+                "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
+                "filter_time": "Ankermoment voor de reis-zoekopdracht. Werkt samen met de marge-slider hieronder. Leeg laten betekent: gebruik de huidige tijd.",
+                "filter_window_minutes": "Hoeveel minuten vóór en na de gekozen tijd in de resultaten blijven. 0 betekent: laat alleen reizen op of ná het ankermoment zien.",
+                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is."
+              }
+            }
           }
         }
       },
