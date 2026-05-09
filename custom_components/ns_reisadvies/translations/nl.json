@@ -174,6 +174,10 @@
           "description": "De ctxRecon-string van de eerder gepinde rit."
         }
       }
+    },
+    "refresh_rail_cache": {
+      "name": "Spoor-cache vernieuwen",
+      "description": "Forceer een verse download van de ProRail spoor-GeoJSON die de live trein-kaart gebruikt. Gebruik dit als de live-kaart een rechte lijn tussen stations toont in plaats van de echte rails — meestal betekent dit dat de cache mist omdat een eerdere automatische download is mislukt."
     }
   },
   "exceptions": {

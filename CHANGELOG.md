@@ -4,6 +4,42 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.5] — 2026-05-09
+
+### Fixed — live train map straight-line fallback (rail cache 404)
+The grey rail-base layer and rail-snapped colored route both depend on
+a one-shot download of the full NL rail network from ProRail
+(`rail.geojson`, ~5–10 MB). On the live Mac mini Home Assistant
+instance this file was missing (HTTP 404), so the live map fell back
+to drawing straight lines between stations and skipped the grey base
+layer entirely.
+
+Live debugging via the browser identified two contributing causes:
+- The cache refresh ran 30 seconds after every boot but only refetched
+  if the file was missing **or** older than 7 days. When the very
+  first ProRail fetch failed silently (transient 503), the file never
+  appeared and there was no signal in the HA log.
+- After a HACS update the file is sometimes wiped from disk, leaving
+  the integration to silently wait a week for the next scheduled
+  refresh.
+
+Fix:
+- Initial refresh now runs **5 seconds** after boot (was 30) and uses
+  `force=True` whenever the cache file is missing — so a missing file
+  triggers a fresh download immediately on the next restart.
+- New service **`ns_reisadvies.refresh_rail_cache`** lets the user (or
+  an automation) force an immediate rebuild from Developer Tools →
+  Services without restarting HA.
+- `_async_refresh_rail_cache` now logs an INFO line when it starts
+  refreshing and a WARNING with a clear "trigger the
+  refresh_rail_cache service" hint when ProRail returns no data.
+
+### Notes
+This release does not change the ReferenceError fix from v2.15.4 or
+the pane fix from v2.15.3 — both stay in. After updating, if the live
+map still draws straight lines, run *Developer Tools → Services →
+NS Reisadvies: Refresh rail cache* once to rebuild the cache.
+
 ## [2.15.4] — 2026-05-09
 
 ### Fixed — live train map ReferenceError on render

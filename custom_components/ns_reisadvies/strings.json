@@ -191,6 +191,10 @@
           "description": "The ctxRecon string of the trip to unpin."
         }
       }
+    },
+    "refresh_rail_cache": {
+      "name": "Refresh rail cache",
+      "description": "Force a fresh download of the ProRail rail-network GeoJSON used by the live train map. Use this when the live map renders straight-line routes — it usually means the cache file is missing or stale because a previous scheduled refresh failed."
     }
   },
   "exceptions": {

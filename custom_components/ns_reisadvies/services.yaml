@@ -25,3 +25,10 @@ untrack_trip:
       example: "¶HKI¶T¶F=8400621@O=Amsterdam Centraal..."
       selector:
         text:
+
+# v2.15.5: manual force-rebuild of the cached ProRail rail-network
+# GeoJSON. Useful when the live train map shows straight-line routes
+# (an indication that the cache is missing or stale, usually because
+# the public ProRail endpoint had a transient outage during the
+# scheduled refresh).
+refresh_rail_cache: {}

@@ -404,8 +404,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         websocket_api.async_register_command(hass, _ws_track_train_stop)
         hass.data[DOMAIN]["_ws_registered"] = True
 
-    # Schedule the rail-cache refresh once per HA boot. Runs ~30s after
+    # Schedule the rail-cache refresh once per HA boot. Runs ~5s after
     # setup so the integration finishes booting first, then weekly.
+    # v2.15.5: shortened from 30s to 5s and re-runs forcefully on every
+    # boot when the cache file is missing (e.g. cleared during HACS
+    # update or never written because the very first ProRail fetch
+    # failed). Also exposes `ns_reisadvies.refresh_rail_cache` so the
+    # user can trigger a manual rebuild from Developer Tools when the
+    # public ProRail endpoint had a transient outage.
     if not hass.data[DOMAIN].get("_rail_refresh_scheduled") and coordinators:
         hass.data[DOMAIN]["_rail_refresh_scheduled"] = True
         first_coord = next(iter(coordinators.values()))
@@ -413,10 +419,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         async def _periodic_rail_refresh(_now: Any = None) -> None:
             await _async_refresh_rail_cache(hass, first_coord)
 
-        async_call_later(hass, 30, _periodic_rail_refresh)
+        async def _initial_rail_refresh(_now: Any = None) -> None:
+            # Force a fresh download on every boot when the file is
+            # missing — much friendlier than waiting a week for the
+            # next scheduled refresh after a failed first attempt.
+            www_dir = hass.config.path("custom_components/ns_reisadvies/www")
+            target = Path(www_dir) / RAIL_FILE
+            try:
+                missing = not target.exists()
+            except OSError:
+                missing = True
+            await _async_refresh_rail_cache(hass, first_coord, force=missing)
+
+        async_call_later(hass, 5, _initial_rail_refresh)
         async_track_time_interval(
             hass, _periodic_rail_refresh, RAIL_REFRESH_INTERVAL,
         )
+
+        # Manual trigger so the user (or an automation) can force a
+        # rebuild without restarting HA.
+        async def _service_refresh_rail_cache(_call: Any) -> None:
+            _LOGGER.info("NS Reisadvies: manual rail cache refresh requested")
+            await _async_refresh_rail_cache(hass, first_coord, force=True)
+
+        if not hass.services.has_service(DOMAIN, "refresh_rail_cache"):
+            hass.services.async_register(
+                DOMAIN, "refresh_rail_cache", _service_refresh_rail_cache,
+            )
 
     # Static path + Lovelace card auto-registration (one-shot per HA).
     await _async_register_static_paths(hass)
@@ -826,8 +855,18 @@ async def _async_refresh_rail_cache(
                 age = RAIL_MAX_AGE_SECONDS + 1
             if age < RAIL_MAX_AGE_SECONDS:
                 return
+    _LOGGER.info(
+        "NS Reisadvies: refreshing rail cache (force=%s, target=%s)",
+        force, target,
+    )
     data = await coord.async_fetch_full_rail_network()
     if not data:
+        _LOGGER.warning(
+            "NS Reisadvies: rail-cache refresh aborted — ProRail returned no "
+            "data. The live train map will fall back to straight-line "
+            "rendering until the next refresh succeeds. Trigger a manual "
+            "retry with the `ns_reisadvies.refresh_rail_cache` service.",
+        )
         return
 
     def _write() -> None:
