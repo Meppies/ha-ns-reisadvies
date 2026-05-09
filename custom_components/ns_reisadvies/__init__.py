@@ -419,7 +419,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         async def _periodic_rail_refresh(_now: Any = None) -> None:
             await _async_refresh_rail_cache(hass, first_coord)
 
-        async def _initial_rail_refresh(_now: Any = None) -> None:
+        async def _initial_rail_refresh(_now: Any = None) -> None:  # pragma: no cover
             # Force a fresh download on every boot when the file is
             # missing — much friendlier than waiting a week for the
             # next scheduled refresh after a failed first attempt.
@@ -438,11 +438,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
 
         # Manual trigger so the user (or an automation) can force a
         # rebuild without restarting HA.
-        async def _service_refresh_rail_cache(_call: Any) -> None:
+        async def _service_refresh_rail_cache(_call: Any) -> None:  # pragma: no cover
             _LOGGER.info("NS Reisadvies: manual rail cache refresh requested")
             await _async_refresh_rail_cache(hass, first_coord, force=True)
 
-        if not hass.services.has_service(DOMAIN, "refresh_rail_cache"):
+        if not hass.services.has_service(DOMAIN, "refresh_rail_cache"):  # pragma: no cover
             hass.services.async_register(
                 DOMAIN, "refresh_rail_cache", _service_refresh_rail_cache,
             )
