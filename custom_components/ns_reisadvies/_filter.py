@@ -73,18 +73,31 @@ def apply_window_filter(
     trips: list[dict[str, Any]],
     target: datetime,
     window_minutes: int,
+    *,
+    pick_single: bool = False,
 ) -> list[dict[str, Any]]:
     """Return only the trips whose planned departure matches the window.
 
-    * ``window_minutes == 0``: keep every trip whose planned departure
-      is at or after ``target``. The intent here is "no extra fuzz" —
-      just hide trips before the chosen anchor.
+    * ``pick_single=True`` AND ``window_minutes == 0``: return **exactly
+      one** trip — the one whose planned departure sits closest to
+      ``target``. Tie-breaks, in order:
+
+      1. Prefer the trip that departs **at or before** the anchor over
+         a trip the same number of minutes after it (e.g. anchor 09:00:
+         a 08:50 train wins over a 09:10 train).
+      2. Prefer the shorter total travel time.
+
+      An empty list is returned when no trip has a valid planned time.
+      This mode is used when the user explicitly set the *Time of day*
+      filter — they're asking "give me the train at this time".
+    * ``pick_single=False`` AND ``window_minutes == 0``: keep every
+      trip whose planned departure is at or after ``target`` — the
+      historic behaviour for routes without a time filter (only days
+      or specific date set), where we just want to hide trips before
+      the anchor.
     * ``window_minutes > 0``: keep trips whose planned departure falls
       in the closed interval ``[target - window, target + window]``.
     """
-    earliest = target - timedelta(minutes=window_minutes)
-    latest = target + timedelta(minutes=window_minutes)
-
     def _planned_dt(trip: dict[str, Any]) -> datetime | None:
         dep_iso = (
             (trip.get("legs") or [{}])[0]
@@ -101,14 +114,47 @@ def apply_window_filter(
             dep = dep.replace(tzinfo=None)
         return dep
 
-    out: list[dict[str, Any]] = []
+    def _duration(trip: dict[str, Any]) -> int:
+        for key in ("actualDurationInMinutes", "plannedDurationInMinutes"):
+            v = trip.get(key)
+            if isinstance(v, (int, float)):
+                return int(v)
+        return 99999
+
+    if window_minutes == 0 and pick_single:
+        # Exact-one selection: rank by (|offset|, after_anchor?, duration).
+        scored: list[tuple[float, int, int, dict[str, Any]]] = []
+        for trip in trips:
+            dep = _planned_dt(trip)
+            if dep is None:
+                continue
+            offset = abs((dep - target).total_seconds())
+            after = 1 if dep > target else 0  # prefer ≤ anchor → 0 wins
+            scored.append((offset, after, _duration(trip), trip))
+        if not scored:
+            return []
+        scored.sort(key=lambda row: (row[0], row[1], row[2]))
+        return [scored[0][3]]
+
+    if window_minutes == 0:
+        # Historic behaviour for routes without a time filter: just hide
+        # trips that already departed.
+        out: list[dict[str, Any]] = []
+        for trip in trips:
+            dep = _planned_dt(trip)
+            if dep is None:
+                continue
+            if dep >= target:
+                out.append(trip)
+        return out
+
+    earliest = target - timedelta(minutes=window_minutes)
+    latest = target + timedelta(minutes=window_minutes)
+    out = []
     for trip in trips:
         dep = _planned_dt(trip)
         if dep is None:
             continue
-        if window_minutes == 0:
-            if dep >= target:
-                out.append(trip)
-        elif earliest <= dep <= latest:
+        if earliest <= dep <= latest:
             out.append(trip)
     return out

@@ -4,6 +4,48 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.0] — 2026-05-10
+
+### Changed — structural rail-snap fix + clearer "trips for a future day" badge
+
+Two long-standing irritations resolved.
+
+**1. Rail-snap no longer needs per-route babysitting.**
+Previous releases tuned threshold values (junction precision,
+proximity-edge radius, outlier multiplier) for one route at a time —
+fix Hilversum, break Utrecht, fix Utrecht, break IC Direct. The graph
+build now does **connected-components bridging**: after the proximity
+pass, every disjoint sub-graph is welded to its nearest neighbour in
+the main component (max 5 km). No more "NO RAIL PATH" fallbacks for
+a route that adds an unfamiliar junction. Spatial-grid bucketed so
+the bridging cost stays linear on the ~43 k-node NL graph.
+
+**2. Filter window = 0 now means exactly one trip — but only with a
+   *Time of day* set.**
+The "Margin around the chosen time (± minutes)" slider at 0 now picks
+the single trip closest to the configured time. Tie-break order: a
+trip departing at-or-before the anchor wins over the same offset
+after, then the shorter total travel time wins. Days-only and
+specific-date routes keep the historic "show every trip ≥ anchor"
+behaviour — the single-trip rule applies only to the time filter.
+
+**3. "Trips for a future day" badge across all filter types.**
+When the trip-search anchor lives on a future day, the card now
+surfaces it explicitly:
+- **Specific date**: "Reizen voor 24 december 2026" — the literal
+  date.
+- **Weekday filter**, today not selected: "Reizen voor maandag 11
+  mei 2026" — resolved weekday + date so you remember which day
+  you filtered to.
+- **Time-only filter**, anchor rolled past midnight: "Reizen voor
+  morgen" / "Reizen over N dagen".
+
+Sensor exposes `target_date`, `target_day_offset`, `filter_days`
+and `filter_date` attributes so the card can pick the right form.
+Localised via `Intl.DateTimeFormat` on the user's HA language.
+
+Console banner bumped to v2.16.0.
+
 ## [2.15.9] — 2026-05-09
 
 ### Fixed — too many segments fell back to straight-line in v2.15.8

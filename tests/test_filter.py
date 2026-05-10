@@ -114,7 +114,59 @@ def _make_trip(planned_iso: str) -> dict:
     return {"legs": [{"origin": {"plannedDateTime": planned_iso}}]}
 
 
-def test_window_zero_keeps_only_at_or_after_target():
+def test_window_zero_pick_single_returns_closest_trip():
+    """v2.16.0: window=0 + pick_single returns exactly one trip — the
+    closest to the anchor. Used when the user set a time-of-day filter."""
+    target = datetime(2026, 5, 9, 14, 0)
+    trips = [
+        _make_trip("2026-05-09T13:50:00"),  # 10 min before
+        _make_trip("2026-05-09T14:05:00"),  # 5 min after — closest
+        _make_trip("2026-05-09T14:10:00"),  # 10 min after
+    ]
+    out = apply_window_filter(trips, target, window_minutes=0, pick_single=True)
+    assert len(out) == 1
+    assert out[0]["legs"][0]["origin"]["plannedDateTime"] == "2026-05-09T14:05:00"
+
+
+def test_window_zero_pick_single_tie_breaks_prefer_before_anchor():
+    """When two trips are equidistant from the anchor, the one that
+    departs at-or-before the anchor wins (user's stated rule)."""
+    target = datetime(2026, 5, 9, 9, 0)
+    trips = [
+        _make_trip("2026-05-09T08:50:00"),  # 10 min before
+        _make_trip("2026-05-09T09:10:00"),  # 10 min after
+    ]
+    out = apply_window_filter(trips, target, window_minutes=0, pick_single=True)
+    assert len(out) == 1
+    assert out[0]["legs"][0]["origin"]["plannedDateTime"] == "2026-05-09T08:50:00"
+
+
+def test_window_zero_pick_single_tie_breaks_then_shorter_duration():
+    """If both offset and after-anchor flag tie, shortest travel time wins."""
+    target = datetime(2026, 5, 9, 14, 0)
+    trips = [
+        {**_make_trip("2026-05-09T14:05:00"), "actualDurationInMinutes": 60},
+        {**_make_trip("2026-05-09T14:05:00"), "actualDurationInMinutes": 30},
+    ]
+    out = apply_window_filter(trips, target, window_minutes=0, pick_single=True)
+    assert len(out) == 1
+    assert out[0]["actualDurationInMinutes"] == 30
+
+
+def test_window_zero_pick_single_returns_empty_when_no_valid_trips():
+    target = datetime(2026, 5, 9, 14, 0)
+    trips = [
+        _make_trip(""),
+        _make_trip("not-a-date"),
+        {"legs": []},
+    ]
+    out = apply_window_filter(trips, target, window_minutes=0, pick_single=True)
+    assert out == []
+
+
+def test_window_zero_no_pick_single_keeps_at_or_after_target():
+    """Without pick_single (days-only / specific-date routes), window=0
+    just filters out the trips before the anchor — same as v2.14.x."""
     target = datetime(2026, 5, 9, 14, 0)
     trips = [
         _make_trip("2026-05-09T13:50:00"),  # before — drop
@@ -123,6 +175,31 @@ def test_window_zero_keeps_only_at_or_after_target():
     ]
     out = apply_window_filter(trips, target, window_minutes=0)
     assert len(out) == 2
+
+
+def test_window_zero_falls_back_to_duration_default():
+    """When neither actual nor planned duration is present, the
+    duration tie-break treats it as 99999 — both trips compare equal,
+    list order survives."""
+    target = datetime(2026, 5, 9, 14, 0)
+    trips = [
+        _make_trip("2026-05-09T14:05:00"),
+        _make_trip("2026-05-09T14:05:00"),
+    ]
+    out = apply_window_filter(trips, target, window_minutes=0, pick_single=True)
+    assert len(out) == 1
+
+
+def test_window_zero_pick_single_uses_planned_duration_fallback():
+    """When actualDurationInMinutes is missing, plannedDurationInMinutes
+    is used for the tie-break."""
+    target = datetime(2026, 5, 9, 14, 0)
+    trips = [
+        {**_make_trip("2026-05-09T14:05:00"), "plannedDurationInMinutes": 60},
+        {**_make_trip("2026-05-09T14:05:00"), "plannedDurationInMinutes": 30},
+    ]
+    out = apply_window_filter(trips, target, window_minutes=0, pick_single=True)
+    assert out[0]["plannedDurationInMinutes"] == 30
 
 
 def test_window_keeps_trips_inside_interval():
@@ -161,5 +238,6 @@ def test_window_drops_trips_with_missing_or_invalid_iso():
 def test_window_handles_trip_without_legs():
     target = datetime(2026, 5, 9, 14, 0)
     trips = [{"legs": []}, _make_trip("2026-05-09T14:00:00")]
+    # window=0 returns the single closest trip — empty-legs is skipped.
     out = apply_window_filter(trips, target, window_minutes=0)
     assert len(out) == 1

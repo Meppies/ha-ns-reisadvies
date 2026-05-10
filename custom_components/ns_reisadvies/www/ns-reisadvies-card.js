@@ -44,6 +44,9 @@ const I18N = {
     live_map_loading: "Looking up the train…",
     live_map_no_data: "No live position available for this train.",
     live_map_speed: "{n} km/h",
+    badge_tomorrow: "Trips for tomorrow",
+    badge_in_n_days: "Trips in {n} days",
+    badge_for_date: "Trips for {date}",
     weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
   },
   nl: {
@@ -86,6 +89,9 @@ const I18N = {
     live_map_loading: "Trein wordt opgezocht…",
     live_map_no_data: "Geen live-positie beschikbaar voor deze trein.",
     live_map_speed: "{n} km/u",
+    badge_tomorrow: "Reizen voor morgen",
+    badge_in_n_days: "Reizen over {n} dagen",
+    badge_for_date: "Reizen voor {date}",
     weekdays: ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"],
   },
 };
@@ -695,6 +701,10 @@ class NSReisadviesCard extends HTMLElement {
         .route-heading { padding: 8px 0 12px 0; border-bottom: 1px solid var(--divider-color); margin-bottom: 16px; }
         .route-heading .route-name { font-size: 1.15em; font-weight: 700; color: var(--primary-text-color); line-height: 1.2; }
         .route-heading .route-stations { font-size: 0.85em; color: var(--secondary-text-color); margin-top: 2px; }
+        /* v2.16.0: badge bovenaan dat de getoonde trips voor een
+           latere dag zijn (filter-anker is gerold over middernacht). */
+        .day-offset-badge { display: inline-block; padding: 4px 10px; border-radius: 12px; background: #FFC917; color: #003082; font-weight: 700; font-size: 0.85em; margin: 0 0 12px 0; }
+        .day-offset-badge ha-icon { --mdc-icon-size: 16px; vertical-align: -3px; margin-right: 4px; }
       </style>
       <div class="ns-container">`;
 
@@ -710,6 +720,53 @@ class NSReisadviesCard extends HTMLElement {
             + `<div class="route-name">${routeName}</div>`
             + `<div class="route-stations">${fromStation} → ${toStation}</div>`
             + `</div>`;
+    }
+
+    // v2.16.0: when the route's filter anchor is on a future day,
+    // show a yellow badge so the user knows the trips below are NOT
+    // for today. Three flavours, in order of specificity:
+    //   * Days-of-week filter (no specific date pin) AND offset > 0
+    //     → "Reizen voor maandag 11 mei" — show the resolved weekday
+    //       so the user remembers which day they filtered to.
+    //   * Specific-date filter set (offset > 0 by definition unless
+    //     the user pinned today) → "Reizen voor 24 december 2026" —
+    //     spell out the date.
+    //   * Time-only filter, anchor rolled over midnight → "Reizen
+    //     voor morgen" / "Reizen over N dagen" — relative is fine,
+    //     no day-of-week was chosen.
+    const dayOffset = Number(stateObj.attributes.target_day_offset || 0);
+    const targetDateIso = stateObj.attributes.target_date || null;
+    if (dayOffset > 0 && targetDateIso) {
+      const lang = _lang(this._hass);
+      const targetDate = new Date(targetDateIso + "T00:00:00");
+      const weekdayFmt = new Intl.DateTimeFormat(
+        lang, { weekday: "long" },
+      ).format(targetDate);
+      const dateFmt = new Intl.DateTimeFormat(
+        lang, { day: "numeric", month: "long", year: "numeric" },
+      ).format(targetDate);
+      const tplDate = t("badge_for_date", this._hass) || "Reizen voor {date}";
+      const tplTomorrow = t("badge_tomorrow", this._hass) || "Reizen voor morgen";
+      const tplInN = t("badge_in_n_days", this._hass) || "Reizen over {n} dagen";
+
+      // Specific date set OR a weekday filter is active → show the
+      // literal weekday + date so the user knows exactly which day.
+      const specificDate = stateObj.attributes.filter_date;
+      const filterDays = stateObj.attributes.filter_days;
+      const hasWeekdayFilter = Array.isArray(filterDays) && filterDays.length > 0;
+      let label;
+      if (specificDate) {
+        label = tplDate.replace("{date}", dateFmt);
+      } else if (hasWeekdayFilter) {
+        // "Reizen voor maandag 11 mei 2026"
+        label = tplDate.replace("{date}", `${weekdayFmt} ${dateFmt}`);
+      } else if (dayOffset === 1) {
+        label = tplTomorrow;
+      } else {
+        label = tplInN.replace("{n}", String(dayOffset));
+      }
+      const icon = dayOffset === 1 ? "mdi:calendar-tomorrow" : "mdi:calendar-clock";
+      html += `<div class="day-offset-badge"><ha-icon icon="${icon}"></ha-icon>${label}</div>`;
     }
 
     const unknownLabel = t("unknown", this._hass);
@@ -1436,10 +1493,94 @@ class NSReisadviesCard extends HTMLElement {
           }
         }
       }
+      // v2.16.0: connected-components bridging. After the proximity
+      // pass there are still small isolated sub-graphs (typically the
+      // ProRail GeoJSON has feature-level discontinuities of 100–500 m
+      // at some junctions, freight branches that don't quite touch
+      // the passenger network, etc). Find every component via BFS;
+      // for each non-largest component, drop a single bridge to the
+      // nearest node in the main component (capped at 5 km). That
+      // guarantees A* between any two station snaps will find a path
+      // — no more case-by-case tuning per route.
+      const visited = new Set();
+      const components = [];
+      for (const startKey of graph.keys()) {
+        if (visited.has(startKey)) continue;
+        const comp = [];
+        const queue = [startKey];
+        visited.add(startKey);
+        while (queue.length) {
+          const cur = queue.shift();
+          comp.push(cur);
+          for (const e of graph.get(cur) || []) {
+            if (!visited.has(e.to)) {
+              visited.add(e.to);
+              queue.push(e.to);
+            }
+          }
+        }
+        components.push(comp);
+      }
+      components.sort((a, b) => b.length - a.length);
+      // Bucket the main component nodes for fast nearest-node lookup
+      // when bridging. 1.1 km cells → search 7×7 cells = ~7 km box,
+      // plenty for the 5 km cap below.
+      const MAIN_CELL = 0.01;
+      const mainBuckets = new Map();
+      if (components.length) {
+        for (const k of components[0]) {
+          const c = nodeCoords.get(k);
+          const ck = `${Math.floor(c[0] / MAIN_CELL)},${Math.floor(c[1] / MAIN_CELL)}`;
+          if (!mainBuckets.has(ck)) mainBuckets.set(ck, []);
+          mainBuckets.get(ck).push({ key: k, c });
+        }
+      }
+      let componentsBridged = 0;
+      const MAX_BRIDGE_M = 5000;
+      for (let i = 1; i < components.length; i++) {
+        const small = components[i];
+        let bestDist = Infinity;
+        let bestFrom = null;
+        let bestTo = null;
+        for (const sk of small) {
+          const sc = nodeCoords.get(sk);
+          const cy = Math.floor(sc[0] / MAIN_CELL);
+          const cx = Math.floor(sc[1] / MAIN_CELL);
+          for (let dy = -3; dy <= 3; dy++) {
+            for (let dx = -3; dx <= 3; dx++) {
+              const arr = mainBuckets.get(`${cy + dy},${cx + dx}`);
+              if (!arr) continue;
+              for (const m of arr) {
+                const d = haversine(sc, m.c);
+                if (d < bestDist) {
+                  bestDist = d;
+                  bestFrom = sk;
+                  bestTo = m.key;
+                }
+              }
+            }
+          }
+        }
+        if (bestFrom && bestDist <= MAX_BRIDGE_M) {
+          graph.get(bestFrom).push({ to: bestTo, w: bestDist });
+          graph.get(bestTo).push({ to: bestFrom, w: bestDist });
+          componentsBridged++;
+          // Promote the small component into mainBuckets so subsequent
+          // bridges can attach to it too.
+          for (const k of small) {
+            const c = nodeCoords.get(k);
+            const ck = `${Math.floor(c[0] / MAIN_CELL)},${Math.floor(c[1] / MAIN_CELL)}`;
+            if (!mainBuckets.has(ck)) mainBuckets.set(ck, []);
+            mainBuckets.get(ck).push({ key: k, c });
+          }
+        }
+      }
       console.info(
         `[ns-reisadvies] rail graph: ${nodeCoords.size} nodes, `
-        + `${bridgesAdded} proximity bridges added (≤${PROX_METERS} m), `
-        + `${bridgesSkippedDense} skipped (busy junction)`
+        + `${bridgesAdded} proximity bridges (≤${PROX_METERS} m), `
+        + `${bridgesSkippedDense} skipped at junctions, `
+        + `${components.length} components → ${componentsBridged} bridged `
+        + `(largest: ${components[0]?.length || 0} nodes)`
       );
 
       const result = {
@@ -2269,7 +2410,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.15.9 ",
+  "%c NS-REISADVIES-CARD %c v2.16.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

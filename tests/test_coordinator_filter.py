@@ -204,3 +204,174 @@ async def test_update_data_specific_date_in_past_falls_back_to_now(
     out = await coord._async_update_data()
     # Doesn't crash; returns whatever (empty here).
     assert out == []
+
+
+# ---- target_day_offset (v2.16.0) --------------------------------------------
+
+
+async def test_target_day_offset_zero_when_no_filter(hass: HomeAssistant) -> None:
+    """No filter at all → anchor is now → offset = 0."""
+    coord = _coord(hass)
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": []}))
+    await coord._async_update_data()
+    assert coord._target_day_offset == 0
+
+
+async def test_target_day_offset_one_when_time_passed(hass: HomeAssistant) -> None:
+    """Filter time has passed → anchor rolls to tomorrow → offset = 1."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 14, 0)  # Saturday afternoon
+    coord = _coord(hass, filter_time="08:00")  # 08:00 already passed today
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": []}))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    assert coord._target_day_offset == 1
+
+
+async def test_target_day_offset_multiple_days_for_weekday_filter(
+    hass: HomeAssistant,
+) -> None:
+    """Saturday + Monday-only filter at 08:00 → anchor 2 days ahead."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 14, 0)  # Saturday
+    coord = _coord(hass, filter_days=[0], filter_time="08:00")  # Mon only
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": []}))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    assert coord._target_day_offset == 2  # Sat → Mon
+
+
+async def test_target_day_offset_zero_when_time_filter_still_in_future(
+    hass: HomeAssistant,
+) -> None:
+    """Filter time later today → anchor stays today → offset = 0."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 7, 0)  # Saturday morning, before 08:00
+    coord = _coord(hass, filter_time="08:00")
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": []}))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    assert coord._target_day_offset == 0
+
+
+async def test_target_day_offset_for_days_only_filter(
+    hass: HomeAssistant,
+) -> None:
+    """v2.16.0: when a days-of-week filter doesn't include today, the
+    anchor rolls forward — surface the offset so the card can render
+    'Reizen voor maandag 11 mei'."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 14, 0)  # Saturday
+    coord = _coord(hass, filter_days=[0])  # Mon only — no time
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": []}))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    # Sat → next Monday is +2 days. Date matches the resolved anchor.
+    assert coord._target_day_offset == 2
+    assert coord._target_date == "2026-05-11"
+
+
+async def test_target_date_for_specific_date_filter(
+    hass: HomeAssistant,
+) -> None:
+    """v2.16.0: a specific-date pin always surfaces the chosen date so
+    the card can render 'Reizen voor 24 december 2026'."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 14, 0)  # Saturday
+    coord = _coord(hass, filter_date="2026-12-24")
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": []}))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    assert coord._target_date == "2026-12-24"
+    assert coord._target_day_offset == (
+        _dt(2026, 12, 24).date() - fixed_now.date()
+    ).days
+
+
+async def test_pick_single_only_when_time_set_and_window_zero(
+    hass: HomeAssistant,
+) -> None:
+    """v2.16.0: window=0 single-trip selection only kicks in when
+    filter_time is set. A days-only or specific-date filter with
+    window=0 keeps the historic "everything ≥ anchor" behaviour."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 14, 0)  # Saturday afternoon
+    trips_payload = {
+        "trips": [
+            {"ctxRecon": "a", "legs": [{"origin": {"plannedDateTime": "2026-05-09T14:00:00"}}]},
+            {"ctxRecon": "b", "legs": [{"origin": {"plannedDateTime": "2026-05-09T15:00:00"}}]},
+            {"ctxRecon": "c", "legs": [{"origin": {"plannedDateTime": "2026-05-09T16:00:00"}}]},
+        ],
+    }
+    # Days-only filter, no time. window_minutes=0. Should keep
+    # ALL trips ≥ anchor — not just the closest one.
+    coord = _coord(hass, filter_days=[5])  # Sat only
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, trips_payload))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        out = await coord._async_update_data()
+    assert len(out) == 3  # not 1
+
+
+async def test_pick_single_when_time_set_and_window_zero(
+    hass: HomeAssistant,
+) -> None:
+    """With a time filter + window=0, exactly the closest trip wins."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 8, 30)  # Saturday morning
+    trips_payload = {
+        "trips": [
+            {"ctxRecon": "a", "legs": [{"origin": {"plannedDateTime": "2026-05-09T08:50:00"}}]},
+            {"ctxRecon": "b", "legs": [{"origin": {"plannedDateTime": "2026-05-09T09:05:00"}}]},
+            {"ctxRecon": "c", "legs": [{"origin": {"plannedDateTime": "2026-05-09T09:30:00"}}]},
+        ],
+    }
+    coord = _coord(hass, filter_time="09:00")  # window default = 0
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, trips_payload))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        out = await coord._async_update_data()
+    # 08:50 and 09:05 are both 10/5 min from 09:00. Closest wins.
+    assert len(out) == 1
+    assert out[0]["ctxRecon"] == "b"  # 09:05 is closest

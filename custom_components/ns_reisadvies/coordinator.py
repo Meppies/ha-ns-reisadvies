@@ -136,6 +136,17 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self.filter_window_minutes: int = max(0, min(360, int(filter_window_minutes or 0)))
         self.filter_date: _dt_date | None = _parse_date(filter_date)
 
+        # v2.16.0: how many calendar days the trip-search anchor
+        # advances. 0 = today; 1 = tomorrow; 2+ = day after that.
+        # Updated each refresh in _async_update_data and surfaced via
+        # the sensor's ``target_day_offset`` attribute so the card can
+        # render a "Tomorrow" / "+N days" badge.
+        # ``_target_date`` is the matching ISO date string (YYYY-MM-DD)
+        # so the card can show the literal day for date- or weekday-
+        # filtered routes (e.g. "Reizen voor maandag 11 mei").
+        self._target_day_offset: int = 0
+        self._target_date: str | None = None
+
         # Central in-memory store for pinned favourites.
         # Mapping: ctx_recon -> epoch seconds at which it was pinned.
         self.tracked_trips: dict[str, float] = {}
@@ -392,13 +403,23 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         # compute the next valid moment and use it as the NS trip-search
         # anchor. Falls back to "now" when the filter would be entirely
         # in the past for a specific-date pin or when nothing is set.
+        now_dt = datetime.now()
         target_dt = compute_target_datetime(
-            datetime.now(),
+            now_dt,
             days=self.filter_days,
             target_time=self.filter_time,
             window_minutes=self.filter_window_minutes,
             specific_date=self.filter_date,
-        ) or datetime.now()
+        ) or now_dt
+        # v2.16.0: surface "this is for a future day" so the card can
+        # show an explicit badge ("Reizen voor morgen", "Reizen voor
+        # maandag 11 mei", "Reizen voor 24 december 2026"). The badge
+        # is shown for ANY active filter that puts the anchor on a
+        # future day — time-of-day rollover, days-of-week without
+        # today, or a specific-date pin. ``_target_date`` carries the
+        # ISO date so the card can localise the human-readable form.
+        self._target_day_offset = (target_dt.date() - now_dt.date()).days
+        self._target_date = target_dt.date().isoformat()
         params = {
             "fromStation": self.from_station,
             "toStation": self.to_station,
@@ -492,8 +513,21 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                     or self.filter_date is not None
                     or self.filter_window_minutes > 0
                 ):
+                    # v2.16.0: when a *Time of day* filter is set with
+                    # window=0 the user is asking for one specific
+                    # train — surface the single closest match (with
+                    # tie-break: ≤ anchor wins, then shorter duration).
+                    # Days-only / specific-date / window>0 routes keep
+                    # the previous "show every trip in window" shape.
+                    pick_single = (
+                        self.filter_time is not None
+                        and self.filter_window_minutes == 0
+                    )
                     all_trips = apply_window_filter(
-                        all_trips, target_dt, self.filter_window_minutes,
+                        all_trips,
+                        target_dt,
+                        self.filter_window_minutes,
+                        pick_single=pick_single,
                     )
 
                 # Optional: annotate each leg with carriage composition.

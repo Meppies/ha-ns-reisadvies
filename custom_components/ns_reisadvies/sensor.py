@@ -235,6 +235,32 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
             "route_name": self._route_name,
             "from_station": self._from_station,
             "to_station": self._to_station,
+            # v2.16.0: how many calendar days ahead the trip-search
+            # anchor lives. 0 = today, 1 = tomorrow, 2+ = day after.
+            # Card uses this to render a "Morgen" / "+N dagen" /
+            # "<weekday> <date>" badge so the user knows the trips on
+            # screen aren't for today. ``target_date`` carries the
+            # literal ISO date so the card can localise the human form.
+            "target_day_offset": getattr(
+                self.coordinator, "_target_day_offset", 0,
+            ),
+            "target_date": getattr(
+                self.coordinator, "_target_date", None,
+            ),
+            # Surface the active per-route filter so the card can pick
+            # the right badge wording: a specific-date pin gets the
+            # literal date, a weekday-filter without today selected
+            # gets "<weekday> <date>", a time-only filter rolling past
+            # midnight gets "morgen" / "over N dagen".
+            "filter_days": list(
+                getattr(self.coordinator, "filter_days", []) or []
+            ),
+            "filter_date": (
+                fd.isoformat()
+                if (fd := getattr(self.coordinator, "filter_date", None))
+                is not None
+                else None
+            ),
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:
