@@ -4,6 +4,22 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.8] — 2026-05-10
+
+### Changed — back to compact DROPDOWN day picker (alphabetical labels)
+
+User explicitly chose the compact chip-style multi-select dropdown over
+the rotated first-weekday order. HA's `ha-combo-box` force-alphabetises
+labels and there's no clean way to override that — see v2.16.4 through
+v2.16.7 for the failed workarounds.
+
+The day picker now renders as one compact form row with selected days
+shown as removable chips. The dropdown itself shows weekdays in
+alphabetical order (Friday, Monday, Saturday, Sunday, Thursday,
+Tuesday, Wednesday). The first-weekday hub option still influences the
+behaviour of the rest of the integration but no longer affects the
+picker UI ordering.
+
 ## [2.16.7] — 2026-05-10
 
 ### Reverted — DROPDOWN with control-char prefix dropped, back to LIST

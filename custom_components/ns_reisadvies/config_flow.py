@@ -487,16 +487,15 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                             # ``translation_key`` — the dropdown ended up
                             # "Friday, Monday, Saturday, …").
                             options=weekday_options,
-                            # v2.16.7: stays in LIST mode. Tried DROPDOWN
-                            # with various sort-control prefixes but HA's
-                            # multi-select ha-combo-box either (a) ignores
-                            # sort=False and alphabetises labels (v2.16.4)
-                            # or (b) renders an empty dropdown when labels
-                            # contain control characters (v2.16.6). LIST
-                            # mode honours the explicit option order and
-                            # is the only stable way to get rotated
-                            # Monday-first / Sunday-first ordering.
-                            mode=SelectSelectorMode.LIST,
+                            # v2.16.8: back to DROPDOWN. HA's multi-select
+                            # ha-combo-box force-alphabetises labels and
+                            # there's no way to override that without a
+                            # visible label prefix or rejected control
+                            # characters (see v2.16.4–v2.16.7). User
+                            # explicitly chose compact chip-style display
+                            # over rotated weekday order — alphabetical
+                            # is acceptable for a 7-item picker.
+                            mode=SelectSelectorMode.DROPDOWN,
                             multiple=True,
                         ),
                     ),
