@@ -1552,18 +1552,33 @@ class NSReisadviesCard extends HTMLElement {
       // sub-graphs don't kill the route.
       const candA = this._railSnapCandidatesWith(g, [a.lat, a.lng], 5, 5000);
       const candB = this._railSnapCandidatesWith(g, [b.lat, b.lng], 5, 5000);
+      // v2.15.7: try ALL 25 snap-pair combinations and keep the
+      // shortest path (haversine sum). The previous code stopped at
+      // the first working path, which on dense networks (Utrecht ↔
+      // Hilversum, Hilversum ↔ Almere) sometimes returned a long
+      // detour via the wrong line because the closest-by-distance
+      // snap candidate had landed on a track in the wrong direction.
+      // Computing path length per candidate adds <50ms even on the
+      // 80km IC routes and gives the geographically correct answer.
       let bestPath = null;
+      let bestLen = Infinity;
       let bestPathSnaps = null;
       let triedCount = 0;
-      outer:
+      let foundCount = 0;
       for (const sa of candA) {
         for (const sb of candB) {
           triedCount++;
           const path = this._railPathWith(g, sa.key, sb.key);
-          if (path && path.length >= 2) {
+          if (!path || path.length < 2) continue;
+          foundCount++;
+          let len = 0;
+          for (let p = 0; p < path.length - 1; p++) {
+            len += g.haversine(path[p], path[p + 1]);
+          }
+          if (len < bestLen) {
             bestPath = path;
+            bestLen = len;
             bestPathSnaps = { sa, sb };
-            break outer;
           }
         }
       }
@@ -1580,7 +1595,9 @@ class NSReisadviesCard extends HTMLElement {
       }
       console.info(
         `[ns-reisadvies] rail-snap ${a.name} → ${b.name}: `
-        + `${bestPath.length} pts, snap A=${bestPathSnaps.sa.dist.toFixed(0)}m B=${bestPathSnaps.sb.dist.toFixed(0)}m`
+        + `${bestPath.length} pts, ${(bestLen / 1000).toFixed(1)} km, `
+        + `${foundCount}/${triedCount} candidates ok, `
+        + `snap A=${bestPathSnaps.sa.dist.toFixed(0)}m B=${bestPathSnaps.sb.dist.toFixed(0)}m`
       );
       segments.push([[a.lat, a.lng], ...bestPath, [b.lat, b.lng]]);
     }
@@ -2169,7 +2186,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.15.6 ",
+  "%c NS-REISADVIES-CARD %c v2.15.7 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

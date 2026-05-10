@@ -4,6 +4,30 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.7] — 2026-05-09
+
+### Fixed — rail-snap picks shortest path, not first-found
+Live debugging showed Utrecht ↔ Hilversum routes drawing a wide detour
+via Bussum/Maarssen (~80 km) instead of the direct line via Hollandse
+Rading / Bilthoven (~21 km). Same shape on a few other routes when the
+closest-by-distance snap candidate happened to land on a parallel
+track in the wrong direction.
+
+Root cause: `_railSnapStopsWith` had `break outer` as soon as any of
+the 25 snap-pair combinations produced a path. The first path is not
+necessarily the shortest — a snap candidate that lands on the
+Bussum-line near Utrecht Centraal will route via Amsterdam before the
+algorithm gets a chance to try the candidate that lands on the
+Maliebaan/Hollandse-Rading-line.
+
+Fix: iterate **all** 25 combinations, compute total haversine length
+per resulting path, and keep the shortest. <50 ms overhead even on
+80 km IC routes; the geographically correct route now wins. The log
+line now also reports `<km> km` and `<found>/<tried>` so future
+diagnostics are easier.
+
+Console banner bumped to v2.15.7.
+
 ## [2.15.6] — 2026-05-09
 
 ### Fixed — long-distance rail-snap (Hilversum → Rotterdam, Hilversum → Emmen)
