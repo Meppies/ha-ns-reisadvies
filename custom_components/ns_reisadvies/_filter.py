@@ -52,6 +52,15 @@ def compute_target_datetime(
             return None
         return candidate
 
+    # No filter at all (no time, no days) → just hand back ``now`` so
+    # the coordinator searches around the current moment. Without this
+    # short-circuit the rollover comparison below would fire whenever
+    # ``now`` has sub-minute precision: ``eff_time`` is floored to the
+    # minute, making ``candidate`` microscopically older than ``now``,
+    # so the function would advance to tomorrow at the same minute.
+    if target_time is None and not days:
+        return now
+
     candidate_date = now.date()
     candidate = datetime.combine(candidate_date, eff_time, tzinfo=now.tzinfo)
     if now > candidate + timedelta(minutes=window_minutes):

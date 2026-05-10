@@ -19,6 +19,17 @@ def test_target_no_filter_returns_now_today():
     assert out == datetime(2026, 5, 9, 14, 30)
 
 
+def test_target_no_filter_with_sub_minute_now_returns_now_unchanged():
+    """Regression: ``datetime.now()`` carries seconds + microseconds.
+    The function used to floor ``eff_time`` to the minute, which made
+    the floored candidate microscopically older than ``now`` and
+    triggered a spurious rollover to tomorrow. Without an explicit
+    filter we must just return ``now`` unchanged."""
+    now = datetime(2026, 5, 9, 14, 30, 45, 500000)
+    out = compute_target_datetime(now)
+    assert out == now
+
+
 def test_target_specific_date_future_uses_that_date():
     now = datetime(2026, 5, 9, 14, 30)
     out = compute_target_datetime(
