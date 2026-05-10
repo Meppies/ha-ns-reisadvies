@@ -1377,13 +1377,22 @@ class NSReisadviesCard extends HTMLElement {
           graph.get(kb).push({ to: ka, w });
         }
       }
-      // Second pass: bridge nodes that sit within 25 m of each other
-      // but ended up in different graph components because 4-decimal
-      // rounding put them in different cells. Spatial-grid-bucketed
-      // so we don't run O(n²); only candidate pairs in the same or
-      // neighbouring 0.0005°-cells (~55 m) are tested.
-      const PROX_METERS = 25;
-      const CELL = 0.0005;
+      // Second pass: bridge nodes that sit close to each other but
+      // ended up in different graph components because 4-decimal
+      // rounding put them on different sides of a junction.
+      //
+      // v2.15.9: radius bumped 25 m → 60 m so the gaps between
+      // Hilversum Sportpark, Hollandsche Rading, and Utrecht
+      // Overvecht (and similar areas) actually get welded — 25 m
+      // turned out to be too tight in practice. Crucially we ONLY
+      // bridge "endpoint-ish" nodes (≤ 2 existing neighbours): a
+      // dense station-junction has 3+ neighbours, so its parallel
+      // tracks are protected from being cross-wired into one blob.
+      // Spatial-grid bucketed so we stay well below O(n²); each cell
+      // is 0.001° (~110 m) so all candidates within 60 m sit in the
+      // same or 8 neighbouring cells.
+      const PROX_METERS = 60;
+      const CELL = 0.001;
       const buckets = new Map();
       const cellKey = (lat, lng) =>
         `${Math.floor(lat / CELL)},${Math.floor(lng / CELL)}`;
@@ -1393,6 +1402,7 @@ class NSReisadviesCard extends HTMLElement {
         buckets.get(ck).push({ key, c });
       }
       let bridgesAdded = 0;
+      let bridgesSkippedDense = 0;
       for (const [ck, nodes] of buckets) {
         const [cy, cx] = ck.split(",").map(Number);
         const neigh = [];
@@ -1405,13 +1415,20 @@ class NSReisadviesCard extends HTMLElement {
         for (const n1 of nodes) {
           for (const n2 of neigh) {
             if (n1.key === n2.key) continue;
-            // Only add each undirected pair once (lex order on keys).
-            if (n1.key > n2.key) continue;
+            if (n1.key > n2.key) continue;  // dedupe undirected pairs
             const d = haversine(n1.c, n2.c);
             if (d > PROX_METERS) continue;
-            // Skip if already directly connected.
-            const adj = graph.get(n1.key);
-            if (adj && adj.some(e => e.to === n2.key)) continue;
+            const adj1 = graph.get(n1.key);
+            const adj2 = graph.get(n2.key);
+            if (adj1 && adj1.some(e => e.to === n2.key)) continue;
+            // Endpoint-only filter: skip the bridge when BOTH ends
+            // already sit on a busy junction (≥3 neighbours). That
+            // protects parallel/crossing tracks at big stations from
+            // being cross-wired.
+            if ((adj1 ? adj1.length : 0) >= 3 && (adj2 ? adj2.length : 0) >= 3) {
+              bridgesSkippedDense++;
+              continue;
+            }
             graph.get(n1.key).push({ to: n2.key, w: d });
             if (!graph.has(n2.key)) graph.set(n2.key, []);
             graph.get(n2.key).push({ to: n1.key, w: d });
@@ -1419,12 +1436,11 @@ class NSReisadviesCard extends HTMLElement {
           }
         }
       }
-      if (bridgesAdded) {
-        console.info(
-          `[ns-reisadvies] rail graph: ${nodeCoords.size} nodes, `
-          + `${bridgesAdded} proximity bridges added (≤${PROX_METERS} m)`
-        );
-      }
+      console.info(
+        `[ns-reisadvies] rail graph: ${nodeCoords.size} nodes, `
+        + `${bridgesAdded} proximity bridges added (≤${PROX_METERS} m), `
+        + `${bridgesSkippedDense} skipped (busy junction)`
+      );
 
       const result = {
         railPolylines,
@@ -1642,16 +1658,15 @@ class NSReisadviesCard extends HTMLElement {
         segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
         continue;
       }
-      // v2.15.8: outlier filter. If the shortest path is more than
-      // 3× the great-circle distance between stations + a 1 km floor,
-      // the route is almost certainly looping through a station's
-      // rangeer-emplacement (Utrecht Centraal does this) or taking
-      // a wide detour because the local graph is broken. Fall back
-      // to a straight line — much better than drawing 69 km of
-      // spaghetti for a 3 km hop.
+      // v2.15.9: outlier filter at 5× direct + 1.5 km. Was 3× + 1
+      // in v2.15.8 but that flagged some natural rail bends as
+      // outliers (rail routes through twisty terrain — Veluwe, river
+      // crossings — can hit 2–3× direct). 5× still catches the 23×
+      // Utrecht-emplacement loops while letting honest rail curves
+      // through unmodified.
       const directKm = g.haversine([a.lat, a.lng], [b.lat, b.lng]) / 1000;
       const pathKm = bestLen / 1000;
-      if (pathKm > directKm * 3 + 1) {
+      if (pathKm > directKm * 5 + 1.5) {
         console.warn(
           `[ns-reisadvies] PATH TOO LONG ${a.name} → ${b.name}: `
           + `${pathKm.toFixed(1)} km vs direct ${directKm.toFixed(1)} km — `
@@ -2254,7 +2269,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.15.8 ",
+  "%c NS-REISADVIES-CARD %c v2.15.9 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

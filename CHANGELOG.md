@@ -4,6 +4,33 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.9] — 2026-05-09
+
+### Fixed — too many segments fell back to straight-line in v2.15.8
+v2.15.8's proximity-edge radius (25 m) and outlier filter (3× direct
++ 1 km) turned out to be too tight: a number of legs the user
+inspected drew straight lines between stations because either the
+rail graph was still disjoint at the snap (Hilversum Sportpark →
+Utrecht Overvecht: NO RAIL PATH despite 31/9 m snaps) or the route
+was flagged as detour-too-long even though it was a normal rail
+curve.
+
+Re-tune:
+- Proximity radius **25 m → 60 m** so adjacent rail features that
+  end further apart still get welded.
+- New **endpoint-only filter** on the proximity pass: only bridge
+  pairs where at least one node has ≤ 2 existing neighbours. Busy
+  junctions at big stations are protected from being cross-wired
+  into one blob — no more Utrecht-emplacement loops, no more parallel
+  tracks merged into one.
+- Outlier filter **3× → 5× direct + 1.5 km** so honest rail bends
+  (Veluwe, river crossings) pass through unmodified while clear
+  spaghetti (23× and up) is still caught.
+- Graph build log now also reports how many bridge candidates were
+  rejected as "busy junction" so the protection is observable.
+
+Console banner bumped to v2.15.9.
+
 ## [2.15.8] — 2026-05-09
 
 ### Fixed — Utrecht Centraal emplacement loops + over-eager 3-decimal welding
