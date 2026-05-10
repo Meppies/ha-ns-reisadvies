@@ -4,6 +4,21 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.5] — 2026-05-10
+
+### Fixed — day dropdown STILL alphabetical despite v2.16.4
+
+`sort=False` IS being passed through to the frontend (verified via DOM
+inspection on the live form), but HA's multi-select `ha-combo-box`
+(used for `mode=DROPDOWN`+`multiple=True`) ignores it and always
+alphabetises options by label. This is a HA frontend behaviour we
+can't influence from the integration side.
+
+Switched the day-of-week selector to `mode=LIST` (vertical checkbox
+stack). LIST mode preserves option order. Slightly less compact than
+the chip-style dropdown, but visibly correct, which matters more for
+a 7-item list.
+
 ## [2.16.4] — 2026-05-10
 
 ### Fixed — day dropdown still alphabetical despite v2.16.3 fix
