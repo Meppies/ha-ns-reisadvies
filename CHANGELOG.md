@@ -4,6 +4,36 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.2] — 2026-05-10
+
+### Fixed — Hilversum ↔ Utrecht live map polyline took a detour via Maarssen
+
+The IC Hilversum → Utrecht Centraal direct (and the reverse) was the
+last route still showing a wrong polyline: the yellow "passed" half
+went west via Maarssen instead of south via Den Dolder, and the
+"future" half from Utrecht Overvecht to Utrecht Centraal fell back
+to a straight line. Console logs showed A\* picking a 54.3 km path
+for the 16 km direct corridor — 3.4× direct, just under the v2.16.0
+outlier cap of 5×.
+
+Root cause was the snap pool. The five nearest rail-graph nodes for
+Utrecht Centraal's geographic centre all clustered on the western
+(Maarssen-line) side of the station yard, leaving A\* no choice but
+to enter from Maarssen. Two fixes applied together:
+
+- **Diversified snap candidates.** K bumped from 5 to 20 with a
+  150 m minimum spread between picks. Both sides of the platform
+  yard are now sampled, so the shortest-path search picks the right
+  corridor (Den Dolder via Hollandsche Rading, ~27 km).
+- **Tightened outlier filter** from 5× direct + 1.5 km to 2× + 2 km.
+  Real rail curves max out around 2.0× direct (Naarden-Bussum →
+  Almere Poort via Weesp = 2.04× direct), so 2× + 2 km buffer keeps
+  the legitimate routes while catching the bogus 54 km Maarssen
+  detour and the 92 km Oss → 's-Hertogenbosch detour seen in
+  earlier logs.
+
+Console banner bumped to v2.16.2.
+
 ## [2.16.1] — 2026-05-10
 
 ### Changed — "Trips for tomorrow" badge now appears on every route, not just filtered ones

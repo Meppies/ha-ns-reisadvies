@@ -1642,20 +1642,43 @@ class NSReisadviesCard extends HTMLElement {
     }
   }
 
-  // Snap a [lat,lng] to the K nearest rail-graph nodes. Returning a
-  // ranked list lets us retry with the second-best candidate when
-  // the closest one happens to land on a disconnected sub-graph
-  // (rangeer-spoor, freight-only branch, etc).
-  _railSnapCandidatesWith(g, point, k = 3, maxDist = 2000) {
+  // Snap a [lat,lng] to the K nearest rail-graph nodes. v2.16.2:
+  // also enforce a minimum geographic spread between picks so the
+  // K snaps don't all cluster on one side of a big station yard.
+  // Without this, Utrecht Centraal's K=5 closest snaps all landed
+  // on the west-side (Maarssen-line) tracks, leaving A* no choice
+  // but to detour 54 km via Maarssen instead of taking the actual
+  // 27 km Den Dolder line.
+  _railSnapCandidatesWith(g, point, k = 20, maxDist = 2000, minSpread = 150) {
     if (!g) return [];
-    const out = [];
+    const ranked = [];
     for (const [key, c] of g.nodeCoords) {
       const d = g.haversine(point, c);
       if (d > maxDist) continue;
-      out.push({ key, dist: d });
+      ranked.push({ key, c, dist: d });
     }
-    out.sort((a, b) => a.dist - b.dist);
-    return out.slice(0, k);
+    ranked.sort((a, b) => a.dist - b.dist);
+    // Greedy diversity pass: keep the closest, then each next pick
+    // must be ≥ minSpread metres from every already-picked node.
+    // Always keep the closest 3 unconditionally so we don't lose
+    // resolution at small tightly-clustered stations.
+    const picked = [];
+    for (const cand of ranked) {
+      if (picked.length < 3) {
+        picked.push(cand);
+      } else {
+        let tooClose = false;
+        for (const p of picked) {
+          if (g.haversine(cand.c, p.c) < minSpread) {
+            tooClose = true;
+            break;
+          }
+        }
+        if (!tooClose) picked.push(cand);
+      }
+      if (picked.length >= k) break;
+    }
+    return picked.map(p => ({ key: p.key, dist: p.dist }));
   }
 
   // A* shortest path on the rail graph using haversine as the
@@ -1749,10 +1772,14 @@ class NSReisadviesCard extends HTMLElement {
     const segments = [];
     for (let i = 0; i < stops.length - 1; i++) {
       const a = stops[i], b = stops[i + 1];
-      // Try larger snap distances and more candidates so isolated
-      // sub-graphs don't kill the route.
-      const candA = this._railSnapCandidatesWith(g, [a.lat, a.lng], 5, 5000);
-      const candB = this._railSnapCandidatesWith(g, [b.lat, b.lng], 5, 5000);
+      // v2.16.2: K bumped 5 → 20 with diversity (≥150 m between
+      // picks). 5 was too tight: at Utrecht Centraal the 5 nearest
+      // snaps all clustered on the western (Maarssen-line) side of
+      // the station yard, forcing every A* path through Maarssen.
+      // 20 with spread sees BOTH sides of the platform yard so the
+      // shortest path picks the right corridor.
+      const candA = this._railSnapCandidatesWith(g, [a.lat, a.lng], 20, 2000);
+      const candB = this._railSnapCandidatesWith(g, [b.lat, b.lng], 20, 2000);
       // v2.15.7: try ALL 25 snap-pair combinations and keep the
       // shortest path (haversine sum). The previous code stopped at
       // the first working path, which on dense networks (Utrecht ↔
@@ -1794,15 +1821,18 @@ class NSReisadviesCard extends HTMLElement {
         segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
         continue;
       }
-      // v2.15.9: outlier filter at 5× direct + 1.5 km. Was 3× + 1
-      // in v2.15.8 but that flagged some natural rail bends as
-      // outliers (rail routes through twisty terrain — Veluwe, river
-      // crossings — can hit 2–3× direct). 5× still catches the 23×
-      // Utrecht-emplacement loops while letting honest rail curves
-      // through unmodified.
+      // v2.16.2: outlier filter tightened from 5× + 1.5 km to
+      // 2× + 2 km. Real rail curves (Veluwe, river crossings,
+      // Naarden-Bussum → Almere via Weesp) max out around 2.0×
+      // direct. The 5× cap was lenient enough that Hilversum →
+      // Utrecht Centraal's bogus 54 km via-Maarssen detour (3.4×
+      // direct) snuck through. 2× + 2 km catches Maarssen and the
+      // 92 km Oss → 's-Hertogenbosch dead-end without flagging the
+      // legit Naarden-Bussum → Almere Poort 14.3 km hop (2.04×
+      // direct, 14.3 ≤ 14.0 + 2 = 16 km cap).
       const directKm = g.haversine([a.lat, a.lng], [b.lat, b.lng]) / 1000;
       const pathKm = bestLen / 1000;
-      if (pathKm > directKm * 5 + 1.5) {
+      if (pathKm > directKm * 2 + 2) {
         console.warn(
           `[ns-reisadvies] PATH TOO LONG ${a.name} → ${b.name}: `
           + `${pathKm.toFixed(1)} km vs direct ${directKm.toFixed(1)} km — `
@@ -2405,7 +2435,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.1 ",
+  "%c NS-REISADVIES-CARD %c v2.16.2 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
