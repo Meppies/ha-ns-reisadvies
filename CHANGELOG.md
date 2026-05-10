@@ -4,6 +4,22 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.6] — 2026-05-10
+
+### Changed — compact day-of-week DROPDOWN restored, with correct order
+
+v2.16.5 fell back to LIST mode (vertical checkbox stack) because HA's
+multi-select `ha-combo-box` ignores `sort=False`. The list took up too
+much vertical space — the user originally asked for the compact
+chip-style DROPDOWN.
+
+DROPDOWN is now back, with a workaround: each option label is prefixed
+with a single zero-width control character (U+0001 … U+0007) that's
+invisible in HA's frontend but sorts BEFORE all letters by codepoint.
+HA's mandatory alphabetical sort therefore lands on our intended
+rotation order. The user sees clean "Monday", "Tuesday", … chips; the
+sort-control prefix is internal.
+
 ## [2.16.5] — 2026-05-10
 
 ### Fixed — day dropdown STILL alphabetical despite v2.16.4

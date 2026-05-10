@@ -67,12 +67,21 @@ def test_weekday_options_out_of_range_clamps_to_monday():
 
 # v2.16.3: localized labels embedded directly so HA's frontend doesn't
 # re-sort options alphabetically.
+# v2.16.6: each label is prefixed with a single zero-width control
+# character (U+0001..U+0007) to control alphabetical sort in HA's
+# multi-select ha-combo-box (which silently ignores ``sort=False``).
+# The helper below strips that prefix for assertion clarity.
+
+
+def _strip_prefix(label: str) -> str:
+    """Drop the v2.16.6 sort-control prefix (U+0001..U+0007) if present."""
+    return label[1:] if label and ord(label[0]) <= 0x07 else label
 
 
 def test_weekday_options_default_language_english():
     """Without language → English full names in original order."""
     opts = _weekday_options("0")
-    labels = [o["label"] for o in opts]
+    labels = [_strip_prefix(o["label"]) for o in opts]
     assert labels == [
         "Monday", "Tuesday", "Wednesday", "Thursday",
         "Friday", "Saturday", "Sunday",
@@ -82,7 +91,7 @@ def test_weekday_options_default_language_english():
 def test_weekday_options_dutch_labels():
     """Dutch language → Dutch full names."""
     opts = _weekday_options("0", "nl")
-    labels = [o["label"] for o in opts]
+    labels = [_strip_prefix(o["label"]) for o in opts]
     assert labels == [
         "Maandag", "Dinsdag", "Woensdag", "Donderdag",
         "Vrijdag", "Zaterdag", "Zondag",
@@ -91,21 +100,40 @@ def test_weekday_options_dutch_labels():
 
 def test_weekday_options_unknown_language_falls_back_to_english():
     opts = _weekday_options("0", "fr")
-    labels = [o["label"] for o in opts]
+    labels = [_strip_prefix(o["label"]) for o in opts]
     assert labels[0] == "Monday"
 
 
 def test_weekday_options_label_rotates_with_first_weekday():
     """Sunday-first → Sunday label first."""
     opts = _weekday_options("6", "en")
-    assert opts[0]["label"] == "Sunday"
-    assert opts[1]["label"] == "Monday"
+    assert _strip_prefix(opts[0]["label"]) == "Sunday"
+    assert _strip_prefix(opts[1]["label"]) == "Monday"
 
 
 def test_weekday_options_locale_with_region_tag():
     """'nl-NL' → Dutch (only first 2 chars matter)."""
     opts = _weekday_options("0", "nl-NL")
-    assert opts[0]["label"] == "Maandag"
+    assert _strip_prefix(opts[0]["label"]) == "Maandag"
+
+
+def test_weekday_options_labels_have_sort_prefix():
+    """v2.16.6: each label starts with a U+0001..U+0007 control char
+    so HA's frontend sorts by codepoint = our rotation order."""
+    opts = _weekday_options("0", "en")
+    prefixes = [ord(o["label"][0]) for o in opts]
+    assert prefixes == [1, 2, 3, 4, 5, 6, 7]
+
+
+def test_weekday_options_prefix_sort_yields_rotation_order():
+    """Sorting the labels alphabetically (what HA does) preserves
+    the rotated weekday order."""
+    opts = _weekday_options("6", "en")  # Sunday-first
+    sorted_labels = sorted(o["label"] for o in opts)
+    assert [_strip_prefix(lab) for lab in sorted_labels] == [
+        "Sunday", "Monday", "Tuesday", "Wednesday",
+        "Thursday", "Friday", "Saturday",
+    ]
 
 
 # ---- _read_first_weekday helper --------------------------------------------

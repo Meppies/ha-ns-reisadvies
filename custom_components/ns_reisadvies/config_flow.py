@@ -104,6 +104,14 @@ def _weekday_options(
     0 = Monday … 6 = Sunday). Anything that cannot be parsed back into
     that range falls back to Monday. ``language`` is the user's HA UI
     language ("en" or "nl"); unsupported languages fall back to English.
+
+    v2.16.6: each label is prefixed with a single zero-width control
+    character (U+0001 … U+0007). HA's multi-select ha-combo-box always
+    sorts options alphabetically by label and ignores ``sort=False``,
+    so we lean into that: the control characters are invisible to the
+    user but their codepoints (1..7) sort BEFORE all letters, in our
+    intended rotation order. End result: compact chip-style dropdown
+    AND correct first-weekday-first ordering.
     """
     try:
         start = int(first_weekday)
@@ -115,7 +123,16 @@ def _weekday_options(
         (language or "en").lower()[:2], _WEEKDAY_NAMES["en"],
     )
     order = [(i + start) % 7 for i in range(7)]
-    return [SelectOptionDict(value=str(d), label=names[d]) for d in order]
+    return [
+        SelectOptionDict(
+            value=str(d),
+            # ``chr(i + 1)`` is U+0001 (i=0) through U+0007 (i=6) —
+            # all below the ASCII letter range so alphabetical sort
+            # places the rotation-index-0 weekday first, etc.
+            label=f"{chr(i + 1)}{names[d]}",
+        )
+        for i, d in enumerate(order)
+    ]
 
 
 def _read_first_weekday(parent: Any) -> str:
@@ -479,16 +496,14 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                             # ``translation_key`` — the dropdown ended up
                             # "Friday, Monday, Saturday, …").
                             options=weekday_options,
-                            # v2.16.4: switched from DROPDOWN to LIST. HA's
-                            # multi-select ha-combo-box ignores ``sort=False``
-                            # and always alphabetises options by label, which
-                            # broke the rotated Monday-first / Sunday-first
-                            # weekday order. LIST mode renders the options
-                            # as a vertical checkbox stack and preserves
-                            # the order we provide. Slightly less compact
-                            # than the chip-style dropdown but visibly
-                            # correct, which matters more for a 7-item list.
-                            mode=SelectSelectorMode.LIST,
+                            # v2.16.6: back to DROPDOWN — chip-style
+                            # multi-select keeps the form compact. The
+                            # ha-combo-box ALWAYS alphabetises options
+                            # by label, so each option label has an
+                            # invisible U+0001..U+0007 prefix added in
+                            # _weekday_options that controls the sort
+                            # without showing up in the UI.
+                            mode=SelectSelectorMode.DROPDOWN,
                             multiple=True,
                         ),
                     ),
