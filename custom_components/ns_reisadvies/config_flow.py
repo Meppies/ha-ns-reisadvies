@@ -79,13 +79,31 @@ def _station_selector() -> SelectSelector:
     )
 
 
-def _weekday_options(first_weekday: Any) -> list[SelectOptionDict]:
+# v2.16.3: localized weekday labels embedded in the SelectOptionDicts
+# directly. Previously we relied on `translation_key="filter_days"` to
+# let HA's frontend look up the localized full names from strings.json,
+# but the frontend RE-SORTS such options alphabetically by translated
+# label — so the dropdown ended up "Friday, Monday, Saturday, Sunday,
+# Thursday, Tuesday, Wednesday" regardless of our intended rotation.
+# Embedding the label directly bypasses that sort.
+_WEEKDAY_NAMES: dict[str, list[str]] = {
+    "en": ["Monday", "Tuesday", "Wednesday", "Thursday",
+           "Friday", "Saturday", "Sunday"],
+    "nl": ["Maandag", "Dinsdag", "Woensdag", "Donderdag",
+           "Vrijdag", "Zaterdag", "Zondag"],
+}
+
+
+def _weekday_options(
+    first_weekday: Any, language: str = "en",
+) -> list[SelectOptionDict]:
     """Return the seven weekday SelectOptionDicts rotated so the chosen
     first day appears at the top of the list.
 
     ``first_weekday`` may be a string or int (Python weekday convention:
     0 = Monday … 6 = Sunday). Anything that cannot be parsed back into
-    that range falls back to Monday.
+    that range falls back to Monday. ``language`` is the user's HA UI
+    language ("en" or "nl"); unsupported languages fall back to English.
     """
     try:
         start = int(first_weekday)
@@ -93,8 +111,11 @@ def _weekday_options(first_weekday: Any) -> list[SelectOptionDict]:
         start = 0
     if not 0 <= start <= 6:
         start = 0
+    names = _WEEKDAY_NAMES.get(
+        (language or "en").lower()[:2], _WEEKDAY_NAMES["en"],
+    )
     order = [(i + start) % 7 for i in range(7)]
-    return [SelectOptionDict(value=str(d), label=str(d)) for d in order]
+    return [SelectOptionDict(value=str(d), label=names[d]) for d in order]
 
 
 def _read_first_weekday(parent: Any) -> str:
@@ -317,7 +338,7 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
         parent: config_entries.ConfigEntry | None = self._get_entry() if hasattr(self, "_get_entry") else None
         existing: list[tuple[str, str, str]] = []
         try:
-            parent = parent or self._get_reconfigure_entry()  # type: ignore[attr-defined]
+            parent = parent or self._get_entry()  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001
             parent = None
         if parent is not None:
@@ -383,7 +404,7 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
 
                 if reconfigure:
                     return self.async_update_and_abort(
-                        self._get_reconfigure_entry(),  # type: ignore[attr-defined]
+                        self._get_entry(),  # type: ignore[attr-defined]
                         self._get_reconfigure_subentry(),  # type: ignore[attr-defined]
                         data=route_data,
                         title=title,
@@ -419,7 +440,12 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
         # day-picker rotation reflects the user's locale (NL/EU = Mon,
         # US = Sun). Helpers are pure so the rotation can be unit-tested
         # without spinning up the form.
-        weekday_options = _weekday_options(_read_first_weekday(parent))
+        # v2.16.3: also pass the active HA language so the labels are
+        # localised directly in the SelectOptionDict (the frontend
+        # re-sorts options alphabetically when translation_key is used).
+        _hass = getattr(self, "hass", None)
+        _lang = getattr(getattr(_hass, "config", None), "language", "en")
+        weekday_options = _weekday_options(_read_first_weekday(parent), _lang)
 
         schema = vol.Schema({
             vol.Optional(
@@ -441,14 +467,15 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                         default=[str(d) for d in defaults.get(CONF_FILTER_DAYS, [])],
                     ): SelectSelector(
                         SelectSelectorConfig(
-                            # Options are rotated so the user's preferred
-                            # first day of the week (set on the hub
-                            # OptionsFlow, defaults to Monday) appears at
-                            # the top of the dropdown. The labels are
-                            # placeholders — HA replaces them with the
-                            # translated full weekday names (Monday /
-                            # Maandag / …) via the ``selector.filter_days``
-                            # translation block in strings.json.
+                            # v2.16.3: Options are rotated so the user's
+                            # preferred first day of the week (set on the
+                            # hub OptionsFlow, defaults to Monday) appears
+                            # at the top of the dropdown, AND the labels
+                            # are pre-localised here so HA's frontend
+                            # doesn't re-sort them alphabetically (which
+                            # is what happened when we used
+                            # ``translation_key`` — the dropdown ended up
+                            # "Friday, Monday, Saturday, …").
                             options=weekday_options,
                             # Dropdown mode renders selected days as chips
                             # that sit next to each other and wrap to a new
@@ -458,7 +485,6 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                             # mode is not (yet) available in HA selectors.
                             mode=SelectSelectorMode.DROPDOWN,
                             multiple=True,
-                            translation_key="filter_days",
                         ),
                     ),
                     vol.Optional(

@@ -65,6 +65,49 @@ def test_weekday_options_out_of_range_clamps_to_monday():
     assert [o["value"] for o in _weekday_options("-3")][0] == "0"
 
 
+# v2.16.3: localized labels embedded directly so HA's frontend doesn't
+# re-sort options alphabetically.
+
+
+def test_weekday_options_default_language_english():
+    """Without language → English full names in original order."""
+    opts = _weekday_options("0")
+    labels = [o["label"] for o in opts]
+    assert labels == [
+        "Monday", "Tuesday", "Wednesday", "Thursday",
+        "Friday", "Saturday", "Sunday",
+    ]
+
+
+def test_weekday_options_dutch_labels():
+    """Dutch language → Dutch full names."""
+    opts = _weekday_options("0", "nl")
+    labels = [o["label"] for o in opts]
+    assert labels == [
+        "Maandag", "Dinsdag", "Woensdag", "Donderdag",
+        "Vrijdag", "Zaterdag", "Zondag",
+    ]
+
+
+def test_weekday_options_unknown_language_falls_back_to_english():
+    opts = _weekday_options("0", "fr")
+    labels = [o["label"] for o in opts]
+    assert labels[0] == "Monday"
+
+
+def test_weekday_options_label_rotates_with_first_weekday():
+    """Sunday-first → Sunday label first."""
+    opts = _weekday_options("6", "en")
+    assert opts[0]["label"] == "Sunday"
+    assert opts[1]["label"] == "Monday"
+
+
+def test_weekday_options_locale_with_region_tag():
+    """'nl-NL' → Dutch (only first 2 chars matter)."""
+    opts = _weekday_options("0", "nl-NL")
+    assert opts[0]["label"] == "Maandag"
+
+
 # ---- _read_first_weekday helper --------------------------------------------
 
 

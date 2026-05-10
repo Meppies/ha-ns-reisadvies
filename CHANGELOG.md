@@ -4,6 +4,35 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.3] — 2026-05-10
+
+### Fixed — "Unknown error" on Reconfigure submit + alphabetical day dropdown
+
+Two unrelated subentry-flow bugs spotted while editing the test-route
+sensor.
+
+**1. AttributeError on Reconfigure submit.** `NSRouteSubentryFlowHandler`
+called `self._get_reconfigure_entry()`, but `ConfigSubentryFlow` only
+exposes `_get_entry()`. The traceback ended in:
+
+```
+AttributeError: 'NSRouteSubentryFlowHandler' object has no attribute
+'_get_reconfigure_entry'. Did you mean: '_get_reconfigure_subentry'?
+```
+
+The HA frontend swallowed it as the generic "Unknown error occurred"
+banner, hiding the real issue. Renamed every call to `_get_entry()`.
+
+**2. Day-of-week dropdown sorted alphabetically (Friday, Monday,
+Saturday, …).** When a `SelectSelector` declares `translation_key`,
+the HA frontend looks up the localised label per option AND re-sorts
+the dropdown alphabetically by that label — which broke our explicit
+"first weekday first" rotation. Fix: embed the localised label
+directly in each `SelectOptionDict` (English / Dutch built-in) and
+drop the `translation_key`. The rotation now survives.
+
+Console banner bumped to v2.16.3.
+
 ## [2.16.2] — 2026-05-10
 
 ### Fixed — Hilversum ↔ Utrecht live map polyline took a detour via Maarssen
