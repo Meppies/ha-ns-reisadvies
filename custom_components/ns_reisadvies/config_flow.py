@@ -335,12 +335,14 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
         # is a (from, to, name) triple — name "" when the route has no
         # custom name, so two unnamed routes between the same stations
         # still collide.
-        parent: config_entries.ConfigEntry | None = self._get_entry() if hasattr(self, "_get_entry") else None
+        # ``_get_entry`` is provided by ``ConfigSubentryFlow`` on real HA
+        # runs and stubbed by the unit tests. The hasattr guard keeps
+        # this defensive against future HA refactors where the method
+        # name might change again.
+        parent: config_entries.ConfigEntry | None = (
+            self._get_entry() if hasattr(self, "_get_entry") else None
+        )
         existing: list[tuple[str, str, str]] = []
-        try:
-            parent = parent or self._get_entry()  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
-            parent = None
         if parent is not None:
             current_id = (
                 self._reconfigure_subentry_id  # type: ignore[attr-defined]
