@@ -1337,21 +1337,19 @@ class NSReisadviesCard extends HTMLElement {
 
       // Build full-NL graph once.
       //
-      // v2.15.6: lowered key precision from 4-decimal (~11 m) to
-      // 3-decimal (~110 m). The 4-decimal version was leaving
-      // disjoint sub-graphs because adjacent rail features in the
-      // ProRail GeoJSON sometimes terminate 12–15 m apart (different
-      // surveyors, slightly different coordinate snapping). That left
-      // long-distance routes (Hilversum → Duivendrecht direct,
-      // anything to/from Emmen) without a connected path so the A*
-      // search returned null and the live map fell back to a straight
-      // line between stations. 110 m precision still discriminates
-      // between separate parallel tracks in big stations (≥150 m
-      // apart) but reliably welds neighbouring features into one
-      // connected NL-wide network.
-      const graph = new Map();
-      const nodeCoords = new Map();
-      const k = c => `${c[0].toFixed(3)},${c[1].toFixed(3)}`;
+      // v2.15.8: back to 4-decimal precision (~11 m) for junction
+      // welding. v2.15.6's 3-decimal (~110 m) was over-aggressive: at
+      // Utrecht Centraal (and other big stations) it merged separate
+      // parallel/crossing tracks into a single tangled blob, which
+      // made the A* search loop through the rangeer-emplacement and
+      // produce 60 km+ paths for the 3 km Utrecht Overvecht → Utrecht
+      // CS hop.
+      //
+      // To still bridge the small (12–15 m) gaps between adjacent
+      // ProRail features that 4-decimal misses, a second pass adds
+      // **proximity edges** between any two nodes within 25 m. That
+      // welds disjoint clusters without polluting station areas with
+      // false cross-line shortcuts.
       const haversine = (a, b) => {
         const R = 6371000.0;
         const r = Math.PI / 180;
@@ -1362,6 +1360,9 @@ class NSReisadviesCard extends HTMLElement {
           + Math.cos(la1) * Math.cos(la2) * Math.sin(dlo / 2) ** 2;
         return 2 * R * Math.asin(Math.sqrt(h));
       };
+      const graph = new Map();
+      const nodeCoords = new Map();
+      const k = c => `${c[0].toFixed(4)},${c[1].toFixed(4)}`;
       for (const ls of lineStrings) {
         for (let i = 0; i < ls.length - 1; i++) {
           const a = ls[i], b = ls[i + 1];
@@ -1375,6 +1376,54 @@ class NSReisadviesCard extends HTMLElement {
           graph.get(ka).push({ to: kb, w });
           graph.get(kb).push({ to: ka, w });
         }
+      }
+      // Second pass: bridge nodes that sit within 25 m of each other
+      // but ended up in different graph components because 4-decimal
+      // rounding put them in different cells. Spatial-grid-bucketed
+      // so we don't run O(n²); only candidate pairs in the same or
+      // neighbouring 0.0005°-cells (~55 m) are tested.
+      const PROX_METERS = 25;
+      const CELL = 0.0005;
+      const buckets = new Map();
+      const cellKey = (lat, lng) =>
+        `${Math.floor(lat / CELL)},${Math.floor(lng / CELL)}`;
+      for (const [key, c] of nodeCoords) {
+        const ck = cellKey(c[0], c[1]);
+        if (!buckets.has(ck)) buckets.set(ck, []);
+        buckets.get(ck).push({ key, c });
+      }
+      let bridgesAdded = 0;
+      for (const [ck, nodes] of buckets) {
+        const [cy, cx] = ck.split(",").map(Number);
+        const neigh = [];
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const arr = buckets.get(`${cy + dy},${cx + dx}`);
+            if (arr) neigh.push(...arr);
+          }
+        }
+        for (const n1 of nodes) {
+          for (const n2 of neigh) {
+            if (n1.key === n2.key) continue;
+            // Only add each undirected pair once (lex order on keys).
+            if (n1.key > n2.key) continue;
+            const d = haversine(n1.c, n2.c);
+            if (d > PROX_METERS) continue;
+            // Skip if already directly connected.
+            const adj = graph.get(n1.key);
+            if (adj && adj.some(e => e.to === n2.key)) continue;
+            graph.get(n1.key).push({ to: n2.key, w: d });
+            if (!graph.has(n2.key)) graph.set(n2.key, []);
+            graph.get(n2.key).push({ to: n1.key, w: d });
+            bridgesAdded++;
+          }
+        }
+      }
+      if (bridgesAdded) {
+        console.info(
+          `[ns-reisadvies] rail graph: ${nodeCoords.size} nodes, `
+          + `${bridgesAdded} proximity bridges added (≤${PROX_METERS} m)`
+        );
       }
 
       const result = {
@@ -1593,9 +1642,28 @@ class NSReisadviesCard extends HTMLElement {
         segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
         continue;
       }
+      // v2.15.8: outlier filter. If the shortest path is more than
+      // 3× the great-circle distance between stations + a 1 km floor,
+      // the route is almost certainly looping through a station's
+      // rangeer-emplacement (Utrecht Centraal does this) or taking
+      // a wide detour because the local graph is broken. Fall back
+      // to a straight line — much better than drawing 69 km of
+      // spaghetti for a 3 km hop.
+      const directKm = g.haversine([a.lat, a.lng], [b.lat, b.lng]) / 1000;
+      const pathKm = bestLen / 1000;
+      if (pathKm > directKm * 3 + 1) {
+        console.warn(
+          `[ns-reisadvies] PATH TOO LONG ${a.name} → ${b.name}: `
+          + `${pathKm.toFixed(1)} km vs direct ${directKm.toFixed(1)} km — `
+          + `straight-line fallback`
+        );
+        segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
+        continue;
+      }
       console.info(
         `[ns-reisadvies] rail-snap ${a.name} → ${b.name}: `
-        + `${bestPath.length} pts, ${(bestLen / 1000).toFixed(1)} km, `
+        + `${bestPath.length} pts, ${pathKm.toFixed(1)} km `
+        + `(direct ${directKm.toFixed(1)} km), `
         + `${foundCount}/${triedCount} candidates ok, `
         + `snap A=${bestPathSnaps.sa.dist.toFixed(0)}m B=${bestPathSnaps.sb.dist.toFixed(0)}m`
       );
@@ -2186,7 +2254,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.15.7 ",
+  "%c NS-REISADVIES-CARD %c v2.15.8 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

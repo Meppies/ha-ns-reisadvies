@@ -4,6 +4,34 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.8] — 2026-05-09
+
+### Fixed — Utrecht Centraal emplacement loops + over-eager 3-decimal welding
+v2.15.6 dropped junction precision from 4-decimal (~11 m) to 3-decimal
+(~110 m) to bridge gaps between adjacent ProRail features. That solved
+long-distance dead-ends but introduced a new bug at large stations:
+parallel and crossing tracks at Utrecht Centraal were merged into one
+tangled blob, so the A* search routed the 3 km Utrecht Overvecht →
+Utrecht CS hop through 60+ km of rangeer-emplacement loops.
+
+Two-step fix:
+1. **Junction precision back to 4-decimal** (~11 m) — keeps parallel
+   tracks distinct in busy stations.
+2. **Proximity-edge augmentation** — after the main graph build, walk
+   every node and add an edge to every other node within 25 m via a
+   spatial-grid bucket (no O(n²)). That bridges the small inter-feature
+   gaps 4-decimal misses, without polluting station areas with false
+   cross-line shortcuts.
+3. **Outlier filter in `_railSnapStopsWith`** — if the shortest A*
+   path is more than `3× direct + 1 km`, fall back to a straight line.
+   Cheap safety net for any remaining graph weirdness.
+
+The startup log now reports `<n> nodes, <m> proximity bridges added`
+so future graph health is visible at a glance. Path-length log line
+also shows `direct <km> km` for sanity-checking.
+
+Console banner bumped to v2.15.8.
+
 ## [2.15.7] — 2026-05-09
 
 ### Fixed — rail-snap picks shortest path, not first-found
