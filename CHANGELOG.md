@@ -4,6 +4,24 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.9] — 2026-05-10
+
+### Fixed — clear button on Time of day / Specific date / Route name didn't stick
+
+When the user cleared one of the optional fields with the X-button and
+then submitted the Reconfigure form, the cleared field was silently
+restored on the next form open. Cause: the schema used
+`vol.Optional(key, default=current_value)`, and voluptuous re-injects
+`default` when a key is absent in `user_input`. Since the cleared
+field is absent on submit, the OLD value got written straight back.
+
+Replaced `default=` with `description={"suggested_value": ...}` for
+the three clearable text-style fields (route name, time of day,
+specific date). `suggested_value` only pre-fills the UI — an absent
+key on submit stays absent and the field truly clears. The window
+slider and from/to stations keep their `default=` because those are
+not user-clearable in HA's selector framework.
+
 ## [2.16.8] — 2026-05-10
 
 ### Changed — back to compact DROPDOWN day picker (alphabetical labels)

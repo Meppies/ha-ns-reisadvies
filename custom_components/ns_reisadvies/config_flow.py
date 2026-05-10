@@ -457,10 +457,17 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
         _lang = getattr(getattr(_hass, "config", None), "language", "en")
         weekday_options = _weekday_options(_read_first_weekday(parent), _lang)
 
+        # v2.16.9: optional clearable fields (route name, time of day,
+        # specific date) use ``description={"suggested_value": ...}``
+        # rather than ``default=``. Voluptuous re-injects ``default``
+        # when a key is missing in user_input — so when the user clicks
+        # the X to clear the time, the form was silently restoring the
+        # previous value on submit. ``suggested_value`` only pre-fills
+        # the UI; an absent key on submit stays absent.
         schema = vol.Schema({
             vol.Optional(
                 CONF_ROUTE_NAME,
-                default=defaults.get(CONF_ROUTE_NAME, vol.UNDEFINED),
+                description={"suggested_value": defaults.get(CONF_ROUTE_NAME)},
             ): TextSelector(TextSelectorConfig(type=TextSelectorType.TEXT)),
             vol.Required(
                 CONF_FROM_STATION,
@@ -501,7 +508,9 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                     ),
                     vol.Optional(
                         CONF_FILTER_TIME,
-                        default=defaults.get(CONF_FILTER_TIME, vol.UNDEFINED),
+                        description={
+                            "suggested_value": defaults.get(CONF_FILTER_TIME),
+                        },
                     ): TimeSelector(),
                     vol.Optional(
                         CONF_FILTER_WINDOW_MINUTES,
@@ -522,7 +531,9 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                     ),
                     vol.Optional(
                         CONF_FILTER_DATE,
-                        default=defaults.get(CONF_FILTER_DATE, vol.UNDEFINED),
+                        description={
+                            "suggested_value": defaults.get(CONF_FILTER_DATE),
+                        },
                     ): DateSelector(),
                 }),
                 # Section is shown expanded by default.
