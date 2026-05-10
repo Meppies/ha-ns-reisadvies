@@ -4,6 +4,21 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.4] — 2026-05-10
+
+### Fixed — day dropdown still alphabetical despite v2.16.3 fix
+
+v2.16.3 dropped the `translation_key` and embedded localised labels
+directly, on the assumption that HA's frontend only re-sorted when
+`translation_key` was set. Wrong: HA's `ha-combo-box` widget
+(used for `mode=DROPDOWN`) sorts options alphabetically by label
+regardless. The dropdown still showed "Friday, Monday, Saturday, …"
+on a Monday-first locale.
+
+Setting `sort=False` on `SelectSelectorConfig` keeps our rotated
+weekday order intact. Verified live on the test-route reconfigure
+form.
+
 ## [2.16.3] — 2026-05-10
 
 ### Fixed — "Unknown error" on Reconfigure submit + alphabetical day dropdown

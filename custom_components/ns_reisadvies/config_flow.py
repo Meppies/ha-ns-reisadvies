@@ -479,14 +479,18 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                             # ``translation_key`` — the dropdown ended up
                             # "Friday, Monday, Saturday, …").
                             options=weekday_options,
-                            # Dropdown mode renders selected days as chips
-                            # that sit next to each other and wrap to a new
-                            # line once they overflow — much more compact
-                            # than the list-mode vertical checkbox stack on
-                            # narrow screens. Native horizontal checkbox-grid
-                            # mode is not (yet) available in HA selectors.
+                            # v2.15.1: Dropdown mode renders selected days
+                            # as chips so multi-select stays compact on
+                            # narrow screens. Native horizontal checkbox-
+                            # grid mode is not (yet) available in HA.
                             mode=SelectSelectorMode.DROPDOWN,
                             multiple=True,
+                            # v2.16.3: HA's ha-combo-box widget defaults to
+                            # alphabetical-by-label sort; explicitly setting
+                            # ``sort=False`` keeps our rotated weekday
+                            # order (Monday-first / Sunday-first based on
+                            # the hub's first-weekday option).
+                            sort=False,  # type: ignore[typeddict-unknown-key]
                         ),
                     ),
                     vol.Optional(
