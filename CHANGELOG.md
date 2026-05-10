@@ -4,6 +4,25 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.7] — 2026-05-10
+
+### Reverted — DROPDOWN with control-char prefix dropped, back to LIST
+
+The v2.16.6 trick of prefixing labels with U+0001..U+0007 control
+characters to game HA's mandatory alphabetical sort failed in
+practice: HA's `ha-combo-box` filter pipeline rejects items whose
+labels contain control characters and renders an empty dropdown.
+
+Confirmed via DOM inspection: the options ARE in the selector config
+with the prefixes set, but the dropdown list element is empty when
+opened. Moving back to LIST mode (v2.16.5 behaviour) — vertical
+checkbox stack with correct rotated order. Less compact than chips
+but functional.
+
+The combination "compact chip-style multi-select dropdown" AND
+"rotated first-weekday order" is not achievable with HA's current
+selector framework without a visible label prefix.
+
 ## [2.16.6] — 2026-05-10
 
 ### Changed — compact day-of-week DROPDOWN restored, with correct order
