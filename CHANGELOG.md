@@ -4,6 +4,33 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.1] — 2026-05-10
+
+### Changed — "Trips for tomorrow" badge now appears on every route, not just filtered ones
+
+The day-offset badge in v2.16.0 only fired when the per-route filter
+anchor was on a future day. That missed the most natural case: a
+route with NO filter at all, late in the evening, where NS hands
+back trips that physically depart after midnight (e.g. now=23:55,
+next train 00:30). Those trips ARE for tomorrow, but the badge
+stayed silent.
+
+Now `target_day_offset` and `target_date` are derived from the FIRST
+trip the card is about to render, after the filter has been applied.
+The badge appears whenever that date is later than today, regardless
+of whether the user set any filter.
+
+The labels also use weekday + date for offsets > 1 instead of the
+"Trips in N days" relative phrasing — clearer when the gap is more
+than one day. Wording rules:
+
+- **Specific date pinned** → "Reizen voor 24 december 2026"
+- **Offset = 1** without weekday filter → "Reizen voor morgen"
+- **Otherwise** (weekday filter, or offset > 1) → "Reizen voor
+  maandag 11 mei 2026"
+
+Console banner bumped to v2.16.1.
+
 ## [2.16.0] — 2026-05-10
 
 ### Changed — structural rail-snap fix + clearer "trips for a future day" badge

@@ -375,3 +375,108 @@ async def test_pick_single_when_time_set_and_window_zero(
     # 08:50 and 09:05 are both 10/5 min from 09:00. Closest wins.
     assert len(out) == 1
     assert out[0]["ctxRecon"] == "b"  # 09:05 is closest
+
+
+async def test_target_day_offset_from_first_trip_no_filter(
+    hass: HomeAssistant,
+) -> None:
+    """v2.16.1: no filter set, late evening, NS returns first trip
+    for tomorrow morning → offset must be 1 so the card shows the
+    'Reizen voor morgen' badge even without an active filter."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 23, 55)  # Saturday late evening
+    trips_payload = {
+        "trips": [
+            {"ctxRecon": "a", "legs": [{"origin": {"plannedDateTime": "2026-05-10T00:30:00+0200"}}]},
+            {"ctxRecon": "b", "legs": [{"origin": {"plannedDateTime": "2026-05-10T01:30:00+0200"}}]},
+        ],
+    }
+    coord = _coord(hass)  # NO filter at all
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, trips_payload))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    assert coord._target_day_offset == 1
+    assert coord._target_date == "2026-05-10"
+
+
+async def test_target_day_offset_zero_when_first_trip_today(
+    hass: HomeAssistant,
+) -> None:
+    """v2.16.1: trips that depart later today → no badge (offset 0)."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 14, 0)
+    trips_payload = {
+        "trips": [
+            {"ctxRecon": "a", "legs": [{"origin": {"plannedDateTime": "2026-05-09T14:30:00+0200"}}]},
+        ],
+    }
+    coord = _coord(hass)
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, trips_payload))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    assert coord._target_day_offset == 0
+    assert coord._target_date == "2026-05-09"
+
+
+async def test_target_day_offset_first_trip_invalid_iso_falls_back(
+    hass: HomeAssistant,
+) -> None:
+    """v2.16.1: when the first trip has a garbage plannedDateTime,
+    keep the provisional offset/date computed from the filter anchor."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 14, 0)
+    trips_payload = {
+        "trips": [
+            {"ctxRecon": "a", "legs": [{"origin": {"plannedDateTime": "not-a-date"}}]},
+        ],
+    }
+    coord = _coord(hass)
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, trips_payload))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    # Provisional values: anchor was now (no filter) → offset 0.
+    assert coord._target_day_offset == 0
+    assert coord._target_date == "2026-05-09"
+
+
+async def test_target_day_offset_no_trips_keeps_provisional(
+    hass: HomeAssistant,
+) -> None:
+    """v2.16.1: empty trip list → provisional offset/date sticks.
+    Used by specific-date routes that may legitimately have no trips
+    on the chosen day; the badge still says 'Reizen voor [date]'."""
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 5, 9, 14, 0)
+    coord = _coord(hass, filter_date="2026-12-24")
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": []}))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        await coord._async_update_data()
+    # Specific-date pin → provisional values from compute_target_datetime.
+    assert coord._target_date == "2026-12-24"
+    assert coord._target_day_offset == (
+        _dt(2026, 12, 24).date() - fixed_now.date()
+    ).days

@@ -411,13 +411,10 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             window_minutes=self.filter_window_minutes,
             specific_date=self.filter_date,
         ) or now_dt
-        # v2.16.0: surface "this is for a future day" so the card can
-        # show an explicit badge ("Reizen voor morgen", "Reizen voor
-        # maandag 11 mei", "Reizen voor 24 december 2026"). The badge
-        # is shown for ANY active filter that puts the anchor on a
-        # future day — time-of-day rollover, days-of-week without
-        # today, or a specific-date pin. ``_target_date`` carries the
-        # ISO date so the card can localise the human-readable form.
+        # v2.16.1: provisional offset/date — refined below using the
+        # first visible trip so unfiltered routes also surface a
+        # "trips for tomorrow" badge when the next train physically
+        # leaves after midnight.
         self._target_day_offset = (target_dt.date() - now_dt.date()).days
         self._target_date = target_dt.date().isoformat()
         params = {
@@ -529,6 +526,41 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                         self.filter_window_minutes,
                         pick_single=pick_single,
                     )
+
+                # v2.16.1: refine the day-offset to the date of the
+                # first trip we are actually going to render. This
+                # makes the "Reizen voor morgen" badge appear on
+                # routes without any filter when NS hands us trips
+                # that physically depart after midnight (typical
+                # late-evening case: now=23:55, next train 00:30).
+                first_iso: str | None = None
+                for trip in all_trips:
+                    legs = trip.get("legs") or []
+                    if not legs:
+                        continue
+                    iso = (legs[0] or {}).get("origin", {}).get(
+                        "plannedDateTime"
+                    )
+                    if iso:
+                        first_iso = str(iso)
+                        break
+                if first_iso:
+                    try:
+                        first_dt = datetime.fromisoformat(
+                            first_iso.replace("Z", "+00:00")
+                        )
+                    except (TypeError, ValueError):
+                        first_dt = None
+                    if first_dt is not None:
+                        # ``plannedDateTime`` is timezone-aware; use the
+                        # wall-clock date in that zone so the comparison
+                        # against ``now_dt.date()`` (local) is right for
+                        # the user.
+                        first_date = first_dt.date()
+                        self._target_day_offset = (
+                            first_date - now_dt.date()
+                        ).days
+                        self._target_date = first_date.isoformat()
 
                 # Optional: annotate each leg with carriage composition.
                 # Mutates legs in place by adding a `composition` key.

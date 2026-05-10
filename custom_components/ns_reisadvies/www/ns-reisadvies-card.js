@@ -722,18 +722,18 @@ class NSReisadviesCard extends HTMLElement {
             + `</div>`;
     }
 
-    // v2.16.0: when the route's filter anchor is on a future day,
-    // show a yellow badge so the user knows the trips below are NOT
-    // for today. Three flavours, in order of specificity:
-    //   * Days-of-week filter (no specific date pin) AND offset > 0
-    //     → "Reizen voor maandag 11 mei" — show the resolved weekday
-    //       so the user remembers which day they filtered to.
-    //   * Specific-date filter set (offset > 0 by definition unless
-    //     the user pinned today) → "Reizen voor 24 december 2026" —
-    //     spell out the date.
-    //   * Time-only filter, anchor rolled over midnight → "Reizen
-    //     voor morgen" / "Reizen over N dagen" — relative is fine,
-    //     no day-of-week was chosen.
+    // v2.16.1: yellow badge appears whenever the FIRST trip we are
+    // about to render is on a future day — with or without a route
+    // filter. Late-evening routes whose next train physically leaves
+    // after midnight now also get "Reizen voor morgen". Three label
+    // flavours, in order of specificity:
+    //   * Specific-date filter set → "Reizen voor 24 december 2026" —
+    //     literal date, regardless of offset.
+    //   * Offset == 1 (and no day-of-week filter) → "Reizen voor
+    //     morgen" — relative is the most natural for "tomorrow".
+    //   * Otherwise (offset > 1, or weekday filter active) → spell
+    //     out "Reizen voor maandag 11 mei 2026" so the user knows
+    //     exactly which day they're looking at.
     const dayOffset = Number(stateObj.attributes.target_day_offset || 0);
     const targetDateIso = stateObj.attributes.target_date || null;
     if (dayOffset > 0 && targetDateIso) {
@@ -747,23 +747,18 @@ class NSReisadviesCard extends HTMLElement {
       ).format(targetDate);
       const tplDate = t("badge_for_date", this._hass) || "Reizen voor {date}";
       const tplTomorrow = t("badge_tomorrow", this._hass) || "Reizen voor morgen";
-      const tplInN = t("badge_in_n_days", this._hass) || "Reizen over {n} dagen";
 
-      // Specific date set OR a weekday filter is active → show the
-      // literal weekday + date so the user knows exactly which day.
       const specificDate = stateObj.attributes.filter_date;
       const filterDays = stateObj.attributes.filter_days;
       const hasWeekdayFilter = Array.isArray(filterDays) && filterDays.length > 0;
       let label;
       if (specificDate) {
         label = tplDate.replace("{date}", dateFmt);
-      } else if (hasWeekdayFilter) {
-        // "Reizen voor maandag 11 mei 2026"
-        label = tplDate.replace("{date}", `${weekdayFmt} ${dateFmt}`);
-      } else if (dayOffset === 1) {
+      } else if (dayOffset === 1 && !hasWeekdayFilter) {
         label = tplTomorrow;
       } else {
-        label = tplInN.replace("{n}", String(dayOffset));
+        // Weekday filter, or just a far-future day → "<weekday> <date>".
+        label = tplDate.replace("{date}", `${weekdayFmt} ${dateFmt}`);
       }
       const icon = dayOffset === 1 ? "mdi:calendar-tomorrow" : "mdi:calendar-clock";
       html += `<div class="day-offset-badge"><ha-icon icon="${icon}"></ha-icon>${label}</div>`;
@@ -2410,7 +2405,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.0 ",
+  "%c NS-REISADVIES-CARD %c v2.16.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
