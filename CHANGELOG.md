@@ -4,6 +4,29 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.11] — 2026-05-15
+
+### Fixed — v2.16.10's main-component filter was over-aggressive
+
+v2.16.10 introduced a `mainComponent` set to filter out tiny disconnected
+sub-graphs as snap candidates. The set was populated from the largest
+PRE-bridging component — but the same code then bridges 24 smaller
+components into the main via a single edge each. Those bridged-in nodes
+stayed missing from `mainComponent`, so the snap helper kept rejecting
+them even though A\* could reach them just fine.
+
+Effect: snaps were landing 1.5+ km away from the actual station coords
+(Amersfoort → Utrecht log showed `snap A=1533m B=1622m`, vs ~200 m in
+v2.16.2). At Utrecht Centraal the platform tracks happen to live in a
+bridged sub-component, so they were being rejected entirely and A\*
+ended up routing Utrecht → 's-Hertogenbosch via the south-Holland
+loop (110.6 km vs 46.1 km direct — caught by the outlier filter, drew
+a straight line).
+
+Fix: also `mainComponent.add(k)` for every node of every successfully
+bridged component, inside the bridging loop. After the fix, bridged-in
+station tracks are first-class snap candidates again.
+
 ## [2.16.10] — 2026-05-10
 
 ### Changed — three structural rail-snap improvements

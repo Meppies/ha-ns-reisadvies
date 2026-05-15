@@ -1561,12 +1561,14 @@ class NSReisadviesCard extends HTMLElement {
           graph.get(bestTo).push({ to: bestFrom, w: bestDist });
           componentsBridged++;
           // Promote the small component into mainBuckets so subsequent
-          // bridges can attach to it too.
+          // bridges can attach to it too, AND into mainComponent so the
+          // snap helper trusts these nodes (v2.16.11 bug fix).
           for (const k of small) {
             const c = nodeCoords.get(k);
             const ck = `${Math.floor(c[0] / MAIN_CELL)},${Math.floor(c[1] / MAIN_CELL)}`;
             if (!mainBuckets.has(ck)) mainBuckets.set(ck, []);
             mainBuckets.get(ck).push({ key: k, c });
+            mainComponent.add(k);
           }
         }
       }
@@ -1575,6 +1577,15 @@ class NSReisadviesCard extends HTMLElement {
       // sub-graphs (rangeer-spoor, freight-only branches, etc.) when
       // picking snap candidates. Snapping to an island = guaranteed
       // straight-line fallback or 100+ km A* detour.
+      //
+      // v2.16.11: ALSO include every sub-component that successfully
+      // bridged into the main component above. Before this fix the
+      // set was the pre-bridge largest component only — the 24
+      // sub-components welded via a single edge stayed "untrusted"
+      // and got filtered out as snap candidates, even though A* could
+      // reach them just fine. Effect: snaps were landing 1.5 km away
+      // from the actual station (vs 200 m in v2.16.2), so legitimate
+      // platform tracks were missed entirely.
       const mainComponent = new Set(components[0] || []);
       console.info(
         `[ns-reisadvies] rail graph: ${nodeCoords.size} nodes, `
@@ -2465,7 +2476,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.10 ",
+  "%c NS-REISADVIES-CARD %c v2.16.11 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
