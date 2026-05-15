@@ -4,6 +4,20 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.12] — 2026-05-15
+
+### Fixed — v2.16.11 ReferenceError, mainComponent used before declaration
+
+v2.16.11 added `mainComponent.add(k)` inside the bridging loop but
+left the `const mainComponent = …` declaration AFTER the loop, so the
+temporal-dead-zone fired on every rail-graph build: `ReferenceError:
+Cannot access 'mainComponent' before initialization`. Pre-warm failed
+silently, the modal got an unusable graph, every leg fell back to
+straight-line.
+
+Fix: declare `mainComponent` BEFORE the bridging loop. Same Set,
+same content — the only change is the line order.
+
 ## [2.16.11] — 2026-05-15
 
 ### Fixed — v2.16.10's main-component filter was over-aggressive

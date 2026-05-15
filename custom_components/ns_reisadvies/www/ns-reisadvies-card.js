@@ -1517,6 +1517,17 @@ class NSReisadviesCard extends HTMLElement {
         components.push(comp);
       }
       components.sort((a, b) => b.length - a.length);
+      // v2.16.10: keep the set of main-component node keys so that
+      // _railSnapCandidatesWith can filter out tiny disconnected
+      // sub-graphs (rangeer-spoor, freight-only branches, etc.) when
+      // picking snap candidates. Snapping to an island = guaranteed
+      // straight-line fallback or 100+ km A* detour.
+      //
+      // v2.16.11: declare BEFORE the bridging loop so the loop can
+      // promote successfully-bridged sub-components into the Set.
+      // (The previous post-loop declaration triggered a temporal
+      // dead-zone ReferenceError during pre-warm.)
+      const mainComponent = new Set(components[0] || []);
       // Bucket the main component nodes for fast nearest-node lookup
       // when bridging. 1.1 km cells → search 7×7 cells = ~7 km box,
       // plenty for the 5 km cap below.
@@ -1572,21 +1583,6 @@ class NSReisadviesCard extends HTMLElement {
           }
         }
       }
-      // v2.16.10: keep the set of main-component node keys so that
-      // _railSnapCandidatesWith can filter out tiny disconnected
-      // sub-graphs (rangeer-spoor, freight-only branches, etc.) when
-      // picking snap candidates. Snapping to an island = guaranteed
-      // straight-line fallback or 100+ km A* detour.
-      //
-      // v2.16.11: ALSO include every sub-component that successfully
-      // bridged into the main component above. Before this fix the
-      // set was the pre-bridge largest component only — the 24
-      // sub-components welded via a single edge stayed "untrusted"
-      // and got filtered out as snap candidates, even though A* could
-      // reach them just fine. Effect: snaps were landing 1.5 km away
-      // from the actual station (vs 200 m in v2.16.2), so legitimate
-      // platform tracks were missed entirely.
-      const mainComponent = new Set(components[0] || []);
       console.info(
         `[ns-reisadvies] rail graph: ${nodeCoords.size} nodes, `
         + `${bridgesAdded} proximity bridges (≤${PROX_METERS} m), `
@@ -2476,7 +2472,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.11 ",
+  "%c NS-REISADVIES-CARD %c v2.16.12 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
