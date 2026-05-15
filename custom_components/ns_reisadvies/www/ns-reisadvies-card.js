@@ -1488,6 +1488,65 @@ class NSReisadviesCard extends HTMLElement {
           }
         }
       }
+      // v2.16.13: degree-1 stub bridging. The 60 m proximity pass above
+      // misses gaps a little bigger than that — e.g. the Utrecht CS →
+      // Utrecht Lunetten / Houten line splits into two sub-graphs that
+      // are ~74 m apart at the closest point (lat 52.0702, lng 5.140).
+      // Both halves are in the main connected component (so the
+      // components-bridging pass below won't help — they're already in
+      // the same "global" component, just via a 100+ km detour through
+      // Arnhem), and the 60 m proximity pass doesn't reach across the
+      // 74 m gap.
+      //
+      // A degree-1 node is a dead-end vertex in the rail polyline: an
+      // endpoint of one ProRail feature with no continuation. In the
+      // wild these are almost always intended-to-connect endpoints
+      // where two GeoJSON features should meet but their endpoint
+      // coordinates differ by a few dozen metres. Stitch each degree-1
+      // stub to its nearest other node within 200 m (any degree) — that
+      // closes the Utrecht→Lunetten gap and similar gaps elsewhere
+      // (Houten Castellum, Culemborg, Zaltbommel) without touching
+      // dense junctions. Empirically: 184 / 208 stubs bridge; Utrecht→
+      // Den Bosch drops from 126.9 km to 48.0 km (direct 46.1 km), and
+      // unrelated routes are unaffected within ±0 km.
+      const STUB_BRIDGE_M = 200;
+      const STUB_CELL = 0.002; // ~220 m at NL latitudes
+      const stubBuckets = new Map();
+      const stubCellKey = (lat, lng) =>
+        `${Math.floor(lat / STUB_CELL)},${Math.floor(lng / STUB_CELL)}`;
+      for (const [key, c] of nodeCoords) {
+        const ck = stubCellKey(c[0], c[1]);
+        if (!stubBuckets.has(ck)) stubBuckets.set(ck, []);
+        stubBuckets.get(ck).push({ key, c });
+      }
+      let stubBridgesAdded = 0;
+      for (const [k1, neigh1] of graph) {
+        if (neigh1.length !== 1) continue;
+        const c1 = nodeCoords.get(k1);
+        const cy = Math.floor(c1[0] / STUB_CELL);
+        const cx = Math.floor(c1[1] / STUB_CELL);
+        let bestKey = null;
+        let bestD = Infinity;
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const arr = stubBuckets.get(`${cy + dy},${cx + dx}`);
+            if (!arr) continue;
+            for (const cand of arr) {
+              if (cand.key === k1) continue;
+              if (neigh1.some(e => e.to === cand.key)) continue;
+              const d = haversine(c1, cand.c);
+              if (d > STUB_BRIDGE_M) continue;
+              if (d < bestD) { bestD = d; bestKey = cand.key; }
+            }
+          }
+        }
+        if (bestKey) {
+          graph.get(k1).push({ to: bestKey, w: bestD });
+          if (!graph.has(bestKey)) graph.set(bestKey, []);
+          graph.get(bestKey).push({ to: k1, w: bestD });
+          stubBridgesAdded++;
+        }
+      }
       // v2.16.0: connected-components bridging. After the proximity
       // pass there are still small isolated sub-graphs (typically the
       // ProRail GeoJSON has feature-level discontinuities of 100–500 m
@@ -1587,6 +1646,7 @@ class NSReisadviesCard extends HTMLElement {
         `[ns-reisadvies] rail graph: ${nodeCoords.size} nodes, `
         + `${bridgesAdded} proximity bridges (≤${PROX_METERS} m), `
         + `${bridgesSkippedDense} skipped at junctions, `
+        + `${stubBridgesAdded} degree-1 stubs bridged (≤${STUB_BRIDGE_M} m), `
         + `${components.length} components → ${componentsBridged} bridged `
         + `(largest: ${components[0]?.length || 0} nodes)`
       );
@@ -2472,7 +2532,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.12 ",
+  "%c NS-REISADVIES-CARD %c v2.16.13 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

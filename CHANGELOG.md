@@ -4,6 +4,38 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.13] — 2026-05-15
+
+### Fixed — Utrecht → Den Bosch routed via Arnhem (degree-1 stub bridging)
+
+After v2.16.12 stabilised the snap-filter pipeline, Utrecht Centraal →
+'s-Hertogenbosch still drew as a straight-line fallback. Diagnostic:
+A\* between the two best snaps returned 126.9 km (vs 46.1 km direct).
+Tracing the path showed it leaves Utrecht heading east via Driebergen,
+Veenendaal, Arnhem, then south to Nijmegen and back west through
+Geldermalsen — a 100+ km detour for a 30-minute direct intercity run.
+
+Root cause: the Utrecht-Lunetten-Houten line and the Utrecht CS yard
+were in separate sub-graphs that meet at lat 52.0702, lng 5.140 with a
+74 m gap. Both halves were in the global main component (so the
+components-bridging pass left them alone — already "connected" via
+Arnhem), and the 60 m proximity pass couldn't reach across 74 m. The
+closest pair across the gap had a degree-1 endpoint (a ProRail feature
+endpoint with no continuation in the graph).
+
+Fix: add a third bridging pass that stitches every degree-1 stub to its
+nearest other node within 200 m. Degree-1 stubs in ProRail GeoJSON are
+almost always intended-to-connect feature endpoints where two LineString
+features should meet but their coordinates differ by a few dozen metres.
+Empirically: 184 / 208 stubs bridge. Test routes:
+
+  * Utrecht → 's-Hertogenbosch: 126.9 km → 48.0 km (direct 46.1 km, +4 %)
+  * Utrecht → Hilversum:        17.5 km (+10 %)
+  * Utrecht → Amsterdam:        41.2 km (+17 %)
+  * Amsterdam → Maastricht:    220.4 km (via Eindhoven, +23 %)
+
+No other route was affected within ±0 km.
+
 ## [2.16.12] — 2026-05-15
 
 ### Fixed — v2.16.11 ReferenceError, mainComponent used before declaration
