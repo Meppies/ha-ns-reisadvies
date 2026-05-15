@@ -1570,6 +1570,12 @@ class NSReisadviesCard extends HTMLElement {
           }
         }
       }
+      // v2.16.10: keep the set of main-component node keys so that
+      // _railSnapCandidatesWith can filter out tiny disconnected
+      // sub-graphs (rangeer-spoor, freight-only branches, etc.) when
+      // picking snap candidates. Snapping to an island = guaranteed
+      // straight-line fallback or 100+ km A* detour.
+      const mainComponent = new Set(components[0] || []);
       console.info(
         `[ns-reisadvies] rail graph: ${nodeCoords.size} nodes, `
         + `${bridgesAdded} proximity bridges (≤${PROX_METERS} m), `
@@ -1580,7 +1586,7 @@ class NSReisadviesCard extends HTMLElement {
 
       const result = {
         railPolylines,
-        graph: { graph, nodeCoords, haversine },
+        graph: { graph, nodeCoords, haversine, mainComponent },
       };
       NSReisadviesCard._railResult = result;
       return result;
@@ -1642,17 +1648,35 @@ class NSReisadviesCard extends HTMLElement {
     }
   }
 
-  // Snap a [lat,lng] to the K nearest rail-graph nodes. v2.16.2:
-  // also enforce a minimum geographic spread between picks so the
-  // K snaps don't all cluster on one side of a big station yard.
-  // Without this, Utrecht Centraal's K=5 closest snaps all landed
-  // on the west-side (Maarssen-line) tracks, leaving A* no choice
-  // but to detour 54 km via Maarssen instead of taking the actual
-  // 27 km Den Dolder line.
-  _railSnapCandidatesWith(g, point, k = 20, maxDist = 2000, minSpread = 150) {
+  // Snap a [lat,lng] to the K nearest rail-graph nodes.
+  //
+  // v2.16.2: enforce a minimum geographic spread between picks so the
+  // K snaps don't all cluster on one side of a big station yard
+  // (the Utrecht Centraal Maarssen-detour bug).
+  //
+  // v2.16.10: also filter out "untrustworthy" candidates BEFORE the
+  // distance ranking:
+  //   * Nodes outside the largest connected component — tiny isolated
+  //     sub-graphs that the components-bridging pass couldn't reach
+  //     within 5 km. Snapping there forces A* through the synthetic
+  //     bridge edge, which usually produces a long detour.
+  //   * Degree-1 dead-end stubs — typically freight branches or
+  //     maintenance spurs. The main passenger line always has degree
+  //     ≥ 2 (forward + back). Skipping stubs avoids snaps that lock
+  //     A* onto a yard that only connects to the network via one edge.
+  // K bumped 20 → 40 with minSpread 150 m → 100 m so we sample even
+  // denser station yards (e.g. Amsterdam Centraal has parallel tracks
+  // 50–80 m apart and the v2.16.2 K=20 was missing a couple of them).
+  _railSnapCandidatesWith(g, point, k = 40, maxDist = 2000, minSpread = 100) {
     if (!g) return [];
+    const main = g.mainComponent;
     const ranked = [];
     for (const [key, c] of g.nodeCoords) {
+      // v2.16.10: skip sub-component noise
+      if (main && main.size > 0 && !main.has(key)) continue;
+      // v2.16.10: skip degree-1 stubs (freight branches, dead-ends)
+      const neigh = g.graph.get(key);
+      if (!neigh || neigh.length < 2) continue;
       const d = g.haversine(point, c);
       if (d > maxDist) continue;
       ranked.push({ key, c, dist: d });
@@ -1772,14 +1796,12 @@ class NSReisadviesCard extends HTMLElement {
     const segments = [];
     for (let i = 0; i < stops.length - 1; i++) {
       const a = stops[i], b = stops[i + 1];
-      // v2.16.2: K bumped 5 → 20 with diversity (≥150 m between
-      // picks). 5 was too tight: at Utrecht Centraal the 5 nearest
-      // snaps all clustered on the western (Maarssen-line) side of
-      // the station yard, forcing every A* path through Maarssen.
-      // 20 with spread sees BOTH sides of the platform yard so the
-      // shortest path picks the right corridor.
-      const candA = this._railSnapCandidatesWith(g, [a.lat, a.lng], 20, 2000);
-      const candB = this._railSnapCandidatesWith(g, [b.lat, b.lng], 20, 2000);
+      // v2.16.10: K bumped 20 → 40 with 100 m spread (down from
+      // 150 m). The defaults inside _railSnapCandidatesWith already
+      // express this — pass undefined for k+maxDist+minSpread so the
+      // helper's defaults can evolve without re-tuning the call site.
+      const candA = this._railSnapCandidatesWith(g, [a.lat, a.lng]);
+      const candB = this._railSnapCandidatesWith(g, [b.lat, b.lng]);
       // v2.15.7: try ALL 25 snap-pair combinations and keep the
       // shortest path (haversine sum). The previous code stopped at
       // the first working path, which on dense networks (Utrecht ↔
@@ -1821,18 +1843,26 @@ class NSReisadviesCard extends HTMLElement {
         segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
         continue;
       }
-      // v2.16.2: outlier filter tightened from 5× + 1.5 km to
-      // 2× + 2 km. Real rail curves (Veluwe, river crossings,
-      // Naarden-Bussum → Almere via Weesp) max out around 2.0×
-      // direct. The 5× cap was lenient enough that Hilversum →
-      // Utrecht Centraal's bogus 54 km via-Maarssen detour (3.4×
-      // direct) snuck through. 2× + 2 km catches Maarssen and the
-      // 92 km Oss → 's-Hertogenbosch dead-end without flagging the
-      // legit Naarden-Bussum → Almere Poort 14.3 km hop (2.04×
-      // direct, 14.3 ≤ 14.0 + 2 = 16 km cap).
+      // v2.16.10: tiered outlier filter. The flat 2×+2 km cap from
+      // v2.16.2 was too tight at short stations (sometimes the only
+      // way out of a yard is a 3× loop) and too loose for long IC
+      // legs (2×+2 km would still let a 60 km detour through). New
+      // policy by direct distance:
+      //   * <  5 km direct → cap = 5× + 2 km (station-yard slack)
+      //   * <  30 km        → cap = 3× + 2 km (covers Hilversum →
+      //                          Utrecht's via-Maarssen 3.4× and the
+      //                          Naarden-Bussum → Almere via-Weesp
+      //                          2.04× legitimate hop)
+      //   * >= 30 km        → cap = 2× + 5 km (long IC legs hardly
+      //                          ever exceed 1.3× direct; a 2× hit
+      //                          means the snap is wrong)
       const directKm = g.haversine([a.lat, a.lng], [b.lat, b.lng]) / 1000;
       const pathKm = bestLen / 1000;
-      if (pathKm > directKm * 2 + 2) {
+      let cap;
+      if (directKm < 5)        cap = directKm * 5 + 2;
+      else if (directKm < 30)  cap = directKm * 3 + 2;
+      else                     cap = directKm * 2 + 5;
+      if (pathKm > cap) {
         console.warn(
           `[ns-reisadvies] PATH TOO LONG ${a.name} → ${b.name}: `
           + `${pathKm.toFixed(1)} km vs direct ${directKm.toFixed(1)} km — `
@@ -2435,7 +2465,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.9 ",
+  "%c NS-REISADVIES-CARD %c v2.16.10 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

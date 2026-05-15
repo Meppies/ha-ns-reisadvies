@@ -4,6 +4,45 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.10] — 2026-05-10
+
+### Changed — three structural rail-snap improvements
+
+User reported that newly added routes keep producing wonky polylines
+("elke nieuwe route volgt niet netjes de rails"). Rather than yet
+another threshold-tweak, three independent structural fixes go in
+at once so the algorithm becomes robust by default — not just at
+the stations we've already debugged.
+
+**1. Snap candidates only from the main connected component.**
+After v2.16.0's components-bridging pass there's a "main" component
+(40 931 nodes on the NL graph) and a long tail of small islands.
+The snap helper now keeps that main component as a `Set` on the
+graph object and skips every candidate that isn't a member. Snaps
+to isolated 5-node clusters can no longer hijack A\* into a synthetic
+bridge-edge detour.
+
+**2. Skip degree-1 dead-end stubs as snap candidates.**
+The main passenger line through every station has degree ≥ 2
+(in + out). A degree-1 node is a freight branch, maintenance siding
+or rangeer-spoor stub. Snapping there locks A\* onto a yard with a
+single way out, often producing a long detour.
+
+**3. K bumped 20 → 40 with 100 m diversity** (down from 150 m). At
+dense stations with parallel tracks 50–80 m apart the v2.16.2
+spread was skipping useful intermediate candidates. More candidates
+means more chances of picking the corridor-correct snap.
+
+**Plus: tiered outlier filter.** Flat 2× + 2 km from v2.16.2 was a
+poor fit across distance ranges. New policy:
+- `< 5 km` direct → cap 5× + 2 km (station-yard slack)
+- `< 30 km` → cap 3× + 2 km
+- `≥ 30 km` → cap 2× + 5 km
+
+Catches both the 92 km Oss → 's-Hertogenbosch dead-end and the
+Hilversum → Utrecht via-Maarssen 3.4× detour, while keeping the
+legit Naarden-Bussum → Almere via-Weesp 2.04× hop.
+
 ## [2.16.9] — 2026-05-10
 
 ### Fixed — clear button on Time of day / Specific date / Route name didn't stick
