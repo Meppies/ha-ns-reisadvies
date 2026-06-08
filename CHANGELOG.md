@@ -4,6 +4,16 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.17] — 2026-06-08
+
+### Added — log NS APIM response body on coordinator rejection
+
+v2.16.16 added body logging on the config-flow probe but not on the
+coordinator's polling path. With this release, the coordinator also
+logs the NS APIM response body on every HTTP 401/403, so the exact
+rejection reason appears in the HA logs every refresh cycle — no
+reauth submit needed to diagnose.
+
 ## [2.16.16] — 2026-06-08
 
 ### Added — log NS APIM response body on probe rejection

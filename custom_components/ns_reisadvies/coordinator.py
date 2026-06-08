@@ -491,6 +491,23 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                 # 1) Standard trip query for the configured route.
                 async with self._session.get(API_URL, headers=headers, params=params) as response:
                     if response.status in (401, 403):
+                        # v2.16.17: log the NS APIM body so we know the
+                        # rejection reason (subscription not found,
+                        # suspended, wrong product, rate-limited, etc).
+                        try:
+                            body = (await response.text())[:500]
+                        except Exception:  # noqa: BLE001
+                            body = "<could not read body>"
+                        _LOGGER.warning(
+                            "NS coordinator rejected — HTTP %s; key length=%d; "
+                            "url=%s; from=%s to=%s; body: %s",
+                            response.status,
+                            len(self.api_key or ""),
+                            API_URL,
+                            self.from_station,
+                            self.to_station,
+                            body,
+                        )
                         # Silver rule ``reauthentication-flow``: bubble
                         # auth failures up so HA opens the reauth form.
                         self._note_unavailable(
