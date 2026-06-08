@@ -4,6 +4,16 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.16] — 2026-06-08
+
+### Added — log NS APIM response body on probe rejection
+
+When the NS API rejects the probe key with HTTP 401/403, the response
+body now appears in the HA log at WARNING level so the operator can
+see the exact NS APIM reason (subscription not found, suspended,
+revoked, rate-limited, wrong product, etc.). Previously the probe
+silently returned `invalid_auth` and the cause stayed opaque.
+
 ## [2.16.15] — 2026-06-08
 
 ### Fixed — probe rejected legitimate Ns-App keys

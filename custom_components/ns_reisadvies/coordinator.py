@@ -127,6 +127,24 @@ async def async_validate_api_key(hass: HomeAssistant, api_key: str) -> str | Non
         async with async_timeout.timeout(15):
             async with session.get(API_URL, headers=headers, params=params) as resp:
                 if resp.status in (401, 403):
+                    # v2.16.16: read + log the NS APIM error body so we
+                    # know whether the rejection is "subscription not
+                    # found", "subscription suspended", "key revoked",
+                    # "rate limited", etc. NS' diagnostic message lives
+                    # in the response payload, not the headers.
+                    try:
+                        body = (await resp.text())[:500]
+                    except Exception:  # noqa: BLE001
+                        body = "<could not read body>"
+                    _LOGGER.warning(
+                        "NS API probe rejected key — HTTP %s; key length=%d; "
+                        "url=%s; subscription header sent=%s; response body: %s",
+                        resp.status,
+                        len(cleaned),
+                        API_URL,
+                        bool(headers.get("Ocp-Apim-Subscription-Key")),
+                        body,
+                    )
                     return "invalid_auth"
                 if resp.status >= 500:
                     return "cannot_connect"
