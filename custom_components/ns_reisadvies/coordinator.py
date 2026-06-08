@@ -62,6 +62,40 @@ def _parse_date(value: str | None) -> _dt_date | None:
         return None
 
 
+# v2.16.14: characters that NS APIM rejects with HTTP 401 the moment they
+# end up in the ``Ocp-Apim-Subscription-Key`` header. Copy-paste from the
+# NS Apportal account page sometimes silently appends a zero-width space
+# (`​`), a non-breaking space (` `), a BOM (`﻿`), or a
+# stray newline. Python's ``str.strip()`` only handles the ASCII subset,
+# so any of those characters survive and the auth header is malformed.
+# We strip them explicitly here, in one place, used both by the probe in
+# ``async_validate_api_key`` and by the storage→coordinator path in
+# ``__init__.py``.
+_API_KEY_INVISIBLE = (
+    "​"  # zero-width space
+    "‌"  # zero-width non-joiner
+    "‍"  # zero-width joiner
+    "﻿"  # BOM / zero-width no-break space
+    " "  # non-breaking space
+    " "  # line separator
+    " "  # paragraph separator
+)
+
+
+def sanitize_api_key(value: Any) -> str:
+    """Return the API key with whitespace + invisible characters stripped.
+
+    Always returns a ``str`` — ``None`` and non-string values produce
+    ``""``. Idempotent so it's safe to call on already-clean keys.
+    """
+    if not isinstance(value, str):
+        return ""
+    cleaned = value.strip().strip(_API_KEY_INVISIBLE).strip()
+    # Strip any remaining ASCII control characters (CR, LF, NUL, TAB)
+    # that survived the .strip() because they're embedded mid-string.
+    return "".join(ch for ch in cleaned if ord(ch) >= 0x20 or ch in (" ",))
+
+
 async def async_validate_api_key(hass: HomeAssistant, api_key: str) -> str | None:
     """Probe the NS API with the supplied key.
 
@@ -74,10 +108,11 @@ async def async_validate_api_key(hass: HomeAssistant, api_key: str) -> str | Non
     ``test-before-configure``: validate the credentials with the
     upstream service before creating the entry.
     """
-    if not api_key or not api_key.strip():
+    cleaned = sanitize_api_key(api_key)
+    if not cleaned:
         return "invalid_auth"
     session = async_get_clientsession(hass)
-    headers = {"Ocp-Apim-Subscription-Key": api_key.strip()}
+    headers = {"Ocp-Apim-Subscription-Key": cleaned}
     try:
         async with async_timeout.timeout(15):
             # /v2/stations is the lightest authenticated endpoint NS
@@ -122,7 +157,10 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         # geo cache). Optional for back-compat with older callers /
         # tests that constructed a coordinator without an entry.
         self._entry = entry
-        self.api_key = api_key
+        # v2.16.14: defensive sanitisation against zero-width / BOM /
+        # NBSP characters that survive copy-paste from the NS Apportal
+        # account page and otherwise yield silent HTTP 401s.
+        self.api_key = sanitize_api_key(api_key)
         self.from_station = from_station
         self.to_station = to_station
         self.fav_hours = fav_hours

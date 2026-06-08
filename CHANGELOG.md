@@ -4,6 +4,39 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.14] — 2026-06-08
+
+### Fixed — copy-pasted API keys with invisible characters yielded HTTP 401
+
+After the HA 2026.6.1 update, users with a previously-working setup
+started seeing the integration unavailable with
+`NS API rejected the API key (HTTP 401)`. Reauth via the UI accepted
+the key, validated it, and immediately rejected it again — even with
+a freshly-rotated key from the NS Apportal page.
+
+Root cause was a long-standing latent bug, surfaced when reauth flows
+became more common after HA 2026.6's stricter config-entry handling:
+copy-pasting from the NS Apportal account page sometimes silently
+appends a zero-width space (U+200B), a non-breaking space (U+00A0),
+a BOM (U+FEFF), or a stray newline. Python's `str.strip()` only
+handles the ASCII whitespace subset, so the offending characters
+survived and the `Ocp-Apim-Subscription-Key` header was malformed.
+NS APIM rejected the request as 401, but because the byte-difference
+was a single invisible character the user couldn't see anything wrong
+with what they pasted.
+
+Fix: introduce `sanitize_api_key()` in `coordinator.py` that strips
+the ASCII whitespace ring plus the common invisible characters
+(ZWSP / ZWNJ / ZWJ / BOM / NBSP / LSEP / PSEP) and any remaining
+control characters mid-string. Applied in:
+
+* `async_validate_api_key` — the probe used by config-flow.
+* `NSUpdateCoordinator.__init__` — when an entry is loaded.
+* `async_step_user`, `async_step_reauth_confirm`, options-flow init
+  — every UI path that accepts an API key.
+
+Idempotent and side-effect-free on already-clean keys.
+
 ## [2.16.13] — 2026-05-15
 
 ### Fixed — Utrecht → Den Bosch routed via Arnhem (degree-1 stub bridging)

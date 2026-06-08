@@ -223,8 +223,12 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Ask the user for a new API key and verify it works."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            api_key = (user_input.get(CONF_API_KEY) or "").strip()
-            from .coordinator import async_validate_api_key
+            # v2.16.14: sanitize_api_key strips invisible characters
+            # (BOM, zero-width spaces, NBSP, control chars) that survive
+            # copy-paste from the NS Apportal page and otherwise yield
+            # silent HTTP 401s.
+            from .coordinator import async_validate_api_key, sanitize_api_key
+            api_key = sanitize_api_key(user_input.get(CONF_API_KEY))
             probe_error = await async_validate_api_key(self.hass, api_key)
             if probe_error:
                 errors["base"] = probe_error
@@ -261,7 +265,10 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errs = _validate_route(user_input, existing_routes=[])
             errors.update(errs)
             if not errors:
-                api_key = (user_input.get(CONF_API_KEY) or "").strip()
+                # v2.16.14: sanitize_api_key handles invisible characters
+                # that survive copy-paste from the NS Apportal page.
+                from .coordinator import async_validate_api_key, sanitize_api_key
+                api_key = sanitize_api_key(user_input.get(CONF_API_KEY))
                 from_st = user_input[CONF_FROM_STATION]
                 to_st = user_input[CONF_TO_STATION]
                 # Test-before-configure (Bronze quality-scale rule):
@@ -269,7 +276,6 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 # creating the entry. Surfaces invalid_auth /
                 # cannot_connect errors in the form so the user can
                 # correct them on the spot.
-                from .coordinator import async_validate_api_key
                 probe_error = await async_validate_api_key(self.hass, api_key)
                 if probe_error:
                     errors["base"] = probe_error
@@ -574,8 +580,10 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
     ) -> ConfigFlowResult:
         if user_input is not None:
             # Validate the (possibly rotated) API key before saving.
-            api_key_input = (user_input.get(CONF_API_KEY) or "").strip()
-            from .coordinator import async_validate_api_key
+            # v2.16.14: sanitize_api_key handles invisible characters
+            # that survive copy-paste from the NS Apportal page.
+            from .coordinator import async_validate_api_key, sanitize_api_key
+            api_key_input = sanitize_api_key(user_input.get(CONF_API_KEY))
             probe_error = await async_validate_api_key(self.hass, api_key_input)
             if probe_error:
                 return self.async_show_form(
