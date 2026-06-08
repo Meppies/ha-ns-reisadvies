@@ -4,6 +4,29 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.15] — 2026-06-08
+
+### Fixed — probe rejected legitimate Ns-App keys
+
+After v2.16.14, users with a clean Ns-App API key were still seeing
+their key rejected at the reauth form with `invalid_auth`, even though
+the same key worked fine in the NS Apportal test console.
+
+Root cause: NS Apportal sells the API access as separate subscription
+products. The "Ns-App" product (what every trip-planning integration
+needs) covers `/reisinformatie-api/api/v3/*` — trips, trip details,
+journey info. The `/v2/stations` endpoint we used as the probe is
+part of a separate "Stationsdata (Extern)" subscription. A user with
+only the Ns-App subscription gets a 401 on `/v2/stations`, so the
+probe rejects a key that would work perfectly fine for the actual
+coordinator polls.
+
+Fix: switch the probe from `STATIONS_API_URL` (`/v2/stations`) to
+`API_URL` (`/v3/trips`) with minimal dummy params
+(`fromStation=ASD&toStation=UT`). The probe now validates against
+the exact same endpoint the coordinator uses, so reauth success
+guarantees the coordinator will work.
+
 ## [2.16.14] — 2026-06-08
 
 ### Fixed — copy-pasted API keys with invisible characters yielded HTTP 401

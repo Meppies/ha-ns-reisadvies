@@ -113,12 +113,19 @@ async def async_validate_api_key(hass: HomeAssistant, api_key: str) -> str | Non
         return "invalid_auth"
     session = async_get_clientsession(hass)
     headers = {"Ocp-Apim-Subscription-Key": cleaned}
+    # v2.16.15: probe via /v3/trips (Ns-App product) instead of
+    # /v2/stations. NS Apportal sells separate subscription products
+    # per endpoint family — "Ns-App" covers /reisinformatie-api/v3/*
+    # but NOT /v2/stations (that's the standalone "Stationsdata"
+    # product). A user who only subscribes to Ns-App (the typical
+    # setup for trip planning) would see their valid key rejected by
+    # the probe even though it works fine for the actual coordinator
+    # polls. Probing the same endpoint the coordinator uses guarantees
+    # the validation matches reality.
+    params = {"fromStation": "ASD", "toStation": "UT"}
     try:
         async with async_timeout.timeout(15):
-            # /v2/stations is the lightest authenticated endpoint NS
-            # exposes — it's a static catalogue, no per-call cost, but
-            # still requires the subscription key. Perfect for a probe.
-            async with session.get(STATIONS_API_URL, headers=headers) as resp:
+            async with session.get(API_URL, headers=headers, params=params) as resp:
                 if resp.status in (401, 403):
                     return "invalid_auth"
                 if resp.status >= 500:
