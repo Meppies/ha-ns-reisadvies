@@ -241,14 +241,10 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self._last_error_category: str = "none"
 
         # v2.16.18: timestamp of the FIRST refresh failure of the current
-        # outage streak — None when healthy. Used to escalate prolonged
-        # outages to a HA Repair issue (Gold-tier ``repair-issues`` rule).
+        # outage streak — None when healthy. Exposed via the sensor's
+        # ``outage_started_at`` attribute so a card can render "down
+        # for X minutes" badges.
         self._outage_started_at: float | None = None
-        # Cached issue_id of the repair we created for this outage so we
-        # know what to delete when polling recovers. Kept on the
-        # coordinator (not the entry) because each per-route coordinator
-        # has its own outage streak.
-        self._open_repair_issue_id: str | None = None
 
         # Persistent storage so favourites survive a Home Assistant restart.
         self._store: Store[dict[str, Any]] = Store(
@@ -471,28 +467,13 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
     def _note_available(self) -> None:
         """Log once when we recover from a previous outage.
 
-        Also resets ``_outage_started_at`` and removes the prolonged-
-        outage Repair issue (if one was raised), so the UI clears
-        automatically the moment the coordinator gets a successful
-        refresh through.
+        Also resets ``_outage_started_at`` and ``_last_error_category``
+        so the sensor attribute reflects a healthy poll.
         """
         # Reset outage tracking unconditionally — every successful run
         # ends whatever streak was in flight.
         self._outage_started_at = None
         self._last_error_category = "none"
-        if self._open_repair_issue_id is not None:
-            try:
-                from homeassistant.helpers import issue_registry as ir
-
-                ir.async_delete_issue(
-                    self.hass, DOMAIN, self._open_repair_issue_id,
-                )
-            except Exception:  # noqa: BLE001
-                _LOGGER.debug(
-                    "Could not delete repair issue %s",
-                    self._open_repair_issue_id,
-                )
-            self._open_repair_issue_id = None
         if self._was_available is None:
             self._was_available = True
             return
@@ -503,52 +484,26 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             )
         self._was_available = True
 
-    # v2.16.18: how long we tolerate a failure streak before we surface
-    # it as a Settings → System → Repairs entry. Anything under this is
-    # treated as a transient blip — NS APIM hiccups, brief NAT route
-    # changes, etc. — and stays out of the UI.
-    _REPAIR_OUTAGE_THRESHOLD_SECONDS: int = 3600  # 1 hour
+    # v2.16.18: ``_REPAIR_OUTAGE_THRESHOLD_SECONDS`` + the Repair-issue
+    # lifecycle were removed in v2.16.22 because the
+    # ``homeassistant.helpers.issue_registry`` imports they relied on
+    # tripped pytest-homeassistant-custom-component's AsyncMock
+    # auto-wrapping and broke CI in ways that turned out hard to
+    # isolate. The ``_last_error_category`` + ``outage_started_at``
+    # sensor attributes (the main user-value) are kept, so a card or
+    # automation can still surface "down for X minutes — category Y"
+    # without us needing the in-app Repairs widget.
 
     def _maybe_raise_outage_repair(self) -> None:
-        """Open a Repair issue if the current outage has lasted >1 hour.
+        """No-op placeholder.
 
-        Idempotent — only raises once per outage streak. Cleared by
-        ``_note_available`` once polling recovers.
+        Kept as a hook in case we wire it back up to ``issue_registry``
+        once the test-infra interaction has been figured out. Today it
+        does nothing — the per-route ``last_error_category`` +
+        ``outage_started_at`` sensor attributes already cover the
+        observable side.
         """
-        if self._outage_started_at is None:
-            return  # not in an outage
-        if self._open_repair_issue_id is not None:
-            return  # repair already raised
-        elapsed = time.time() - self._outage_started_at
-        if elapsed < self._REPAIR_OUTAGE_THRESHOLD_SECONDS:
-            return
-        # Distinct issue_id per route so multi-route setups can show
-        # multiple repairs (e.g. one route hits 401 while another times
-        # out — the user sees both with the right route in the title).
-        issue_id = (
-            f"prolonged_outage_{self.from_station}_{self.to_station}"
-            f"_{self._last_error_category}"
-        )
-        try:
-            from homeassistant.helpers import issue_registry as ir
-
-            ir.async_create_issue(
-                self.hass,
-                DOMAIN,
-                issue_id,
-                is_fixable=False,
-                severity=ir.IssueSeverity.WARNING,
-                translation_key="prolonged_outage",
-                translation_placeholders={
-                    "from_station": self.from_station,
-                    "to_station": self.to_station,
-                    "category": self._last_error_category,
-                    "minutes": str(int(elapsed // 60)),
-                },
-            )
-            self._open_repair_issue_id = issue_id
-        except Exception:  # noqa: BLE001
-            _LOGGER.debug("Could not create prolonged-outage repair issue")
+        return
 
     async def _async_update_data(self) -> list[dict[str, Any]]:
         """Fetch trips and pinned favourites from the NS API."""

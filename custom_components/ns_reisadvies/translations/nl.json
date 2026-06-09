@@ -191,10 +191,5 @@
       "message": "Kan de NS-API niet bereiken: {error}."
     }
   },
-  "issues": {
-    "prolonged_outage": {
-      "title": "NS Reisadvies route {from_station} → {to_station} is al {minutes} minuten onbeschikbaar",
-      "description": "De NS Reisadvies-coördinator voor de route van **{from_station}** naar **{to_station}** kon al {minutes} minuten geen succesvolle verversing doen (categorie: `{category}`).\n\n* `auth` — je NS API-sleutel is geweigerd. Ga naar **Instellingen → Apparaten en services → NS Reisadvies → Herconfigureren** en plak een verse sleutel uit apiportal.ns.nl.\n* `quota_exceeded` — je dagelijkse NS API-quotum is op. Verlaag de polling-frequentie of wacht tot de teller reset.\n* `api_unavailable` — NS APIM gaf een server-error terug. Dit lost zichzelf doorgaans binnen enkele minuten op.\n* `network` — Home Assistant kan apiportal.ns.nl niet bereiken vanuit jouw netwerk. Controleer DNS en uitgaande verbinding.\n\nDeze melding verdwijnt automatisch zodra de coördinator weer een succesvolle verversing doet."
-    }
-  }
+  "issues": {}
 }

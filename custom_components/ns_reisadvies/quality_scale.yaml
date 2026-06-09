@@ -113,7 +113,19 @@ rules:
   exception-translations: done
   icon-translations: done
   reconfiguration-flow: done
-  repair-issues: done
+  repair-issues:
+    status: exempt
+    comment: >-
+      The main user-fixable issue (NS API key revoked / rotated) is
+      already handled by the Silver-tier reauthentication flow which
+      surfaces a UI prompt automatically. Other errors are surfaced
+      via the ``last_error_category`` and ``outage_started_at`` sensor
+      attributes (a Lovelace card can render a "down for X minutes —
+      auth" badge), via edge-detection log messages, and via the
+      ``unavailable`` entity-state. An explicit Repair-issue entry
+      was tried in v2.16.18 but the issue_registry-import path tripped
+      pytest-homeassistant-custom-component's AsyncMock auto-wrapping
+      and broke CI in ways that turned out hard to isolate cleanly.
   stale-devices:
     status: exempt
     comment: >-
