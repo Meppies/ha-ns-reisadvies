@@ -261,6 +261,23 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
                 is not None
                 else None
             ),
+            # v2.16.18: machine-readable categorisation of the most
+            # recent refresh failure. Power users can read this in
+            # Developer Tools → States to know exactly why the sensor
+            # is unavailable without scraping the HA logs. The card can
+            # also use it to render a small badge ("auth issue —
+            # reauthenticate") next to the route name.
+            #
+            # Values: "none" / "auth" / "quota_exceeded" /
+            #         "api_unavailable" / "network"
+            "last_error_category": getattr(
+                self.coordinator, "_last_error_category", "none",
+            ),
+            # Epoch seconds the current outage started — None when
+            # healthy. Lets a card render "down for X minutes" badges.
+            "outage_started_at": getattr(
+                self.coordinator, "_outage_started_at", None,
+            ),
         }
 
     async def async_track_trip(self, ctx_recon: str) -> None:

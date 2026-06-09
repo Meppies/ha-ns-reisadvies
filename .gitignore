@@ -13,3 +13,6 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+
+# Local deploy helper scripts (not part of the integration)
+_deploy_*.command

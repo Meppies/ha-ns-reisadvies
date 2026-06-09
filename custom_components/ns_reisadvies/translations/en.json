@@ -190,5 +190,11 @@
     "api_unreachable": {
       "message": "Could not reach the NS API: {error}."
     }
+  },
+  "issues": {
+    "prolonged_outage": {
+      "title": "NS Reisadvies route {from_station} → {to_station} has been unavailable for {minutes} minutes",
+      "description": "The NS Reisadvies coordinator for the route from **{from_station}** to **{to_station}** has not been able to refresh successfully for {minutes} minutes (category: `{category}`).\n\n* `auth` — your NS API key was rejected. Go to **Settings → Devices & services → NS Reisadvies → Reconfigure** and paste a fresh key from apiportal.ns.nl.\n* `quota_exceeded` — your daily NS API quota has been exhausted. Lower the polling interval or wait until the counter resets.\n* `api_unavailable` — NS APIM returned a server error. This usually resolves itself within minutes.\n* `network` — Home Assistant cannot reach apiportal.ns.nl from your network. Check DNS and outbound connectivity.\n\nThis notification disappears automatically once the coordinator gets a successful refresh through."
+    }
   }
 }

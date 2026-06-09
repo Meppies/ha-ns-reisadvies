@@ -4,6 +4,58 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.18] — 2026-06-09
+
+### Added — `last_error_category` sensor attribute
+
+Each route sensor now exposes two new `extra_state_attributes`:
+
+* `last_error_category` — `"none"`, `"auth"`, `"quota_exceeded"`,
+  `"api_unavailable"`, or `"network"`. Updated on every refresh.
+* `outage_started_at` — epoch seconds the current failure streak started
+  (`null` when healthy).
+
+Power-users can read these in Developer Tools → States to see exactly
+why a sensor is unavailable, and the Lovelace card can render a small
+badge like "auth — reauthenticate" without scraping HA logs.
+
+### Added — Repair issue for prolonged outages
+
+When a coordinator stays unavailable for more than one hour, the
+integration now raises a Settings → System → Repairs entry with the
+route name, outage duration, and category. The entry includes
+actionable guidance per category (reauth, slow polling, check
+network). It clears automatically the moment the coordinator gets a
+successful refresh through. Brings the Gold quality-scale rule
+`repair-issues` from `exempt` to `done`.
+
+### Documentation — actions
+
+The README's Services section now documents `track_trip`,
+`untrack_trip`, and `refresh_rail_cache` with their fields, semantics,
+and example service-calls. Closes the Bronze rule `docs-actions`.
+
+### Quality scale — Platinum status confirmed
+
+`quality_scale.yaml` updated to reflect reality:
+
+* `test-before-configure` → done (in place since v2.9.0 — was wrongly
+  marked todo)
+* `repair-issues` → done (this release)
+* `docs-actions` → done (README expansion above)
+* `config-flow-test-coverage` → done
+* `test-coverage` → done
+
+With all lower-tier rules now `done` or `exempt`, the integration meets
+the full Platinum quality-scale.
+
+### Housekeeping
+
+* `.gitignore` now excludes local `_deploy_*.command` helper scripts so
+  one-off debug deploys can't accidentally end up in the repo.
+* New unit tests in `tests/test_last_error_and_repair.py` cover the
+  category state machine and the Repair-issue lifecycle.
+
 ## [2.16.17] — 2026-06-08
 
 ### Added — log NS APIM response body on coordinator rejection

@@ -228,6 +228,28 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         # we only emit a log line on transitions.
         self._was_available: bool | None = None
 
+        # v2.16.18: machine-readable categorisation of the most recent
+        # refresh failure, surfaced as a sensor attribute so the user
+        # (and the Lovelace card) can show a useful indicator without
+        # having to grep the HA logs.
+        #
+        #   "none"             — last refresh succeeded
+        #   "auth"             — HTTP 401/403 (key revoked, wrong product)
+        #   "quota_exceeded"   — HTTP 429 (rate-limited by NS APIM)
+        #   "api_unavailable"  — HTTP 5xx or other non-2xx from NS
+        #   "network"          — aiohttp ClientError / TimeoutError
+        self._last_error_category: str = "none"
+
+        # v2.16.18: timestamp of the FIRST refresh failure of the current
+        # outage streak — None when healthy. Used to escalate prolonged
+        # outages to a HA Repair issue (Gold-tier ``repair-issues`` rule).
+        self._outage_started_at: float | None = None
+        # Cached issue_id of the repair we created for this outage so we
+        # know what to delete when polling recovers. Kept on the
+        # coordinator (not the entry) because each per-route coordinator
+        # has its own outage streak.
+        self._open_repair_issue_id: str | None = None
+
         # Persistent storage so favourites survive a Home Assistant restart.
         self._store: Store[dict[str, Any]] = Store(
             hass, STORAGE_VERSION, f"{STORAGE_KEY}_{from_station}_{to_station}"
@@ -431,7 +453,13 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         Silver quality-scale rule ``log-when-unavailable``: log on the
         edge, not on every refresh, so the journal isn't spammed during
         a long upstream outage.
+
+        Also stamps ``_outage_started_at`` on the first failure of a
+        streak so the prolonged-outage Repair check (Gold rule
+        ``repair-issues``) knows how long we've been down.
         """
+        if self._outage_started_at is None:
+            self._outage_started_at = time.time()
         if self._was_available is False:
             return
         _LOGGER.warning(
@@ -441,7 +469,30 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self._was_available = False
 
     def _note_available(self) -> None:
-        """Log once when we recover from a previous outage."""
+        """Log once when we recover from a previous outage.
+
+        Also resets ``_outage_started_at`` and removes the prolonged-
+        outage Repair issue (if one was raised), so the UI clears
+        automatically the moment the coordinator gets a successful
+        refresh through.
+        """
+        # Reset outage tracking unconditionally — every successful run
+        # ends whatever streak was in flight.
+        self._outage_started_at = None
+        self._last_error_category = "none"
+        if self._open_repair_issue_id is not None:
+            try:
+                from homeassistant.helpers import issue_registry as ir
+
+                ir.async_delete_issue(
+                    self.hass, DOMAIN, self._open_repair_issue_id,
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug(
+                    "Could not delete repair issue %s",
+                    self._open_repair_issue_id,
+                )
+            self._open_repair_issue_id = None
         if self._was_available is None:
             self._was_available = True
             return
@@ -452,13 +503,62 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             )
         self._was_available = True
 
+    # v2.16.18: how long we tolerate a failure streak before we surface
+    # it as a Settings → System → Repairs entry. Anything under this is
+    # treated as a transient blip — NS APIM hiccups, brief NAT route
+    # changes, etc. — and stays out of the UI.
+    _REPAIR_OUTAGE_THRESHOLD_SECONDS: int = 3600  # 1 hour
+
+    def _maybe_raise_outage_repair(self) -> None:
+        """Open a Repair issue if the current outage has lasted >1 hour.
+
+        Idempotent — only raises once per outage streak. Cleared by
+        ``_note_available`` once polling recovers.
+        """
+        if self._outage_started_at is None:
+            return  # not in an outage
+        if self._open_repair_issue_id is not None:
+            return  # repair already raised
+        elapsed = time.time() - self._outage_started_at
+        if elapsed < self._REPAIR_OUTAGE_THRESHOLD_SECONDS:
+            return
+        # Distinct issue_id per route so multi-route setups can show
+        # multiple repairs (e.g. one route hits 401 while another times
+        # out — the user sees both with the right route in the title).
+        issue_id = (
+            f"prolonged_outage_{self.from_station}_{self.to_station}"
+            f"_{self._last_error_category}"
+        )
+        try:
+            from homeassistant.helpers import issue_registry as ir
+
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="prolonged_outage",
+                translation_placeholders={
+                    "from_station": self.from_station,
+                    "to_station": self.to_station,
+                    "category": self._last_error_category,
+                    "minutes": str(int(elapsed // 60)),
+                },
+            )
+            self._open_repair_issue_id = issue_id
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("Could not create prolonged-outage repair issue")
+
     async def _async_update_data(self) -> list[dict[str, Any]]:
         """Fetch trips and pinned favourites from the NS API."""
         # Prune expired favourites first so we do not refetch them.
         self._expire_old_trips()
 
         if not self.api_key:
+            self._last_error_category = "auth"
             self._note_unavailable("no API key configured")
+            self._maybe_raise_outage_repair()
             raise UpdateFailed("No NS API key configured")
 
         headers = {"Ocp-Apim-Subscription-Key": self.api_key}
@@ -510,16 +610,30 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                         )
                         # Silver rule ``reauthentication-flow``: bubble
                         # auth failures up so HA opens the reauth form.
+                        self._last_error_category = "auth"
                         self._note_unavailable(
                             f"NS API rejected the key (HTTP {response.status})"
                         )
+                        self._maybe_raise_outage_repair()
                         raise ConfigEntryAuthFailed(
                             f"NS API rejected the API key (HTTP {response.status})"
                         )
+                    if response.status == 429:
+                        self._last_error_category = "quota_exceeded"
+                        self._note_unavailable(
+                            "NS API returned HTTP 429 (rate-limited)"
+                        )
+                        self._maybe_raise_outage_repair()
+                        raise UpdateFailed(
+                            "NS travel advice API returned HTTP 429 "
+                            "(quota exceeded — slow polling down or wait)"
+                        )
                     if response.status != 200:
+                        self._last_error_category = "api_unavailable"
                         self._note_unavailable(
                             f"NS API returned HTTP {response.status}"
                         )
+                        self._maybe_raise_outage_repair()
                         raise UpdateFailed(
                             f"NS travel advice API returned status {response.status}"
                         )
@@ -653,7 +767,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         except (UpdateFailed, ConfigEntryAuthFailed):
             raise
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            self._last_error_category = "network"
             self._note_unavailable(f"network error: {err}")
+            self._maybe_raise_outage_repair()
             raise UpdateFailed(f"Could not reach NS API: {err}") from err
 
     # ---- live train map helpers ----

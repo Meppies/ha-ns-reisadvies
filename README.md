@@ -160,10 +160,62 @@ options (set via the visual editor or YAML):
 
 ## Services
 
-- `ns_reisadvies.track_trip` — pin a trip by `ctx_recon`.
-- `ns_reisadvies.untrack_trip` — unpin a trip by `ctx_recon`.
+The integration exposes three services. The first two are entity-services
+(target a specific `sensor.ns_*` entity); the third operates on the
+integration globally.
 
-Both are entity-services; target a `sensor.ns_*` entity.
+### `ns_reisadvies.track_trip`
+
+Pin a trip on the targeted route's sensor so it stays visible across
+refreshes even after NS drops it from the regular `/v3/trips` window.
+Pinned trips survive a Home Assistant restart and expire automatically
+after `Favourite retention (hours)` (default 6h after the trip's planned
+departure).
+
+| Field        | Required | Description                                                                                                  |
+|--------------|----------|--------------------------------------------------------------------------------------------------------------|
+| `ctx_recon`  | yes      | The `ctxRecon` string from the trip you want to pin. Lovelace card surfaces this via its "pin" action.       |
+
+Service-call example (Developer Tools → Services):
+
+```yaml
+service: ns_reisadvies.track_trip
+target:
+  entity_id: sensor.ns_amsterdam_centraal_to_utrecht_centraal
+data:
+  ctx_recon: "TgIIBg9TVw=="
+```
+
+### `ns_reisadvies.untrack_trip`
+
+Remove a previously pinned trip from the route's favourites list. Idempotent —
+calling with an unknown `ctx_recon` is a no-op.
+
+| Field        | Required | Description                                                            |
+|--------------|----------|------------------------------------------------------------------------|
+| `ctx_recon`  | yes      | The `ctxRecon` of the trip to unpin. Must match the value used to pin. |
+
+```yaml
+service: ns_reisadvies.untrack_trip
+target:
+  entity_id: sensor.ns_amsterdam_centraal_to_utrecht_centraal
+data:
+  ctx_recon: "TgIIBg9TVw=="
+```
+
+### `ns_reisadvies.refresh_rail_cache`
+
+Force a fresh download of the ProRail rail-network GeoJSON used by the
+live train map. Use this if the live map renders straight-line routes
+between stations — that typically means the cache file is missing or
+stale because a previous scheduled refresh failed. The integration
+normally rebuilds the cache once a week.
+
+No fields. No target — operates on the hub.
+
+```yaml
+service: ns_reisadvies.refresh_rail_cache
+```
 
 ## Supported functions
 

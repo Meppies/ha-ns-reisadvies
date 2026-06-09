@@ -19,11 +19,11 @@ rules:
   appropriate-polling: done
   brands: done
   common-modules: done
-  config-flow-test-coverage: todo
+  config-flow-test-coverage: done
   config-flow: done
   data_description: done
   dependency-transparency: done
-  docs-actions: todo
+  docs-actions: done
   docs-high-level-description: done
   docs-installation-instructions: done
   docs-removal-instructions: done
@@ -36,7 +36,7 @@ rules:
   entity-unique-id: done
   has-entity-name: done
   runtime-data: done
-  test-before-configure: todo
+  test-before-configure: done
   test-before-setup:
     status: exempt
     comment: >-
@@ -60,7 +60,7 @@ rules:
   log-when-unavailable: done
   parallel-updates: done
   reauthentication-flow: done
-  test-coverage: todo
+  test-coverage: done
 
   # ---- Gold -----------------------------------------------------------
   devices: done
@@ -113,15 +113,7 @@ rules:
   exception-translations: done
   icon-translations: done
   reconfiguration-flow: done
-  repair-issues:
-    status: exempt
-    comment: >-
-      The main user-fixable issue (NS API key revoked / rotated) is
-      already handled by the Silver-tier reauthentication flow which
-      surfaces a UI prompt automatically. Other errors (composition
-      404s, transient NS API outages) are non-actionable for the
-      user and are surfaced via edge-detection log messages rather
-      than as Repair issues.
+  repair-issues: done
   stale-devices:
     status: exempt
     comment: >-
