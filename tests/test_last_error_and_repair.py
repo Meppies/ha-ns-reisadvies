@@ -13,7 +13,7 @@ the 1-hour threshold. This file covers:
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from homeassistant.core import HomeAssistant
 
@@ -96,8 +96,13 @@ async def test_note_available_deletes_open_repair(
     coord = _make_coord(hass)
     coord._open_repair_issue_id = "fake_issue"
     coord._outage_started_at = time.time() - 100
+    # MagicMock instead of AsyncMock — async_delete_issue is sync
+    # despite the ``async_`` HA-convention prefix; if pytest-HA's
+    # auto-mocker wraps it as AsyncMock the call returns an un-awaited
+    # coroutine and warns-as-errors fail the build.
     with patch(
-        "homeassistant.helpers.issue_registry.async_delete_issue"
+        "homeassistant.helpers.issue_registry.async_delete_issue",
+        new=MagicMock(),
     ) as del_issue:
         coord._note_available()
     del_issue.assert_called_once()
@@ -112,7 +117,8 @@ async def test_repair_not_raised_when_no_outage(
 ) -> None:
     coord = _make_coord(hass)
     with patch(
-        "homeassistant.helpers.issue_registry.async_create_issue"
+        "homeassistant.helpers.issue_registry.async_create_issue",
+        new=MagicMock(),
     ) as create_issue:
         coord._maybe_raise_outage_repair()
     create_issue.assert_not_called()
@@ -125,7 +131,8 @@ async def test_repair_not_raised_within_threshold(
     coord._outage_started_at = time.time() - 60  # 1 minute ago
     coord._last_error_category = "auth"
     with patch(
-        "homeassistant.helpers.issue_registry.async_create_issue"
+        "homeassistant.helpers.issue_registry.async_create_issue",
+        new=MagicMock(),
     ) as create_issue:
         coord._maybe_raise_outage_repair()
     create_issue.assert_not_called()
@@ -141,7 +148,8 @@ async def test_repair_raised_past_threshold(hass: HomeAssistant) -> None:
     )
     coord._last_error_category = "auth"
     with patch(
-        "homeassistant.helpers.issue_registry.async_create_issue"
+        "homeassistant.helpers.issue_registry.async_create_issue",
+        new=MagicMock(),
     ) as create_issue:
         coord._maybe_raise_outage_repair()
     create_issue.assert_called_once()
@@ -163,7 +171,8 @@ async def test_repair_idempotent_across_two_calls(
     )
     coord._last_error_category = "auth"
     with patch(
-        "homeassistant.helpers.issue_registry.async_create_issue"
+        "homeassistant.helpers.issue_registry.async_create_issue",
+        new=MagicMock(),
     ) as create_issue:
         coord._maybe_raise_outage_repair()
         coord._maybe_raise_outage_repair()
@@ -185,7 +194,10 @@ async def test_repair_issue_id_varies_by_category(
     coord_a._last_error_category = "auth"
     coord_b._outage_started_at = long_ago
     coord_b._last_error_category = "network"
-    with patch("homeassistant.helpers.issue_registry.async_create_issue"):
+    with patch(
+        "homeassistant.helpers.issue_registry.async_create_issue",
+        new=MagicMock(),
+    ):
         coord_a._maybe_raise_outage_repair()
         coord_b._maybe_raise_outage_repair()
     assert coord_a._open_repair_issue_id != coord_b._open_repair_issue_id

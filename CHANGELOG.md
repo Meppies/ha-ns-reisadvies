@@ -4,6 +4,20 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.20] — 2026-06-09
+
+### Fixed — CI Tests job still failing on v2.16.19 (`coroutine was never awaited`)
+
+v2.16.19 made the new tests `async def` but didn't account for
+`pytest-homeassistant-custom-component` auto-wrapping `async_*`-named
+functions as `AsyncMock`. The patches on `issue_registry.async_create_issue`
+/ `async_delete_issue` (which are sync despite the prefix) produced
+un-awaited coroutines, raising the warns-as-errors gate in CI.
+
+Fix: pass `new=MagicMock()` explicitly to each `patch(...)` of the
+issue-registry helpers so the substitute matches the sync nature of
+the real function. Runtime behaviour unchanged.
+
 ## [2.16.19] — 2026-06-09
 
 ### Fixed — CI Tests job failing on v2.16.18 with `no running event loop`
