@@ -4,6 +4,22 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.19] — 2026-06-09
+
+### Fixed — CI Tests job failing on v2.16.18 with `no running event loop`
+
+The 10 new tests added in `tests/test_last_error_and_repair.py` for
+v2.16.18 were declared as plain `def test_*` (sync). Constructing an
+`NSUpdateCoordinator` runs the parent `DataUpdateCoordinator.__init__`,
+which schedules work on the asyncio event loop, so the tests blew up
+with `RuntimeError: no running event loop` in CI. Local pytest masks
+this because `pytest-homeassistant-custom-component` auto-wraps the
+fixture differently depending on the test signature.
+
+Fix: convert all ten tests to `async def test_*(hass: HomeAssistant)`,
+matching the convention used in the existing test suite. Runtime
+behaviour unchanged — production code in v2.16.18 was correct.
+
 ## [2.16.18] — 2026-06-09
 
 ### Added — `last_error_category` sensor attribute

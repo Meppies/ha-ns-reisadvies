@@ -5,26 +5,22 @@ opens a Settings → System → Repairs entry when an outage streak crosses
 the 1-hour threshold. This file covers:
 
 * Initial state is "none"
-* 401/403 → category "auth"
-* 429 → category "quota_exceeded"
-* 500/503 → category "api_unavailable"
-* aiohttp.ClientError → category "network"
-* Recovery clears the category, the outage timestamp, and the repair
-* The 1-hour threshold gates the Repair-issue creation
-* The Repair is idempotent (only fires once per streak)
-* The Repair is removed on recovery
+* _note_unavailable stamps + does not restamp inside a streak
+* _note_available clears category + outage + deletes any open repair
+* Repair-issue lifecycle: not raised below threshold, raised above,
+  idempotent across calls, varies issue_id by category
 """
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
+from homeassistant.core import HomeAssistant
 
 from custom_components.ns_reisadvies.coordinator import NSUpdateCoordinator
 
 
-def _make_coord(hass) -> NSUpdateCoordinator:
+def _make_coord(hass: HomeAssistant) -> NSUpdateCoordinator:
     """Construct a coordinator with a fake hass — no network."""
     return NSUpdateCoordinator(
         hass,
@@ -38,7 +34,7 @@ def _make_coord(hass) -> NSUpdateCoordinator:
 # ---- baseline -----------------------------------------------------------
 
 
-def test_initial_state(hass):
+async def test_initial_state(hass: HomeAssistant) -> None:
     coord = _make_coord(hass)
     assert coord._last_error_category == "none"
     assert coord._outage_started_at is None
@@ -49,7 +45,7 @@ def test_initial_state(hass):
 # ---- _note_unavailable stamps outage timestamp --------------------------
 
 
-def test_note_unavailable_stamps_timestamp(hass):
+async def test_note_unavailable_stamps_timestamp(hass: HomeAssistant) -> None:
     coord = _make_coord(hass)
     before = time.time()
     coord._note_unavailable("test outage")
@@ -59,11 +55,15 @@ def test_note_unavailable_stamps_timestamp(hass):
     assert coord._was_available is False
 
 
-def test_note_unavailable_does_not_restamp_inside_streak(hass):
+async def test_note_unavailable_does_not_restamp_inside_streak(
+    hass: HomeAssistant,
+) -> None:
     """Second failure during the same streak keeps the original timestamp."""
     coord = _make_coord(hass)
     coord._note_unavailable("first")
     first_ts = coord._outage_started_at
+    # Sleep a tiny bit so the timestamp would visibly differ if it
+    # were being overwritten.
     time.sleep(0.01)
     coord._note_unavailable("second")
     assert coord._outage_started_at == first_ts
@@ -72,7 +72,7 @@ def test_note_unavailable_does_not_restamp_inside_streak(hass):
 # ---- _note_available clears outage state --------------------------------
 
 
-def test_note_available_clears_outage(hass):
+async def test_note_available_clears_outage(hass: HomeAssistant) -> None:
     coord = _make_coord(hass)
     coord._last_error_category = "auth"
     coord._outage_started_at = time.time() - 100
@@ -82,13 +82,17 @@ def test_note_available_clears_outage(hass):
     assert coord._was_available is True
 
 
-def test_note_available_on_first_run_marks_available(hass):
+async def test_note_available_on_first_run_marks_available(
+    hass: HomeAssistant,
+) -> None:
     coord = _make_coord(hass)
     coord._note_available()
     assert coord._was_available is True
 
 
-def test_note_available_deletes_open_repair(hass):
+async def test_note_available_deletes_open_repair(
+    hass: HomeAssistant,
+) -> None:
     coord = _make_coord(hass)
     coord._open_repair_issue_id = "fake_issue"
     coord._outage_started_at = time.time() - 100
@@ -103,7 +107,9 @@ def test_note_available_deletes_open_repair(hass):
 # ---- _maybe_raise_outage_repair guards ----------------------------------
 
 
-def test_repair_not_raised_when_no_outage(hass):
+async def test_repair_not_raised_when_no_outage(
+    hass: HomeAssistant,
+) -> None:
     coord = _make_coord(hass)
     with patch(
         "homeassistant.helpers.issue_registry.async_create_issue"
@@ -112,7 +118,9 @@ def test_repair_not_raised_when_no_outage(hass):
     create_issue.assert_not_called()
 
 
-def test_repair_not_raised_within_threshold(hass):
+async def test_repair_not_raised_within_threshold(
+    hass: HomeAssistant,
+) -> None:
     coord = _make_coord(hass)
     coord._outage_started_at = time.time() - 60  # 1 minute ago
     coord._last_error_category = "auth"
@@ -124,10 +132,12 @@ def test_repair_not_raised_within_threshold(hass):
     assert coord._open_repair_issue_id is None
 
 
-def test_repair_raised_past_threshold(hass):
+async def test_repair_raised_past_threshold(hass: HomeAssistant) -> None:
     coord = _make_coord(hass)
     coord._outage_started_at = (
-        time.time() - NSUpdateCoordinator._REPAIR_OUTAGE_THRESHOLD_SECONDS - 60
+        time.time()
+        - NSUpdateCoordinator._REPAIR_OUTAGE_THRESHOLD_SECONDS
+        - 60
     )
     coord._last_error_category = "auth"
     with patch(
@@ -141,11 +151,15 @@ def test_repair_raised_past_threshold(hass):
     assert "auth" in coord._open_repair_issue_id
 
 
-def test_repair_idempotent_across_two_calls(hass):
+async def test_repair_idempotent_across_two_calls(
+    hass: HomeAssistant,
+) -> None:
     """Second call inside the same streak must not re-fire create_issue."""
     coord = _make_coord(hass)
     coord._outage_started_at = (
-        time.time() - NSUpdateCoordinator._REPAIR_OUTAGE_THRESHOLD_SECONDS - 60
+        time.time()
+        - NSUpdateCoordinator._REPAIR_OUTAGE_THRESHOLD_SECONDS
+        - 60
     )
     coord._last_error_category = "auth"
     with patch(
@@ -156,12 +170,16 @@ def test_repair_idempotent_across_two_calls(hass):
     assert create_issue.call_count == 1
 
 
-def test_repair_issue_id_varies_by_category(hass):
+async def test_repair_issue_id_varies_by_category(
+    hass: HomeAssistant,
+) -> None:
     """Different categories yield distinct issue_ids so streaks don't collide."""
     coord_a = _make_coord(hass)
     coord_b = _make_coord(hass)
     long_ago = (
-        time.time() - NSUpdateCoordinator._REPAIR_OUTAGE_THRESHOLD_SECONDS - 60
+        time.time()
+        - NSUpdateCoordinator._REPAIR_OUTAGE_THRESHOLD_SECONDS
+        - 60
     )
     coord_a._outage_started_at = long_ago
     coord_a._last_error_category = "auth"
