@@ -170,8 +170,15 @@ async def test_options_persists_first_weekday(hass):
     ):
         result = await flow.async_step_init(user_input=user_input)
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    # v2.16.24: options now flow through ``async_create_entry(data=…)``
+    # instead of being passed to ``async_update_entry(options=…)``.
+    # ``async_update_entry`` is still called once to persist the
+    # API key into ``entry.data``, but no longer carries an
+    # ``options=`` kwarg.
+    assert result["data"][CONF_FIRST_WEEKDAY] == "6"
     _, kwargs = fake_hass.config_entries.async_update_entry.call_args
-    assert kwargs["options"][CONF_FIRST_WEEKDAY] == "6"
+    assert "options" not in kwargs
+    assert kwargs["data"][CONF_API_KEY] == "k"
 
 
 async def test_options_default_first_weekday_when_not_supplied(hass):

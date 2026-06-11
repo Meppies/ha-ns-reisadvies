@@ -680,6 +680,15 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                         )
                     except (TypeError, ValueError):
                         return False
+                    # v2.16.26: production always sees aware datetimes
+                    # (NS sends "+02:00" stamps; ``datetime.now(utc)``
+                    # is aware). Tests patch ``datetime.now`` with a
+                    # naive value, which would crash the comparison
+                    # below. Skip the stale-trip check entirely if
+                    # either side is naive — better than risking a
+                    # false-positive filter under an unknown timezone.
+                    if dep_dt.tzinfo is None or now_utc.tzinfo is None:
+                        return False
                     return dep_dt + _stale_after_dep < now_utc
 
                 pinned_ctx = set(self.tracked_trips or {})

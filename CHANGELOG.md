@@ -4,6 +4,33 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.26] — 2026-06-11
+
+### Fixed — green CI on `main`
+
+Six tests broke as a consequence of v2.16.24's two production changes
+without follow-up test updates:
+
+* `TypeError: can't compare offset-naive and offset-aware datetimes`
+  (×4) — the new `_has_departed()` stale-trip filter in
+  `coordinator.py` compared NS' timezone-aware ISO timestamps against
+  `datetime.now(timezone.utc)`. Existing tests patch
+  `datetime.now` with a naive value, which crashed the comparison.
+  Filter now skips the stale-trip check entirely when either side is
+  naive — production always sees aware values, so behaviour there is
+  unchanged.
+* `KeyError: 'options'` (×2) — `test_options_persists_first_weekday`
+  and `test_options_init_success_updates_entry` asserted that the
+  OptionsFlow called `async_update_entry(..., options=...)`. v2.16.24
+  rightly stopped doing that (it wiped the just-saved options); the
+  options now flow through the OptionsFlow's
+  `async_create_entry(data=…)` return value, which HA assigns to
+  `entry.options`. Updated both assertions to check
+  `result["data"]` and confirm `async_update_entry` is called with
+  only `data=` (for the API key rotation).
+
+No behaviour change for end users. Pure CI hygiene.
+
 ## [2.16.25] — 2026-06-11
 
 ### Fixed — departed trains lingered up to one poll interval

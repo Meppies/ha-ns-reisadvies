@@ -62,11 +62,14 @@ async def test_options_init_success_updates_entry(hass):
     ):
         result = await flow.async_step_init(user_input=user_input)
     assert result["type"] is FlowResultType.CREATE_ENTRY
+    # v2.16.24: options now flow through ``async_create_entry(data=…)``;
+    # ``async_update_entry`` only persists the API key into entry.data.
     fake_hass.config_entries.async_update_entry.assert_called_once()
     _, kwargs = fake_hass.config_entries.async_update_entry.call_args
     assert kwargs["data"][CONF_API_KEY] == "new"
-    assert kwargs["options"][CONF_SCAN_INTERVAL] == 5
-    assert CONF_API_KEY not in kwargs["options"]
+    assert "options" not in kwargs
+    assert result["data"][CONF_SCAN_INTERVAL] == 5
+    assert CONF_API_KEY not in result["data"]
 
 
 def test_options_read_prefers_options_over_data(hass):
