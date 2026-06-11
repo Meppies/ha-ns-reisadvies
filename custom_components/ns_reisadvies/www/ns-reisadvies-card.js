@@ -560,7 +560,35 @@ class NSReisadviesCard extends HTMLElement {
       if (!serverTracked.includes(ctx)) this._pendingUntrack.delete(ctx);
     });
 
-    const tripsToShow = allTrips.filter((trip, index) => {
+    // v2.16.25: also drop trips whose departure is more than one
+    // minute in the past on the card side. The coordinator already
+    // applies the same filter at poll time, but between polls
+    // (default 5 min) the cached sensor state still holds departed
+    // trips. The 30-second card-side tick in connectedCallback
+    // re-runs this filter so trains disappear in real-time. Pinned
+    // favourites are exempt — they follow the Favourite retention
+    // (hours) timer.
+    const _nowMs = Date.now();
+    const _STALE_AFTER_MS = 60 * 1000;
+    const _isPinnedCtx = (ctx) =>
+      !!ctx && (
+        (serverTracked.includes(ctx) && !this._pendingUntrack.has(ctx))
+        || this._pendingTrack.has(ctx)
+      );
+    const _hasDeparted = (trip) => {
+      const leg0 = (trip.legs || [])[0];
+      const origin = (leg0 && leg0.origin) || {};
+      const iso = origin.actualDateTime || origin.plannedDateTime;
+      if (!iso) return false;
+      const ms = new Date(iso).getTime();
+      if (isNaN(ms)) return false;
+      return ms + _STALE_AFTER_MS < _nowMs;
+    };
+    const freshTrips = allTrips.filter(
+      t => _isPinnedCtx(t.ctxRecon) || !_hasDeparted(t)
+    );
+
+    const tripsToShow = freshTrips.filter((trip, index) => {
       const ctx = trip.ctxRecon;
       let isFav = false;
 
@@ -2305,8 +2333,29 @@ class NSReisadviesCard extends HTMLElement {
     }
   }
 
+  connectedCallback() {
+    if (super.connectedCallback) super.connectedCallback();
+    // v2.16.25: re-render every 30 seconds so departed trips drop
+    // from the timeline within ≤ 1 min, regardless of when the
+    // coordinator next polls NS. The render path is gated by
+    // `set hass` (no DOM rewrite unless state changes) but
+    // ``updateContent`` is called directly here so it always reruns
+    // the stale filter against a fresh ``Date.now()``.
+    if (this._staleTickHandle == null) {
+      this._staleTickHandle = setInterval(() => {
+        if (this._lastStateObj && this._config && this._config.entity) {
+          this.updateContent();
+        }
+      }, 30 * 1000);
+    }
+  }
+
   disconnectedCallback() {
     this.closeLiveMap();
+    if (this._staleTickHandle != null) {
+      clearInterval(this._staleTickHandle);
+      this._staleTickHandle = null;
+    }
     if (super.disconnectedCallback) super.disconnectedCallback();
   }
 }
@@ -2548,7 +2597,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.24 ",
+  "%c NS-REISADVIES-CARD %c v2.16.25 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

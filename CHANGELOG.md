@@ -4,6 +4,27 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.25] — 2026-06-11
+
+### Fixed — departed trains lingered up to one poll interval
+
+v2.16.24's stale-trip filter ran inside the coordinator, which only
+polls NS every `Refresh interval (minutes)` (default 5). Between
+polls the cached sensor state still held the no-longer-catchable
+train; the user saw, for instance, a 17:41 Duivendrecht still on
+screen at 17:45 — four minutes past departure — because the next
+poll wasn't due until 17:45.
+
+Fix: apply the same "drop trips > 1 min past their actual / planned
+departure (favourites exempt)" filter on the Lovelace card. The card
+also installs a 30-second `connectedCallback` interval that calls
+`updateContent()` so the filter re-evaluates against a fresh
+`Date.now()` even when the sensor state hasn't changed since the
+last poll. Net effect: departed trains drop from the timeline within
+≤ 1 min regardless of the polling cadence; the interval is cleared
+in `disconnectedCallback` so navigating away doesn't leak the
+handle.
+
 ## [2.16.24] — 2026-06-09
 
 ### Fixed — hub-wide options forgotten after every reboot / reload
