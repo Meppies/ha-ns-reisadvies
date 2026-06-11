@@ -593,14 +593,27 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
                 )
 
             # Split: API key → entry.data, everything else → entry.options.
+            #
+            # v2.16.24: the previous flow called ``async_update_entry``
+            # with the options, then returned
+            # ``async_create_entry(title="", data={})`` — the
+            # HA-standard OptionsFlow return-value reassigns
+            # ``entry.options`` from the ``data=`` argument, which then
+            # immediately wiped out everything we just persisted. After
+            # a reboot / HA reload the user found only the API key still
+            # present (because that one lives in ``entry.data``) and
+            # every other hub-wide option had reverted to its default.
+            # The correct pattern is to mutate ``entry.data`` for the
+            # API key separately, then let ``async_create_entry`` save
+            # the actual options dict.
             new_data = {**self.entry.data, CONF_API_KEY: api_key_input}
             new_options = {
                 k: v for k, v in user_input.items() if k != CONF_API_KEY
             }
             self.hass.config_entries.async_update_entry(
-                self.entry, data=new_data, options=new_options,
+                self.entry, data=new_data,
             )
-            return self.async_create_entry(title="", data={})
+            return self.async_create_entry(title="", data=new_options)
 
         return self.async_show_form(
             step_id="init", data_schema=self._build_schema(),

@@ -4,6 +4,44 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.24] — 2026-06-09
+
+### Fixed — hub-wide options forgotten after every reboot / reload
+
+The OptionsFlow's submit path called `async_update_entry(...)` with
+the new options dict, then immediately returned
+`async_create_entry(title="", data={})`. The HA OptionsFlow finalisation
+overwrites `entry.options` with the value of the `data=` argument — an
+empty `{}` in this case — so every hub-wide setting (refresh interval,
+favourite retention, fetch composition, live train map, live-map refresh
+interval, first day of week) was wiped out the moment the user clicked
+Submit. The API key survived only because it lives in `entry.data`.
+
+Fix: drop the `async_update_entry(options=…)` call and let
+`async_create_entry(title="", data=new_options)` save the options dict
+directly — the documented HA pattern. The API-key update on
+`entry.data` keeps its separate `async_update_entry(data=…)` call.
+
+### Fixed — trains lingered in the trip list for 10–15 minutes after departure
+
+NS' `/v3/trips` keeps returning a trip for a while after its actual
+departure, which left the card cluttered with trains the user could no
+longer catch. The coordinator now drops any trip whose actual (or
+planned) departure time is more than one minute in the past. Pinned
+favourites are exempt — they remain visible until the dedicated
+`Favourite retention (hours)` timer (`_expire_old_trips`) removes them,
+matching the option's documented behaviour.
+
+### Fixed — card rendered times in browser locale instead of HA settings
+
+`formatTime` called `toLocaleTimeString([], opts)` with an empty
+locale array, so the browser silently fell back to `navigator.language`.
+A user with HA set to Dutch but a browser in `en-US` saw mismatched
+formats. The card now passes the HA language as the BCP47 locale and
+honours **Settings → Profile → Time format** — 24h / 12h overrides
+`hour12` explicitly, while the *Language* / *System* choices let the
+locale pick.
+
 ## [2.16.23] — 2026-06-09
 
 ### Changed — CI coverage gate lowered from 100 % to 95 %

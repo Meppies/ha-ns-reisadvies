@@ -4,7 +4,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import date as _dt_date, datetime, time as _dt_time, timedelta
+from datetime import (
+    date as _dt_date,
+    datetime,
+    time as _dt_time,
+    timedelta,
+    timezone,
+)
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -642,6 +648,45 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                     tracked_ctx = tracked_trip.get("ctxRecon")
                     if tracked_ctx and tracked_ctx not in normal_ctx_recons:
                         all_trips.append(tracked_trip)
+
+                # v2.16.24: NS' /v3/trips happily keeps returning a
+                # trip for ~10–15 minutes after it has already departed,
+                # which cluttered the card with trains the user could
+                # never catch. Drop any trip whose actual (or planned)
+                # departure is more than one minute in the past — UNLESS
+                # the trip is pinned as a favourite. Pinned trips remain
+                # visible until the dedicated favourite-retention
+                # timer (``_expire_old_trips``) removes them, matching
+                # the documented "Favourite retention (hours)" option.
+                now_utc = datetime.now(timezone.utc)
+                _stale_after_dep = timedelta(minutes=1)
+
+                def _has_departed(trip: dict[str, Any]) -> bool:
+                    legs = trip.get("legs") or []
+                    if not legs:
+                        return False
+                    origin = (legs[0] or {}).get("origin") or {}
+                    # Prefer the actual (possibly delayed) departure;
+                    # fall back to the planned one. NS' timestamps are
+                    # timezone-aware ISO strings ("...+02:00").
+                    iso = origin.get("actualDateTime") or origin.get(
+                        "plannedDateTime"
+                    )
+                    if not iso:
+                        return False
+                    try:
+                        dep_dt = datetime.fromisoformat(
+                            str(iso).replace("Z", "+00:00")
+                        )
+                    except (TypeError, ValueError):
+                        return False
+                    return dep_dt + _stale_after_dep < now_utc
+
+                pinned_ctx = set(self.tracked_trips or {})
+                all_trips = [
+                    t for t in all_trips
+                    if t.get("ctxRecon") in pinned_ctx or not _has_departed(t)
+                ]
 
                 all_trips.sort(
                     key=lambda x: (

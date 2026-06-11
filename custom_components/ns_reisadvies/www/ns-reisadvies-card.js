@@ -452,7 +452,23 @@ class NSReisadviesCard extends HTMLElement {
     const tz = _tz(this._hass);
     const opts = { hour: "2-digit", minute: "2-digit" };
     if (tz) opts.timeZone = tz;
-    return d.toLocaleTimeString([], opts);
+    // v2.16.24: respect Home Assistant's user preferences (Settings →
+    // Profile → Time format + Language) instead of silently using the
+    // browser locale. Empty array as locale → toLocaleTimeString falls
+    // back to navigator.language, which is wrong when the HA user has
+    // chosen e.g. Dutch but their browser runs in en-US. We pass the
+    // HA language as the BCP47 locale, and override hour12 only when
+    // the user has explicitly picked 12-h or 24-h (the "language" /
+    // "system" choices let the locale decide on its own).
+    const hass = this._hass;
+    const locale = (hass && hass.locale?.language) || hass?.language || undefined;
+    const tf = hass?.locale?.time_format;
+    if (tf === "24") {
+      opts.hour12 = false;
+    } else if (tf === "12") {
+      opts.hour12 = true;
+    }
+    return d.toLocaleTimeString(locale ? [locale] : [], opts);
   }
 
   calculateDelay(p, a) {
@@ -2532,7 +2548,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.13 ",
+  "%c NS-REISADVIES-CARD %c v2.16.24 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
