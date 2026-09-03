@@ -1743,6 +1743,140 @@ class NSReisadviesCard extends HTMLElement {
           stubBridgesAdded++;
         }
       }
+      // v2.17.1: continuation-gap welding. The two passes above still
+      // miss the most common defect in the ProRail export: a line cut
+      // mid-run, both ends ordinary degree-2 vertices, slightly
+      // further apart than the 60 m proximity pass reaches and not
+      // degree-1 so the stub pass ignores them too. Measured at
+      // 's-Hertogenbosch: a 65 m gap with 93 km of graph around it,
+      // which is what pushed that route's snap 1.2 km off the
+      // platform. Amsterdam Muiderpoort → Amstel had the same shape.
+      //
+      // Raising PROX_METERS globally would cross-wire parallel tracks
+      // and flyovers, so this pass welds only where all three hold:
+      //   * the gap is at most GAP_M;
+      //   * neither node already has an edge running that way (within
+      //     GAP_TOL_DEG), so both really are open line ends facing
+      //     each other — parallel tracks and crossings fail this,
+      //     since their own neighbours sit across the gap direction;
+      //   * the graph cannot get from one to the other within
+      //     GAP_DETOUR_M anyway, so a working switch is never
+      //     duplicated and a viaduct is never welded to the line
+      //     underneath it.
+      const GAP_M = 150;
+      const GAP_TOL_DEG = 40;
+      const GAP_DETOUR_M = 1500;
+      const GAP_CELL = 0.002;
+      const gapBuckets = new Map();
+      for (const [key, c] of nodeCoords) {
+        const ck = `${Math.floor(c[0] / GAP_CELL)},${Math.floor(c[1] / GAP_CELL)}`;
+        if (!gapBuckets.has(ck)) gapBuckets.set(ck, []);
+        gapBuckets.get(ck).push({ key, c });
+      }
+      // Planar direction vector, longitude scaled so both axes are
+      // comparable at NL latitudes.
+      const dirVec = (from, to) => {
+        const lat0 = from[0] * Math.PI / 180;
+        return [(to[1] - from[1]) * Math.cos(lat0), to[0] - from[0]];
+      };
+      const angleDeg = (u, v) => {
+        const lu = Math.hypot(u[0], u[1]);
+        const lv = Math.hypot(v[0], v[1]);
+        if (!lu || !lv) return 180;
+        const c = Math.max(-1, Math.min(1, (u[0] * v[0] + u[1] * v[1]) / (lu * lv)));
+        return Math.acos(c) * 180 / Math.PI;
+      };
+      // True when the node has no edge already running towards the
+      // target: an open end rather than a passing vertex.
+      const facesGap = (key, c, target) => {
+        const v = dirVec(c, target);
+        for (const e of (graph.get(key) || [])) {
+          const c2 = nodeCoords.get(e.to);
+          if (c2 && angleDeg(dirVec(c, c2), v) < GAP_TOL_DEG) return false;
+        }
+        return true;
+      };
+      const heapPush = (h, item) => {
+        h.push(item);
+        let i = h.length - 1;
+        while (i > 0) {
+          const p = (i - 1) >> 1;
+          if (h[p][0] <= h[i][0]) break;
+          const t = h[p]; h[p] = h[i]; h[i] = t;
+          i = p;
+        }
+      };
+      const heapPop = (h) => {
+        const top = h[0];
+        const last = h.pop();
+        if (h.length) {
+          h[0] = last;
+          let i = 0;
+          for (;;) {
+            const l = 2 * i + 1;
+            const r = l + 1;
+            let m = i;
+            if (l < h.length && h[l][0] < h[m][0]) m = l;
+            if (r < h.length && h[r][0] < h[m][0]) m = r;
+            if (m === i) break;
+            const t = h[m]; h[m] = h[i]; h[i] = t;
+            i = m;
+          }
+        }
+        return top;
+      };
+      // Bounded Dijkstra, only ever used to prove that no short way
+      // round exists. Capped on distance and on visited nodes so a
+      // dense yard cannot make this pass expensive.
+      const reachableWithin = (from, to, cutoff) => {
+        const dist = new Map([[from, 0]]);
+        const heap = [[0, from]];
+        const seen = new Set();
+        let pops = 0;
+        while (heap.length && pops < 6000) {
+          const [d, key] = heapPop(heap);
+          if (seen.has(key)) continue;
+          seen.add(key);
+          pops++;
+          if (key === to) return true;
+          if (d > cutoff) return false;
+          for (const e of (graph.get(key) || [])) {
+            const nd = d + e.w;
+            if (nd <= cutoff && nd < (dist.get(e.to) ?? Infinity)) {
+              dist.set(e.to, nd);
+              heapPush(heap, [nd, e.to]);
+            }
+          }
+        }
+        return false;
+      };
+      let gapBridgesAdded = 0;
+      for (const [ck, nodes] of gapBuckets) {
+        const [cy, cx] = ck.split(",").map(Number);
+        const neigh = [];
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            const arr = gapBuckets.get(`${cy + dy},${cx + dx}`);
+            if (arr) neigh.push(...arr);
+          }
+        }
+        for (const n1 of nodes) {
+          for (const n2 of neigh) {
+            if (n1.key >= n2.key) continue;
+            const d = haversine(n1.c, n2.c);
+            if (d < 1 || d > GAP_M) continue;
+            const adj1 = graph.get(n1.key);
+            if (adj1 && adj1.some(e => e.to === n2.key)) continue;
+            if (!facesGap(n1.key, n1.c, n2.c)) continue;
+            if (!facesGap(n2.key, n2.c, n1.c)) continue;
+            if (reachableWithin(n1.key, n2.key, GAP_DETOUR_M)) continue;
+            graph.get(n1.key).push({ to: n2.key, w: d });
+            if (!graph.has(n2.key)) graph.set(n2.key, []);
+            graph.get(n2.key).push({ to: n1.key, w: d });
+            gapBridgesAdded++;
+          }
+        }
+      }
       // v2.16.0: connected-components bridging. After the proximity
       // pass there are still small isolated sub-graphs (typically the
       // ProRail GeoJSON has feature-level discontinuities of 100–500 m
@@ -1843,6 +1977,7 @@ class NSReisadviesCard extends HTMLElement {
         + `${bridgesAdded} proximity bridges (≤${PROX_METERS} m), `
         + `${bridgesSkippedDense} skipped at junctions, `
         + `${stubBridgesAdded} degree-1 stubs bridged (≤${STUB_BRIDGE_M} m), `
+        + `${gapBridgesAdded} continuation gaps welded (≤${GAP_M} m), `
         + `${components.length} components → ${componentsBridged} bridged `
         + `(largest: ${components[0]?.length || 0} nodes)`
       );
@@ -2074,8 +2209,28 @@ class NSReisadviesCard extends HTMLElement {
       // snap candidate had landed on a track in the wrong direction.
       // Computing path length per candidate adds <50ms even on the
       // 80km IC routes and gives the geographically correct answer.
+      //
+      // v2.17.1: score the pair, do not just measure the rail path.
+      // Ranking on `len` alone is degenerate: the drawn polyline is
+      // [stop A] → path → [stop B], so the two snap legs are straight
+      // cheats across open country, and a pair that snaps 2 km toward
+      // each other always yields a shorter "path" than the pair that
+      // sits on the platforms. Measured on the Gooilijn before this
+      // fix: Weesp → Naarden-Bussum returned a 4.9 km path with
+      // snapA=1997 m and snapB=1894 m, against 8.5 km direct — two
+      // long straight chords with a stub of track in between.
+      //
+      // Counting the snap legs once (len + snapA + snapB) does not fix
+      // it either, because a straight line between two stations is
+      // always shorter than the track between them, so cheating still
+      // wins by a few dozen metres. The snap legs therefore cost
+      // SNAP_PENALTY times their length: cheating only pays when the
+      // geometry genuinely demands it. At weight 3 the same leg snaps
+      // to 4 m / 44 m and returns 9.0 km of real track.
+      const SNAP_PENALTY = 3;
       let bestPath = null;
       let bestLen = Infinity;
+      let bestScore = Infinity;
       let bestPathSnaps = null;
       let triedCount = 0;
       let foundCount = 0;
@@ -2089,9 +2244,11 @@ class NSReisadviesCard extends HTMLElement {
           for (let p = 0; p < path.length - 1; p++) {
             len += g.haversine(path[p], path[p + 1]);
           }
-          if (len < bestLen) {
+          const score = len + SNAP_PENALTY * (sa.dist + sb.dist);
+          if (score < bestScore) {
             bestPath = path;
             bestLen = len;
+            bestScore = score;
             bestPathSnaps = { sa, sb };
           }
         }
@@ -2122,14 +2279,20 @@ class NSReisadviesCard extends HTMLElement {
       //                          means the snap is wrong)
       const directKm = g.haversine([a.lat, a.lng], [b.lat, b.lng]) / 1000;
       const pathKm = bestLen / 1000;
+      // v2.17.1: measure what is actually drawn — the two snap legs
+      // included — so a pair that only looks short because it cheats
+      // across 2 km of polder is caught here as well.
+      const snapKm = (bestPathSnaps.sa.dist + bestPathSnaps.sb.dist) / 1000;
+      const drawnKm = pathKm + snapKm;
       let cap;
       if (directKm < 5)        cap = directKm * 5 + 2;
       else if (directKm < 30)  cap = directKm * 3 + 2;
       else                     cap = directKm * 2 + 5;
-      if (pathKm > cap) {
+      if (drawnKm > cap) {
         console.warn(
           `[ns-reisadvies] PATH TOO LONG ${a.name} → ${b.name}: `
-          + `${pathKm.toFixed(1)} km vs direct ${directKm.toFixed(1)} km — `
+          + `${drawnKm.toFixed(1)} km drawn (${pathKm.toFixed(1)} km track `
+          + `+ ${snapKm.toFixed(1)} km snap) vs direct ${directKm.toFixed(1)} km — `
           + `straight-line fallback`
         );
         segments.push([[a.lat, a.lng], [b.lat, b.lng]]);
@@ -2751,7 +2914,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.17.0 ",
+  "%c NS-REISADVIES-CARD %c v2.17.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

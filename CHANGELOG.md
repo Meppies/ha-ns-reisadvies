@@ -4,6 +4,89 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.1] — 2026-09-03
+
+### Fixed — route polyline now stays on the track
+
+Legs were drawn as long straight chords with a stub of track in the
+middle. The cause was in the snap scoring, not in the rail data or the
+A* search.
+
+The drawn polyline is `[stop A] → path → [stop B]`, so the two snap legs
+are straight lines across open country. Ranking candidate snap pairs on
+rail-path length alone therefore rewarded pairs that snap *towards each
+other*: the shorter the remaining track, the better the score. Measured
+on the Gooilijn before this fix:
+
+| Leg | Path | Snap A | Snap B | Direct |
+|---|---|---|---|---|
+| Weesp → Naarden-Bussum | 4.9 km | 1997 m | 1894 m | 8.5 km |
+| Naarden-Bussum → Bussum Zuid | 0.1 km | 1864 m | 107 m | 1.7 km |
+| Bussum Zuid → Hilversum Media Park | 0.1 km | 1808 m | 1268 m | 3.2 km |
+
+Counting the snap legs once (`len + snapA + snapB`) does not fix it: a
+straight line between two stations is always shorter than the track
+between them, so cheating still wins by a few dozen metres. The snap
+legs now cost three times their length (`SNAP_PENALTY = 3`), which makes
+cheating pay only when the geometry genuinely demands it. Same legs
+after the fix:
+
+| Leg | Path | Snap A | Snap B | Direct |
+|---|---|---|---|---|
+| Weesp → Naarden-Bussum | 9.0 km | 4 m | 44 m | 8.5 km |
+| Naarden-Bussum → Bussum Zuid | 1.6 km | 65 m | 13 m | 1.7 km |
+| Bussum Zuid → Hilversum Media Park | 3.1 km | 13 m | 66 m | 3.2 km |
+
+Across the whole dashboard every leg now snaps within 4–66 m of the
+platform, and each path is slightly longer than the crow-flies distance,
+as real track has to be.
+
+The outlier filter also measures what is drawn now (track plus both snap
+legs) instead of the track alone, so a pair that only looks short
+because it cheats across two kilometres of polder is caught there too.
+
+Measured over 660 station pairs (95 stations, every leg on the test
+dashboard plus every station pair within 30 km): snap distance went from
+a median of 1940 m — 637 of 637 pairs beyond 300 m — to a median of
+34 m, p90 66 m. No pair regressed.
+
+### Fixed — continuation gaps in the rail graph
+
+Two legs still snapped a kilometre off the platform after the scoring
+fix: `Oss → 's-Hertogenbosch` (1204 m) and `Amsterdam Centraal →
+Amsterdam Amstel` (1781 m). Not the scoring this time — with a proper
+snap the graph could only route those legs 93 km and 13 km around, so
+the far snap genuinely scored better.
+
+Cause: the ProRail export cuts a line mid-run and leaves both ends as
+ordinary degree-2 vertices, 65 m apart at 's-Hertogenbosch. The 60 m
+proximity pass does not reach that far, and the stub pass only welds
+degree-1 dead ends, so the break survived both.
+
+A third pass welds these. Raising `PROX_METERS` globally would
+cross-wire parallel tracks and flyovers, so a weld now needs all three:
+
+* the gap is at most 150 m;
+* neither node already has an edge running that way (within 40°), so
+  both are open line ends facing each other — parallel tracks and
+  crossings fail this, because their own neighbours sit across the gap
+  direction;
+* a bounded Dijkstra proves the graph cannot get from one end to the
+  other within 1500 m anyway, so a working switch is never duplicated
+  and a viaduct is never welded to the line beneath it.
+
+29 gaps welded nationally. Effect on the same 660 pairs: both bad legs
+repaired (`Oss → 's-Hertogenbosch` snaps at 25 m and 19.1 km against
+18.4 km direct; `Amsterdam Centraal → Amsterdam Amstel` at 44 m and
+5.9 km), worst snap anywhere now 104 m, and 627 of 660 routes unchanged.
+The rest improved, several dramatically — `Zaltbommel → Oss` from
+79.5 km to 30.1 km, `Culemborg → Oss` from 81.4 km to 46.4 km,
+`Geldermalsen → Oss` from 73.6 km to 38.6 km, all of which were detours
+around that one 65 m gap. Zero regressions.
+
+Graph build, including the new pass: 255 ms, once per page load and off
+the click path.
+
 ## [2.17.0] — 2026-09-03
 
 ### Changed — the live map now uses Home Assistant's own map
