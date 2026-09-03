@@ -37,7 +37,9 @@ slots, train composition, and an opt-in live train map.
   full train route, the stops, and a yellow / blue split that
   follows the train's progress. The whole NL rail network is cached
   weekly and rendered as a dim base layer; the route polyline is
-  snapped onto actual tracks via A* over the rail graph.
+  snapped onto actual tracks via A* over the rail graph. The base map
+  is Home Assistant's own `ha-map`, so it uses whatever map HA ships
+  and follows the light or dark theme.
 - **Companion Lovelace card** auto-registers as a Lovelace resource —
   no manual `resources:` editing.
 

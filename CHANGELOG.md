@@ -4,6 +4,43 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.0] — 2026-09-03
+
+### Changed — the live map now uses Home Assistant's own map
+
+The live train map pinned CARTO's `dark_all` raster tiles. CARTO started
+requiring an API key for those tiles, so the map picked up an
+"API KEY REQUIRED" watermark, and it stayed dark on a light dashboard
+because the tile URL was hard-coded.
+
+The map now renders on Home Assistant's `<ha-map>` element:
+
+* The base layer is whatever HA ships — since HA 2026.9 that is
+  MapLibre vector tiles proxied by core, with the raster fallback for
+  browsers without WebGL2. No tile provider is pinned by the card any
+  more, so a future change on HA's side carries over on its own.
+* Light and dark cartography follow the active theme. `themeMode` is
+  set from `hass.themes.darkMode` and re-applied on every `hass`
+  update, so switching theme with the map open repaints it.
+* Leaflet still owns the overlays. The rail base layer, route
+  polylines, stop markers and the train marker are unchanged; they are
+  drawn on the Leaflet map that `ha-map` exposes, using the Leaflet
+  copy that HA itself loaded.
+* The modal is now anchored in `<home-assistant>`'s shadow root.
+  `ha-map` reads its websocket connection, config and theme from Lit
+  contexts provided by that element, and the tiles are proxied behind a
+  token that needs the connection. The card seeds both values as a
+  fallback for hosts outside that tree.
+* Marker CSS is injected into `ha-map`'s shadow root as well, because
+  the markers render inside it where a document-level stylesheet does
+  not reach.
+* Hosts without `ha-map` fall back to a plain Leaflet map on
+  OpenStreetMap raster tiles, tinted in dark mode. No CARTO, no
+  watermark.
+* Modal chrome and the stop markers now use theme variables instead of
+  the hard-coded `#1a1a1a`, so the dialog no longer flashes dark on a
+  light theme.
+
 ## [2.16.26] — 2026-06-11
 
 ### Fixed — green CI on `main`

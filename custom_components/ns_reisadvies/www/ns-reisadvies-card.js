@@ -231,6 +231,8 @@ class NSReisadviesCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    // Keep an open live map in step with the active theme.
+    if (this._activeMap) this._syncMapTheme();
     if (!this.content) {
       const card = document.createElement("ha-card");
       this.content = document.createElement("div");
@@ -1075,13 +1077,36 @@ class NSReisadviesCard extends HTMLElement {
   // while the dialog is open (start/poll/stop WebSocket commands), so this
   // imposes zero ongoing API cost when the map is closed.
 
-  _ensureModalStyles() {
-    // The modal lives at document.body — outside any card shadow root —
-    // so the in-card <style> block does NOT apply to it. Inject once.
-    if (document.getElementById("ns-reisadvies-modal-styles")) return;
+  _mapHostRoot() {
+    // Anchor the modal in <home-assistant>'s shadow root when we can.
+    // <ha-map> reads its websocket connection, config and theme from Lit
+    // contexts that are provided by that element, and a modal parked on
+    // document.body sits outside that tree. Falls back to the body.
+    const ha = document.querySelector("home-assistant");
+    return (ha && ha.shadowRoot) || document.body;
+  }
+
+  _injectStyles(root, id, css) {
+    // Node.DOCUMENT_FRAGMENT_NODE (11) covers both shadow roots we use;
+    // anything else means the modal sits in the light DOM, where the
+    // document head is the right place.
+    const target = (root && root.nodeType === 11) ? root : document.head;
+    if (target.querySelector("style#" + id)) return;
     const style = document.createElement("style");
-    style.id = "ns-reisadvies-modal-styles";
-    style.textContent = `
+    style.id = id;
+    style.textContent = css;
+    target.appendChild(style);
+  }
+
+  _ensureModalStyles(root) {
+    // The modal lives outside the card's own shadow root, so the in-card
+    // <style> block does NOT apply to it. Inject once per root.
+    this._injectStyles(root, "ns-reisadvies-modal-styles", this._modalCss());
+    this._injectStyles(root, "ns-reisadvies-map-styles", this._mapCss());
+  }
+
+  _modalCss() {
+    return `
       .ns-map-modal {
         position: fixed; inset: 0; z-index: 9999;
         background: rgba(0, 0, 0, 0.55);
@@ -1089,8 +1114,8 @@ class NSReisadviesCard extends HTMLElement {
         backdrop-filter: blur(2px);
       }
       .ns-map-modal .ns-map-card {
-        background: var(--card-background-color, #1a1a1a);
-        color: var(--primary-text-color, white);
+        background: var(--card-background-color, #fff);
+        color: var(--primary-text-color, #212121);
         border-radius: 12px;
         box-shadow: 0 12px 40px rgba(0,0,0,0.5);
         width: min(720px, 92vw); height: min(640px, 86vh);
@@ -1098,7 +1123,7 @@ class NSReisadviesCard extends HTMLElement {
       }
       .ns-map-modal .ns-map-header {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 10px 14px; border-bottom: 1px solid var(--divider-color, #444);
+        padding: 10px 14px; border-bottom: 1px solid var(--divider-color, #e0e0e0);
       }
       .ns-map-modal .ns-map-title {
         font-weight: 600; font-size: 1em; display: flex; align-items: center; gap: 8px;
@@ -1108,18 +1133,44 @@ class NSReisadviesCard extends HTMLElement {
       .ns-map-modal .ns-map-close {
         cursor: pointer; padding: 4px; border-radius: 50%; display: inline-flex;
       }
-      .ns-map-modal .ns-map-close:hover { background: rgba(255,255,255,0.08); }
+      .ns-map-modal .ns-map-close:hover {
+        background: var(--secondary-background-color, rgba(127,127,127,0.15));
+      }
       .ns-map-modal .ns-map-body {
-        flex: 1; min-height: 0; position: relative; background: var(--card-background-color, #1a1a1a);
+        flex: 1; min-height: 0; position: relative;
+        background: var(--card-background-color, #fff);
       }
-      .ns-map-modal .ns-leaflet {
+      .ns-map-modal .ns-map-loading {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        font-size: 0.9em; opacity: 0.7;
+      }
+      .ns-map-modal .ns-map-empty {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        padding: 20px; text-align: center; font-size: 0.95em;
+        color: var(--secondary-text-color, #727272);
+      }
+    `;
+  }
+
+  _mapCss() {
+    // Injected twice: into the root that holds the modal (for the map
+    // container itself) and into <ha-map>'s shadow root, because the
+    // stop and train markers are rendered inside that shadow root where
+    // a document-level stylesheet does not reach.
+    return `
+      .ns-leaflet {
         position: absolute; inset: 0; width: 100%; height: 100%;
-        background: #1a1a1a;
+        display: block;
+        background: var(--card-background-color, #fff);
       }
-      .ns-map-modal .leaflet-container {
-        background: #1a1a1a; font-family: inherit;
+      .leaflet-container {
+        background: var(--card-background-color, #fff); font-family: inherit;
       }
-      /* Side-view train tile, rotated to match the train's heading. */
+      /* Fallback raster tiles only: tint them for a dark theme. */
+      .ns-map-dark .leaflet-tile-pane {
+        filter: invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9);
+      }
+      /* Side-view train tile, mirrored to match the train's heading. */
       .ns-leaflet-train {
         width: 44px; height: 22px;
         position: relative;
@@ -1137,26 +1188,18 @@ class NSReisadviesCard extends HTMLElement {
       }
       .ns-leaflet-stop {
         width: 14px; height: 14px; border-radius: 50%;
-        background: #1a1a1a; border: 3px solid #FFC917;
+        background: var(--card-background-color, #fff);
+        border: 3px solid #FFC917;
         box-shadow: 0 1px 3px rgba(0,0,0,0.4);
       }
       .ns-leaflet-stop.endpoint { width: 18px; height: 18px; border-width: 4px; }
-      .ns-map-modal .ns-map-loading {
-        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-        font-size: 0.9em; opacity: 0.7;
-      }
-      .ns-map-modal .ns-map-empty {
-        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-        padding: 20px; text-align: center; font-size: 0.95em;
-        color: var(--secondary-text-color, #aaa);
-      }
     `;
-    document.head.appendChild(style);
   }
 
   async openLiveMap(tripIdx, legIdx) {
     if (!this._hass || !this._config) return;
-    this._ensureModalStyles();
+    const hostRoot = this._mapHostRoot();
+    this._ensureModalStyles(hostRoot);
     const stateObj = this._hass.states[this._config.entity];
     const trips = stateObj && stateObj.attributes && stateObj.attributes.trips || [];
     const trip = trips[tripIdx];
@@ -1186,7 +1229,7 @@ class NSReisadviesCard extends HTMLElement {
           <div class="ns-map-loading">${t("live_map_loading", this._hass)}</div>
         </div>
       </div>`;
-    document.body.appendChild(modal);
+    hostRoot.appendChild(modal);
     this._activeMap = {
       modalEl: modal, sessionId: null, pollHandle: null,
       tripIdx, legIdx,
@@ -1261,11 +1304,127 @@ class NSReisadviesCard extends HTMLElement {
     body.innerHTML = `<div class="ns-map-empty">${t("live_map_no_data", this._hass)}${hint ? `<br><small style="opacity:.6">${hint}</small>` : ""}</div>`;
   }
 
+  _isDarkMode() {
+    return !!(this._hass && this._hass.themes && this._hass.themes.darkMode);
+  }
+
+  _syncMapTheme() {
+    // Called from `set hass`, so switching the HA theme while the live
+    // map is open repaints the base layer instead of leaving a dark map
+    // on a light dashboard.
+    const ctx = this._activeMap;
+    if (!ctx) return;
+    const dark = this._isDarkMode();
+    if (ctx.haMapEl) {
+      const mode = dark ? "dark" : "light";
+      if (ctx.haMapEl.themeMode !== mode) ctx.haMapEl.themeMode = mode;
+      return;
+    }
+    if (ctx.mapDiv) ctx.mapDiv.classList.toggle("ns-map-dark", dark);
+  }
+
+  async _ensureHaMapLoaded() {
+    // <ha-map> ships in a lazily loaded chunk. Creating the built-in map
+    // card pulls that chunk in; the card element itself is discarded.
+    if (customElements.get("ha-map")) return true;
+    try {
+      if (typeof window.loadCardHelpers === "function") {
+        const helpers = await window.loadCardHelpers();
+        try {
+          helpers.createCardElement({ type: "map", entities: [] });
+        } catch (err) {
+          // An invalid map config still triggers the import.
+        }
+      }
+      await Promise.race([
+        customElements.whenDefined("ha-map"),
+        new Promise((r) => setTimeout(r, 6000)),
+      ]);
+    } catch (err) {
+      console.warn("[ns-reisadvies] could not load ha-map", err);
+    }
+    return !!customElements.get("ha-map");
+  }
+
+  async _waitForHaMap(el) {
+    const deadline = Date.now() + 8000;
+    while (Date.now() < deadline && !el.leafletMap) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (!el.leafletMap) return null;
+    // ha-map fits the view to the home location once it finishes
+    // loading; let that settle before the card applies its own bounds.
+    try { await el.updateComplete; await el.updateComplete; } catch (err) { /* not a Lit element */ }
+    return el.leafletMap || null;
+  }
+
+  async _buildMapSurface(body) {
+    // Preferred path: Home Assistant's own <ha-map>. It owns the base
+    // layer (vector tiles proxied by core since HA 2026.9) and the
+    // light/dark cartography, so the card inherits whatever map HA
+    // ships and follows the active theme, instead of pinning a tile
+    // provider of its own. Leaflet stays in charge of the overlays:
+    // ha-map exposes its Leaflet map, so the rail layer, route lines,
+    // stop markers and train marker are unchanged.
+    if (await this._ensureHaMapLoaded()) {
+      let el = null;
+      try {
+        el = document.createElement("ha-map");
+        el.className = "ns-leaflet";
+        el.autoFit = false;
+        el.clusterMarkers = false;
+        el.themeMode = this._isDarkMode() ? "dark" : "light";
+        // ha-map consumes its connection and config from Lit contexts
+        // provided by <home-assistant>. Seed them before connecting so
+        // the element also works if the modal ends up outside that tree
+        // (the provider overwrites them with the live values when it is
+        // inside it). Without a connection there is no tile token, and
+        // the base layer stays blank.
+        const hass = this._hass;
+        if (hass) {
+          if (el._connection === undefined) el._connection = { connection: hass.connection };
+          if (el._config === undefined) el._config = hass.config;
+        }
+        body.appendChild(el);
+        const map = await this._waitForHaMap(el);
+        if (map) {
+          let L = el.Leaflet || window.L;
+          if (!L && await this._ensureLeafletLoaded()) L = window.L;
+          if (L) {
+            if (el.shadowRoot) {
+              this._injectStyles(el.shadowRoot, "ns-reisadvies-map-styles", this._mapCss());
+            }
+            return { map, leaflet: L, haMapEl: el, mapDiv: null };
+          }
+        }
+      } catch (err) {
+        console.warn("[ns-reisadvies] ha-map failed, falling back to Leaflet", err);
+      }
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+
+    // Fallback for hosts without <ha-map>: a plain Leaflet map on
+    // OpenStreetMap raster tiles, tinted in dark mode.
+    if (!await this._ensureLeafletLoaded()) return null;
+    const L = window.L;
+    const mapDiv = document.createElement("div");
+    mapDiv.className = "ns-leaflet";
+    mapDiv.classList.toggle("ns-map-dark", this._isDarkMode());
+    body.appendChild(mapDiv);
+    const map = L.map(mapDiv, { zoomControl: true, attributionControl: true });
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      maxZoom: 19,
+    }).addTo(map);
+    return { map, leaflet: L, haMapEl: null, mapDiv };
+  }
+
   async _ensureLeafletLoaded() {
-    // Use Leaflet directly (same library HA uses internally) — gives us
-    // full control over markers, polylines, and bounds without ha-map's
-    // entity-machine quirks. We load from unpkg with the same pin that
-    // HA frontend uses, so users on the same machine often hit cache.
+    // Fallback loader only. The map normally runs on <ha-map>, which
+    // brings its own Leaflet; this pulls a copy from unpkg for hosts
+    // where ha-map is missing, or where it loaded without exposing its
+    // Leaflet module. Same pin HA frontend uses, so the browser often
+    // has it cached already.
     if (window.L && window.L.map) return true;
     if (this._leafletLoading) {
       try { await this._leafletLoading; } catch {}
@@ -1332,34 +1491,27 @@ class NSReisadviesCard extends HTMLElement {
       return;
     }
 
-    const ok = await this._ensureLeafletLoaded();
-    if (!this._activeMap || this._activeMap.modalEl !== modal) return;
-    if (!ok) {
-      this._renderMapEmpty(modal, "Leaflet failed to load");
+    body.innerHTML = "";
+    const built = await this._buildMapSurface(body);
+    if (!this._activeMap || this._activeMap.modalEl !== modal) {
+      // Modal closed while the map was still coming up.
+      if (built && built.haMapEl && built.haMapEl.parentNode) {
+        built.haMapEl.parentNode.removeChild(built.haMapEl);
+      } else if (built && built.map) {
+        try { built.map.remove(); } catch (err) { /* already gone */ }
+      }
+      return;
+    }
+    if (!built) {
+      this._renderMapEmpty(modal, "map failed to load");
       return;
     }
 
-    const L = window.L;
-    body.innerHTML = "";
-    const mapDiv = document.createElement("div");
-    mapDiv.className = "ns-leaflet";
-    body.appendChild(mapDiv);
+    const L = built.leaflet;
+    const map = built.map;
 
-    const map = L.map(mapDiv, {
-      zoomControl: true,
-      attributionControl: true,
-    });
-
-    // Carto dark basemap — matches HA's default look.
-    L.tileLayer(
-      "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-      {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attributions">CARTO</a>',
-        subdomains: "abcd",
-        maxZoom: 19,
-      }
-    ).addTo(map);
-
+    this._activeMap.haMapEl = built.haMapEl;
+    this._activeMap.mapDiv = built.mapDiv;
     this._activeMap.leaflet = L;
     this._activeMap.lmap = map;
     this._activeMap.stopMarkers = [];
@@ -1722,7 +1874,8 @@ class NSReisadviesCard extends HTMLElement {
       const pane = map.getPane(PANE_NAME);
       if (pane) pane.style.zIndex = 250;
     }
-    const layer = window.L.polyline(r.railPolylines, {
+    const L = (this._activeMap && this._activeMap.leaflet) || window.L;
+    const layer = L.polyline(r.railPolylines, {
       color: "#5a6a7a",
       weight: 1.6,
       opacity: 0.55,
@@ -2323,9 +2476,10 @@ class NSReisadviesCard extends HTMLElement {
         session_id: ctx.sessionId,
       }).catch(() => {});
     }
-    // Tear down the Leaflet map so its DOM listeners and tile downloads
-    // do not linger.
-    if (ctx.lmap) {
+    // Tear down the map so its DOM listeners and tile downloads do not
+    // linger. <ha-map> removes its own Leaflet map when it leaves the
+    // DOM, so only the standalone fallback map is cleaned up by hand.
+    if (ctx.lmap && !ctx.haMapEl) {
       try { ctx.lmap.remove(); } catch {}
     }
     if (ctx.modalEl && ctx.modalEl.parentNode) {
@@ -2597,7 +2751,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.16.25 ",
+  "%c NS-REISADVIES-CARD %c v2.17.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
