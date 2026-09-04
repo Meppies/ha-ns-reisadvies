@@ -876,8 +876,18 @@ class NSReisadviesCard extends HTMLElement {
           && trainNum
           && Array.isArray(leg.stops) && leg.stops.length > 1
           && obisOperators.has(opCode);
+        // v2.17.2: `tIdx` indexes tripsToShow, which is allTrips minus
+        // departed trips minus the max_rows cut. openLiveMap and the
+        // poller read attributes.trips, so a positional index taken
+        // from the rendered rows points at a different train as soon
+        // as one has departed. Emit the index into the raw list, plus
+        // the train number and planned departure of the row, so the
+        // click can be resolved by identity if the list shifts again
+        // between render and click.
+        const rawTripIdx = allTrips.indexOf(trip);
+        const legDepIso = (leg.origin && leg.origin.plannedDateTime) || "";
         const mapIconHtml = showMapIcon
-          ? `<div class="tl-map-icon-row"><button class="tl-map-icon-btn" data-trip-idx="${tIdx}" data-leg-idx="${index}" title="${t("show_live_map", this._hass)}"><ha-icon icon="mdi:map-marker-radius-outline"></ha-icon><span>${t("live_map_button", this._hass)}</span></button></div>`
+          ? `<div class="tl-map-icon-row"><button class="tl-map-icon-btn" data-trip-idx="${rawTripIdx >= 0 ? rawTripIdx : tIdx}" data-leg-idx="${index}" data-train-num="${trainNum}" data-dep="${legDepIso}" title="${t("show_live_map", this._hass)}"><ha-icon icon="mdi:map-marker-radius-outline"></ha-icon><span>${t("live_map_button", this._hass)}</span></button></div>`
           : "";
 
         html += `
@@ -1015,9 +1025,13 @@ class NSReisadviesCard extends HTMLElement {
         e.stopPropagation();
         const tIdx = parseInt(btn.getAttribute("data-trip-idx"), 10);
         const lIdx = parseInt(btn.getAttribute("data-leg-idx"), 10);
-        console.info("[ns-reisadvies] live map click", {tIdx, lIdx});
+        const expect = {
+          num: btn.getAttribute("data-train-num") || "",
+          dep: btn.getAttribute("data-dep") || "",
+        };
+        console.info("[ns-reisadvies] live map click", {tIdx, lIdx, ...expect});
         try {
-          this.openLiveMap(tIdx, lIdx);
+          this.openLiveMap(tIdx, lIdx, expect);
         } catch (err) {
           console.error("[ns-reisadvies] openLiveMap threw:", err);
         }
@@ -1196,15 +1210,68 @@ class NSReisadviesCard extends HTMLElement {
     `;
   }
 
-  async openLiveMap(tripIdx, legIdx) {
+  // v2.17.2: resolve a leg by identity, not by position.
+  //
+  // The rendered rows come from `tripsToShow` — allTrips with departed
+  // trips dropped and max_rows applied — while this lookup reads
+  // `attributes.trips`. The two lists drift apart the moment a train
+  // departs, and the sensor is repolled underneath an open map, so an
+  // index captured at render time can address a different train by the
+  // time it is used. That is how a row for IC 1825 to Hilversum could
+  // open the map on Sprinter 7416 to Amsterdam.
+  //
+  // `expect` carries the train number and planned departure that were
+  // on screen. The index is treated as a hint: if it still points at
+  // that train, it is used as-is; otherwise the leg is found again by
+  // identity and the corrected indices are returned.
+  _resolveLeg(tripIdx, legIdx, expect) {
+    if (!this._hass || !this._config || !this._config.entity) return null;
+    const stateObj = this._hass.states[this._config.entity];
+    const trips = (stateObj && stateObj.attributes && stateObj.attributes.trips) || [];
+    const wanted = expect || {};
+    const matches = (leg) => {
+      if (!leg || !leg.product) return false;
+      if (wanted.num && String(leg.product.number) !== String(wanted.num)) return false;
+      if (wanted.dep && leg.origin && leg.origin.plannedDateTime
+          && leg.origin.plannedDateTime !== wanted.dep) return false;
+      return true;
+    };
+    const hinted = trips[tripIdx] && trips[tripIdx].legs && trips[tripIdx].legs[legIdx];
+    if (hinted && matches(hinted)) {
+      return { trip: trips[tripIdx], leg: hinted, tripIdx, legIdx };
+    }
+    if (!wanted.num && !wanted.dep) {
+      return hinted ? { trip: trips[tripIdx], leg: hinted, tripIdx, legIdx } : null;
+    }
+    for (let i = 0; i < trips.length; i++) {
+      const legs = (trips[i] && trips[i].legs) || [];
+      for (let j = 0; j < legs.length; j++) {
+        if (!matches(legs[j])) continue;
+        if (i !== tripIdx || j !== legIdx) {
+          console.warn(
+            `[ns-reisadvies] live map index drift: ${tripIdx}/${legIdx} → ${i}/${j} `
+            + `for train ${wanted.num || "?"} (${wanted.dep || "no departure"})`
+          );
+        }
+        return { trip: trips[i], leg: legs[j], tripIdx: i, legIdx: j };
+      }
+    }
+    console.warn(
+      `[ns-reisadvies] live map: train ${wanted.num || "?"} `
+      + `(${wanted.dep || "no departure"}) is no longer in the sensor state`
+    );
+    return null;
+  }
+
+  async openLiveMap(tripIdx, legIdx, expect) {
     if (!this._hass || !this._config) return;
     const hostRoot = this._mapHostRoot();
     this._ensureModalStyles(hostRoot);
-    const stateObj = this._hass.states[this._config.entity];
-    const trips = stateObj && stateObj.attributes && stateObj.attributes.trips || [];
-    const trip = trips[tripIdx];
-    const leg = trip && trip.legs && trip.legs[legIdx];
-    if (!leg) return;
+    const resolved = this._resolveLeg(tripIdx, legIdx, expect);
+    if (!resolved) return;
+    const leg = resolved.leg;
+    tripIdx = resolved.tripIdx;
+    legIdx = resolved.legIdx;
     const trainNum = (leg.product && leg.product.number) ? String(leg.product.number) : "";
     if (!trainNum) return;
 
@@ -1232,7 +1299,7 @@ class NSReisadviesCard extends HTMLElement {
     hostRoot.appendChild(modal);
     this._activeMap = {
       modalEl: modal, sessionId: null, pollHandle: null,
-      tripIdx, legIdx,
+      tripIdx, legIdx, expect,
     };
 
     const closeFn = () => this.closeLiveMap();
@@ -2527,10 +2594,16 @@ class NSReisadviesCard extends HTMLElement {
     // sensor is repolled by the coordinator on its own scan-interval,
     // so we just have to re-read.
     if (this._hass && this._config?.entity && ctx.tripIdx != null && ctx.legIdx != null) {
-      const trips = this._hass.states[this._config.entity]?.attributes?.trips || [];
-      const leg = trips[ctx.tripIdx]?.legs?.[ctx.legIdx];
-      if (leg && Array.isArray(leg.stops)) {
-        ctx.legStopsRaw = leg.stops.filter(s => !s.passing);
+      // v2.17.2: re-resolve by identity. The trips list shifts under an
+      // open map every time a train departs, so re-reading by index
+      // would quietly swap in another train's stops mid-session.
+      const resolved = this._resolveLeg(ctx.tripIdx, ctx.legIdx, ctx.expect);
+      if (resolved) {
+        ctx.tripIdx = resolved.tripIdx;
+        ctx.legIdx = resolved.legIdx;
+        if (Array.isArray(resolved.leg.stops)) {
+          ctx.legStopsRaw = resolved.leg.stops.filter(s => !s.passing);
+        }
       }
     }
 
@@ -2914,7 +2987,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.17.1 ",
+  "%c NS-REISADVIES-CARD %c v2.17.2 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

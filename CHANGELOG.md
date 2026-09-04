@@ -4,6 +4,37 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.17.2] — 2026-09-04
+
+### Fixed — the live map opened the wrong train
+
+Reported from the dashboard: a row for `ICD 1825` to Hilversum opened the
+map on `NS Sprinter 7416` to Amsterdam, drawing that other train's route.
+
+The rendered rows come from `tripsToShow`, which is `attributes.trips`
+with departed trips dropped (v2.16.25) and `max_rows` applied.
+`openLiveMap` and the poller read `attributes.trips` directly. The index
+written into each button therefore addressed a different trip in the
+list it was looked up in, as soon as one train had departed. The 30-second
+card-side tick re-runs that filter, so the two lists drift apart
+continuously. The poller re-read `trips[tripIdx]` on every tick as well,
+which could swap another train's stops into an already-open map.
+
+Each button now carries the index into the raw list plus the train number
+and planned departure of the row it belongs to, and both the open and the
+poll path resolve the leg by that identity, treating the index as a hint.
+A mismatch is logged (`live map index drift: 4/0 → 6/0 for train 1825`)
+rather than silently drawing the wrong route.
+
+Verified against the live dashboard by clicking every live-map icon and
+comparing the train in the modal header with the train on the row:
+4 of 8 wrong before, 8 of 8 correct after.
+
+The divergence dates from v2.16.25 — before that, filtering only ever cut
+the tail of the list, so the indices matched unless a pinned favourite sat
+beyond `max_rows`. It became easy to hit once departed trips started being
+removed from the middle.
+
 ## [2.17.1] — 2026-09-03
 
 ### Fixed — route polyline now stays on the track
