@@ -47,6 +47,8 @@ from .const import (
     CONF_FETCH_COMPOSITION,
     CONF_LIVE_TRAIN_MAP,
     CONF_LIVE_MAP_REFRESH_SECONDS,
+    CONF_TRACK_FAVOURITES,
+    CONF_FAV_TRACK_SECONDS,
     CONF_FILTER_DAYS,
     CONF_FILTER_TIME,
     CONF_FILTER_WINDOW_MINUTES,
@@ -56,6 +58,8 @@ from .const import (
     DEFAULT_FETCH_COMPOSITION,
     DEFAULT_LIVE_TRAIN_MAP,
     DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+    DEFAULT_TRACK_FAVOURITES,
+    DEFAULT_FAV_TRACK_SECONDS,
     DEFAULT_FILTER_WINDOW_MINUTES,
 )
 from .coordinator import NSUpdateCoordinator
@@ -71,7 +75,27 @@ _OPTION_KEYS: tuple[str, ...] = (
     CONF_FETCH_COMPOSITION,
     CONF_LIVE_TRAIN_MAP,
     CONF_LIVE_MAP_REFRESH_SECONDS,
+    CONF_TRACK_FAVOURITES,
+    CONF_FAV_TRACK_SECONDS,
 )
+
+
+def _start_favourite_tracking(
+    hass: HomeAssistant,
+    entry: NSConfigEntry,
+    coordinators: dict[str, NSUpdateCoordinator],
+) -> None:
+    """Schedule background favourite polling for every route.
+
+    Each coordinator owns its own interval and cancels it when the entry
+    unloads, so turning the option off (which reloads the entry) stops
+    every background fetch. The immediate run gives the trackers a
+    position straight away instead of after the first interval.
+    """
+    for coordinator in coordinators.values():
+        coordinator.async_start_favourite_tracking()
+        entry.async_on_unload(coordinator.async_stop_favourite_tracking)
+        hass.async_create_task(coordinator.async_refresh_favourite_positions())
 
 
 def _option(entry: NSConfigEntry, key: str, default: Any) -> Any:
@@ -90,7 +114,7 @@ def _option(entry: NSConfigEntry, key: str, default: Any) -> Any:
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR]
+PLATFORMS = [Platform.SENSOR, Platform.DEVICE_TRACKER]
 CARD_URL = "/ns_reisadvies/ns-reisadvies-card.js"
 RAIL_FILE = "rail.geojson"
 RAIL_REFRESH_INTERVAL = timedelta(days=7)
@@ -345,6 +369,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
     runtime.live_train_map_enabled = live_train_map
     runtime.live_map_refresh_seconds = max(5, min(60, live_map_refresh))
 
+    # v2.18.0: favourite tracking. Off by default; when on, each route's
+    # coordinator polls positions for its own pinned favourites and the
+    # device_tracker platform publishes them.
+    track_favourites = bool(
+        _option(entry, CONF_TRACK_FAVOURITES, DEFAULT_TRACK_FAVOURITES)
+    )
+    favourite_track_seconds = int(_option(
+        entry, CONF_FAV_TRACK_SECONDS, DEFAULT_FAV_TRACK_SECONDS,
+    ))
+    runtime.track_favourites_enabled = track_favourites
+    runtime.favourite_track_seconds = favourite_track_seconds
+
     # Coordinator per subentry. Stored on runtime.coordinators so the
     # sensor platform can pick them up via entry.runtime_data.
     coordinators: dict[str, NSUpdateCoordinator] = {}
@@ -364,6 +400,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
             scan_interval_minutes=scan_interval,
             fav_hours=fav_hours,
             fetch_composition=fetch_composition,
+            track_favourites=track_favourites,
+            favourite_track_seconds=favourite_track_seconds,
             filter_days=subentry.data.get(CONF_FILTER_DAYS),
             filter_time=subentry.data.get(CONF_FILTER_TIME),
             filter_window_minutes=int(
@@ -446,6 +484,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
             hass.services.async_register(
                 DOMAIN, "refresh_rail_cache", _service_refresh_rail_cache,
             )
+
+    # v2.18.0: start the favourite position tracking. Each coordinator
+    # schedules its own interval and cancels it when the entry unloads,
+    # so switching the option off (which reloads the entry) stops every
+    # background fetch. One immediate run gives the trackers a position
+    # straight away instead of after the first interval.
+    if track_favourites:
+        _start_favourite_tracking(hass, entry, coordinators)
 
     # Static path + Lovelace card auto-registration (one-shot per HA).
     await _async_register_static_paths(hass)

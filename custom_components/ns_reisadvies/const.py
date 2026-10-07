@@ -37,6 +37,13 @@ CONF_FETCH_COMPOSITION = "fetch_composition"
 CONF_LIVE_TRAIN_MAP = "live_train_map"
 CONF_LIVE_MAP_REFRESH_SECONDS = "live_map_refresh_seconds"
 
+# Hub-wide opt-in (v2.18.0): publish a GPS device_tracker entity for
+# every pinned favourite, so the train shows up on Home Assistant's map
+# and can drive zone triggers. Off by default: it is the only thing in
+# this integration that polls an external feed in the background.
+CONF_TRACK_FAVOURITES = "track_favourites_on_map"
+CONF_FAV_TRACK_SECONDS = "favourite_track_seconds"
+
 # Hub-wide UI preference (v2.15.2): which weekday should appear first
 # in the route subentry's "Days of the week" dropdown. Stored as a
 # single-character string ("0" = Monday … "6" = Sunday) for parity with
@@ -62,6 +69,18 @@ DEFAULT_FAV_HOURS = 6  # 0 disables expiry
 DEFAULT_FETCH_COMPOSITION = False  # extra API calls — opt in
 DEFAULT_LIVE_TRAIN_MAP = False  # on-demand only, but icon is opt-in
 DEFAULT_LIVE_MAP_REFRESH_SECONDS = 10  # poll cadence while modal is open
+
+# Favourite tracking (v2.18.0).
+DEFAULT_TRACK_FAVOURITES = False  # background polling — opt in
+DEFAULT_FAV_TRACK_SECONDS = 30  # a 120 km/h train covers ~1 km in 30 s
+FAV_TRACK_SECONDS_MIN = 15
+FAV_TRACK_SECONDS_MAX = 120
+# How long before the planned departure the tracker starts reporting a
+# position, and how long after arrival it keeps the last fix. Short on
+# both sides: before departure the train is usually still finishing its
+# previous run, and after arrival the number is reused elsewhere.
+FAV_TRACK_LEAD_MINUTES = 5
+FAV_TRACK_GRACE_MINUTES = 2
 DEFAULT_FILTER_WINDOW_MINUTES = 0  # default: no fuzz around the target
 DEFAULT_FIRST_WEEKDAY = "0"  # Monday — NL/EU default; users in US locales can override
 

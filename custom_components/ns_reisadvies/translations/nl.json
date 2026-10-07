@@ -121,7 +121,9 @@
           "fetch_composition": "Treinsamenstelling ophalen (bakken)",
           "live_train_map": "Live trein-kaart tonen (per traject)",
           "live_map_refresh_seconds": "Live kaart-verversinginterval (seconden)",
-          "first_weekday": "Eerste dag van de week"
+          "first_weekday": "Eerste dag van de week",
+          "track_favourites_on_map": "Favorieten op de kaart tonen",
+          "favourite_track_seconds": "Interval favorietpositie (seconden)"
         },
         "data_description": {
           "api_key": "Je NS API-sleutel. Vervang deze als hij geroteerd is.",
@@ -130,7 +132,9 @@
           "fetch_composition": "Doet een extra NS-API call per unieke trein per refresh, om de actuele samenstelling op te halen (aantal bakken, materieel-type, plaatje). Standaard uit om API-quota te besparen.",
           "live_train_map": "Voegt een klein kaart-icoontje toe onder het vertrekperron van elk traject. Tikken opent een kaart met de route, stops en live trein-positie. De positie wordt alleen opgehaald zolang het kaartje openstaat.",
           "live_map_refresh_seconds": "Hoe vaak de GPS-positie van de trein wordt ververst terwijl het live kaartje openstaat. Sneller = vloeiender beweging, iets meer netwerkverkeer. Bereik: 5 tot 60 seconden.",
-          "first_weekday": "Welke weekdag bovenaan de dagen-keuzelijst van het filter-formulier verschijnt. Alleen weergave — verandert verder niets."
+          "first_weekday": "Welke weekdag bovenaan de dagen-keuzelijst van het filter-formulier verschijnt. Alleen weergave — verandert verder niets.",
+          "track_favourites_on_map": "Maakt voor elke vastgezette favoriet een device tracker aan, zodat de trein waarin je zit op de kaart van Home Assistant verschijnt en zone-automatiseringen kan activeren. De positie wordt alleen opgehaald zolang een favoriet daadwerkelijk onderweg is.",
+          "favourite_track_seconds": "Hoe vaak de positie van een vastgezette favoriet wordt ververst terwijl de trein rijdt. Korter betekent dat een snelle trein een zone minder snel mist. Bereik: 15 tot 120 seconden."
         }
       }
     }

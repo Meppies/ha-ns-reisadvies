@@ -93,9 +93,11 @@ rules:
   entity-category:
     status: exempt
     comment: >-
-      The single sensor per route is the integration's primary
-      entity. None of the EntityCategory values
-      (DIAGNOSTIC / CONFIG) describe it appropriately.
+      The sensor per route and the favourite tracker are both primary
+      entities. None of the EntityCategory values (DIAGNOSTIC /
+      CONFIG) describe either appropriately — the tracker explicitly
+      overrides the DIAGNOSTIC default that BaseTrackerEntity applies
+      to every device_tracker.
   entity-device-class:
     status: exempt
     comment: >-

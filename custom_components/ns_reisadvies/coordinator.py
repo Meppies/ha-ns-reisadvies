@@ -16,9 +16,10 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 import async_timeout
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
@@ -29,7 +30,12 @@ from ._filter import apply_window_filter, compute_target_datetime
 from .const import (
     API_URL,
     ARCGIS_TREINEN_URL,
+    DEFAULT_FAV_TRACK_SECONDS,
     DOMAIN,
+    FAV_TRACK_GRACE_MINUTES,
+    FAV_TRACK_LEAD_MINUTES,
+    FAV_TRACK_SECONDS_MAX,
+    FAV_TRACK_SECONDS_MIN,
     JOURNEY_API_URL,
     PRORAIL_RAIL_URL,
     STATIONS_API_URL,
@@ -86,6 +92,24 @@ _API_KEY_INVISIBLE = (
     " "  # line separator
     " "  # paragraph separator
 )
+
+
+def parse_iso(value: Any) -> datetime | None:
+    """Parse an NS ISO-8601 timestamp into an aware datetime.
+
+    NS returns offsets like ``2026-10-07T07:52:00+0200``. ``fromisoformat``
+    handles that from Python 3.11 on; anything unparseable yields None so
+    callers can treat the field as missing rather than raising.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def sanitize_api_key(value: Any) -> str:
@@ -178,6 +202,8 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         scan_interval_minutes: int = 5,
         fav_hours: int = 6,
         fetch_composition: bool = False,
+        track_favourites: bool = False,
+        favourite_track_seconds: int = DEFAULT_FAV_TRACK_SECONDS,
         filter_days: list[int] | None = None,
         filter_time: str | None = None,
         filter_window_minutes: int = 0,
@@ -196,6 +222,19 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self.to_station = to_station
         self.fav_hours = fav_hours
         self.fetch_composition = fetch_composition
+
+        # v2.18.0: favourite tracking. ``track_favourites`` gates every
+        # part of this — with the option off nothing is polled, no
+        # entities are created and the interval is never scheduled.
+        self.track_favourites = bool(track_favourites)
+        self.favourite_track_seconds = max(
+            FAV_TRACK_SECONDS_MIN,
+            min(FAV_TRACK_SECONDS_MAX, int(favourite_track_seconds or DEFAULT_FAV_TRACK_SECONDS)),
+        )
+        # ctx_recon -> {"active", "leg", "position", "updated_at", ...}
+        self.favourite_positions: dict[str, dict[str, Any]] = {}
+        self._fav_listeners: list[Any] = []
+        self._fav_unsub: Any = None
 
         # Per-route filter (v2.14.0). Stored as parsed Python types so
         # _async_update_data can pass them straight to compute_target_datetime
@@ -316,6 +355,194 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             _LOGGER.debug("Removed expired favourites: %s", expired)
             self.hass.async_create_task(self._async_save_tracked())
         return expired
+
+    # ---- favourite tracking (v2.18.0) ----
+    #
+    # A pinned favourite is a specific trip, which may be made up of
+    # several legs on different trains. The tracker follows the leg the
+    # traveller is on right now, so at a transfer the same entity moves
+    # to the next train instead of sticking with the one just left.
+
+    def favourite_trip(self, ctx_recon: str) -> dict[str, Any] | None:
+        """Return the pinned trip for ``ctx_recon`` from the last refresh."""
+        for trip in self.data or []:
+            if trip.get("ctxRecon") == ctx_recon:
+                return trip
+        return None
+
+    @staticmethod
+    def leg_window(leg: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
+        """Actual (or planned) departure and arrival of a leg."""
+        origin = leg.get("origin") or {}
+        dest = leg.get("destination") or {}
+        dep = parse_iso(origin.get("actualDateTime") or origin.get("plannedDateTime"))
+        arr = parse_iso(dest.get("actualDateTime") or dest.get("plannedDateTime"))
+        return dep, arr
+
+    def favourite_state(
+        self, ctx_recon: str, now: datetime | None = None,
+    ) -> dict[str, Any] | None:
+        """Describe what a favourite's tracker should show right now.
+
+        Returns None when the trip is not in the current data set (the
+        favourite was pinned for a day that has rolled over, say), so the
+        caller can leave the entity unavailable rather than invent a
+        position. Otherwise:
+
+        * ``active`` — the traveller is on a train at this moment, which
+          is the only case where a position is fetched at all;
+        * ``leg`` — the active leg, or the next one when the trip has not
+          started, or the last one when it is over;
+        * ``phase`` — ``upcoming`` / ``en_route`` / ``arrived``.
+        """
+        trip = self.favourite_trip(ctx_recon)
+        if trip is None:
+            return None
+        moment = now or datetime.now(timezone.utc)
+        lead = timedelta(minutes=FAV_TRACK_LEAD_MINUTES)
+        grace = timedelta(minutes=FAV_TRACK_GRACE_MINUTES)
+
+        legs = [leg for leg in (trip.get("legs") or []) if isinstance(leg, dict)]
+        upcoming: dict[str, Any] | None = None
+        for leg in legs:
+            dep, arr = self.leg_window(leg)
+            if dep is None or arr is None:
+                continue
+            if dep - lead <= moment <= arr + grace:
+                return {
+                    "trip": trip, "leg": leg, "active": True, "phase": "en_route",
+                    "departure": dep, "arrival": arr,
+                }
+            if upcoming is None and moment < dep - lead:
+                upcoming = leg
+
+        if upcoming is not None:
+            dep, arr = self.leg_window(upcoming)
+            return {
+                "trip": trip, "leg": upcoming, "active": False, "phase": "upcoming",
+                "departure": dep, "arrival": arr,
+            }
+        last = legs[-1] if legs else None
+        dep, arr = self.leg_window(last) if last else (None, None)
+        return {
+            "trip": trip, "leg": last, "active": False, "phase": "arrived",
+            "departure": dep, "arrival": arr,
+        }
+
+    async def async_refresh_favourite_positions(
+        self, now: datetime | None = None,
+    ) -> None:
+        """Fetch a GPS fix for every pinned favourite that is en route.
+
+        Nothing is fetched for favourites that have not departed yet or
+        have arrived, so a pinned trip costs zero requests outside its
+        own travel window. The ArcGIS feed is the primary source; the
+        station-based fallback covers trains without OBIS reporting.
+        """
+        if not self.track_favourites:
+            if self.favourite_positions:
+                self.favourite_positions.clear()
+                self._notify_favourite_listeners()
+            return
+
+        moment = now or datetime.now(timezone.utc)
+        pinned = list(self.tracked_trips)
+        for ctx in list(self.favourite_positions):
+            if ctx not in pinned:
+                self.favourite_positions.pop(ctx, None)
+
+        for ctx in pinned:
+            state = self.favourite_state(ctx, moment)
+            if state is None:
+                self.favourite_positions.pop(ctx, None)
+                continue
+            leg = state.get("leg") or {}
+            product = leg.get("product") or {}
+            train_number = str(product.get("number") or "")
+            position: dict[str, Any] | None = None
+            if state["active"] and train_number:
+                position = await self.async_fetch_arcgis_position(train_number)
+                if position is None:
+                    dep = state.get("departure")
+                    position = await self._async_station_based_position(
+                        train_number,
+                        anchor_iso=dep.isoformat() if isinstance(dep, datetime) else None,
+                    )
+            previous = self.favourite_positions.get(ctx) or {}
+            self.favourite_positions[ctx] = {
+                "ctx_recon": ctx,
+                "active": state["active"],
+                "phase": state["phase"],
+                "train_number": train_number,
+                "product": product,
+                "origin": (leg.get("origin") or {}).get("name"),
+                "destination": (leg.get("destination") or {}).get("name"),
+                "direction": leg.get("direction"),
+                "departure": state["departure"].isoformat() if state["departure"] else None,
+                "arrival": state["arrival"].isoformat() if state["arrival"] else None,
+                "trip_origin": self._trip_endpoint(state["trip"], first=True),
+                "trip_destination": self._trip_endpoint(state["trip"], first=False),
+                # Keep the last known fix while the train is between
+                # reports; drop it once the trip is over so an arrived
+                # train does not linger on the map.
+                "position": position or (previous.get("position") if state["active"] else None),
+                "position_fresh": position is not None,
+                "updated_at": moment.isoformat(),
+            }
+        self._notify_favourite_listeners()
+
+    @staticmethod
+    def _trip_endpoint(trip: dict[str, Any], *, first: bool) -> str | None:
+        """Name of the trip's first origin or final destination."""
+        legs = [leg for leg in (trip.get("legs") or []) if isinstance(leg, dict)]
+        if not legs:
+            return None
+        leg = legs[0] if first else legs[-1]
+        side = leg.get("origin") if first else leg.get("destination")
+        name = (side or {}).get("name")
+        return str(name) if name else None
+
+    @callback
+    def async_add_favourite_listener(self, update: Any) -> Any:
+        """Register a callback fired after every favourite-position refresh."""
+        self._fav_listeners.append(update)
+
+        @callback
+        def _remove() -> None:
+            if update in self._fav_listeners:
+                self._fav_listeners.remove(update)
+
+        return _remove
+
+    @callback
+    def _notify_favourite_listeners(self) -> None:
+        for update in list(self._fav_listeners):
+            update()
+
+    @callback
+    def async_start_favourite_tracking(self) -> None:
+        """Schedule the background position refresh (idempotent)."""
+        if self._fav_unsub is not None or not self.track_favourites:
+            return
+        self._fav_unsub = async_track_time_interval(
+            self.hass,
+            self._async_favourite_tick,
+            timedelta(seconds=self.favourite_track_seconds),
+        )
+
+    @callback
+    def async_stop_favourite_tracking(self) -> None:
+        """Cancel the background refresh and forget the last fixes."""
+        if self._fav_unsub is not None:
+            self._fav_unsub()
+            self._fav_unsub = None
+        if self.favourite_positions:
+            self.favourite_positions.clear()
+            self._notify_favourite_listeners()
+
+    async def _async_favourite_tick(self, now: datetime) -> None:
+        """Interval callback — kept thin so it is trivially testable."""
+        await self.async_refresh_favourite_positions(now)
 
     # ---- composition (train carriages) ----
 

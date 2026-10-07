@@ -33,6 +33,12 @@ class NSRuntimeData:
     live_train_map_enabled: bool = False
     live_map_refresh_seconds: int = 10
 
+    # v2.18.0: favourite tracking. Mirrored here so the device_tracker
+    # platform and diagnostics can see the hub-wide setting without
+    # re-reading ConfigEntry.options.
+    track_favourites_enabled: bool = False
+    favourite_track_seconds: int = 30
+
     # /v2/stations response, cached per-HA-boot. {code: {name, lat, lng}}
     stations_geo: dict[str, dict[str, Any]] | None = None
 

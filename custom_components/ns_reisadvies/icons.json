@@ -4,6 +4,11 @@
       "trips": {
         "default": "mdi:train"
       }
+    },
+    "device_tracker": {
+      "favourite": {
+        "default": "mdi:train"
+      }
     }
   }
 }

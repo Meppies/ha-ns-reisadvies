@@ -4,6 +4,59 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.0] — 2026-10-07
+
+### Added — favourites on the map, behind a switch
+
+Home Assistant 2026.10 put a proper map dashboard front and centre. This
+release lets the trains you actually care about show up on it.
+
+Switch on **Show favourites on the map** in the integration options and
+every pinned favourite gets its own GPS `device_tracker`, which means the
+map, zone triggers and everything else that works on a tracker now works
+on your train.
+
+* **One tracker per favourite**, not per train. A favourite is a trip,
+  which may involve a transfer, so the tracker follows whichever leg the
+  traveller is on at that moment and moves along at the transfer. Legs
+  are chosen on the wall clock from the actual (or planned) departure and
+  arrival times.
+* **It only fetches while you are en route** — from five minutes before
+  the planned departure until two minutes after arrival. Outside that
+  window the entity has no coordinates, so an arrived train does not sit
+  on the map pretending to be somewhere. A pinned favourite therefore
+  costs nothing outside its own travel window.
+* **Position cadence is configurable**, `favourite_track_seconds`,
+  default 30 seconds, range 15 to 120. Worth matching to your zones: an
+  intercity covers about a kilometre in 30 seconds, so a zone with a
+  smaller radius can be stepped over between two fixes.
+* **The ArcGIS OBIS feed first, station position as fallback**, the same
+  pair the live map already uses. The last fix is kept while the train is
+  between reports (`position_fresh` says which you are looking at) and
+  dropped once the trip is over.
+* **Attributes for automations**: `phase` (`upcoming` / `en_route` /
+  `arrived`), `en_route`, `train_number`, `train_type`, `operator`,
+  `leg_origin`, `leg_destination`, `direction`, `planned_departure`,
+  `planned_arrival`, `trip_origin`, `trip_destination`, and while a fix
+  is available `speed`, `heading`, `near_station`, `position_source`.
+* **Entities come and go with the pins.** Pinning a favourite creates the
+  tracker, unpinning or the retention timer removes it. The entity stays
+  available (without coordinates) between trips so automations keep a
+  stable target.
+* Switching the option off reloads the entry, which cancels every
+  interval and clears the stored fixes. With it off nothing is polled and
+  no entity is created.
+
+README has a worked zone automation.
+
+Under the quality scale: the tracker takes its icon from `icons.json`
+(`icon-translations`), overrides the DIAGNOSTIC category that
+`BaseTrackerEntity` applies to every tracker, and carries no
+`device_info` because Home Assistant pins that to `None` for trackers.
+`quality_scale.yaml` has been updated to say so.
+
+Tests: 382 passing, coverage 99%, mypy --strict clean.
+
 ## [2.17.2] — 2026-09-04
 
 ### Fixed — the live map opened the wrong train

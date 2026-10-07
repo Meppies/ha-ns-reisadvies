@@ -49,6 +49,8 @@ from .const import (
     CONF_FETCH_COMPOSITION,
     CONF_LIVE_TRAIN_MAP,
     CONF_LIVE_MAP_REFRESH_SECONDS,
+    CONF_TRACK_FAVOURITES,
+    CONF_FAV_TRACK_SECONDS,
     CONF_FILTER_DAYS,
     CONF_FILTER_TIME,
     CONF_FILTER_WINDOW_MINUTES,
@@ -60,6 +62,10 @@ from .const import (
     DEFAULT_FETCH_COMPOSITION,
     DEFAULT_LIVE_TRAIN_MAP,
     DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+    DEFAULT_TRACK_FAVOURITES,
+    DEFAULT_FAV_TRACK_SECONDS,
+    FAV_TRACK_SECONDS_MIN,
+    FAV_TRACK_SECONDS_MAX,
     DEFAULT_FILTER_WINDOW_MINUTES,
     DEFAULT_FIRST_WEEKDAY,
 )
@@ -291,6 +297,8 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_FETCH_COMPOSITION: DEFAULT_FETCH_COMPOSITION,
                         CONF_LIVE_TRAIN_MAP: DEFAULT_LIVE_TRAIN_MAP,
                         CONF_LIVE_MAP_REFRESH_SECONDS: DEFAULT_LIVE_MAP_REFRESH_SECONDS,
+                        CONF_TRACK_FAVOURITES: DEFAULT_TRACK_FAVOURITES,
+                        CONF_FAV_TRACK_SECONDS: DEFAULT_FAV_TRACK_SECONDS,
                     }
                     # First route comes along as a subentry
                     return self.async_create_entry(
@@ -647,6 +655,21 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
                     self._read(CONF_LIVE_MAP_REFRESH_SECONDS, DEFAULT_LIVE_MAP_REFRESH_SECONDS)
                 ),
             ): vol.All(int, vol.Range(min=5, max=60)),
+            # Favourite tracking (v2.18.0). The tracker entities and the
+            # background polling both hang off this switch; the interval
+            # is only consulted while it is on.
+            vol.Required(
+                CONF_TRACK_FAVOURITES,
+                default=bool(self._read(CONF_TRACK_FAVOURITES, DEFAULT_TRACK_FAVOURITES)),
+            ): bool,
+            vol.Required(
+                CONF_FAV_TRACK_SECONDS,
+                default=int(
+                    self._read(CONF_FAV_TRACK_SECONDS, DEFAULT_FAV_TRACK_SECONDS)
+                ),
+            ): vol.All(
+                int, vol.Range(min=FAV_TRACK_SECONDS_MIN, max=FAV_TRACK_SECONDS_MAX),
+            ),
             # First day of week (v2.15.2). Display-only — controls the
             # rotation of the day picker on the per-route filter form.
             vol.Required(
