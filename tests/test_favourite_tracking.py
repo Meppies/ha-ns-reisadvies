@@ -242,6 +242,43 @@ async def test_leg_window_and_endpoints_tolerate_junk(hass: HomeAssistant) -> No
     assert state["phase"] == "arrived"
 
 
+def _rec(ctx, phase, dep):
+    return {"ctx_recon": ctx, "phase": phase, "departure": dep}
+
+
+async def test_current_favourite_prefers_the_running_trip(hass: HomeAssistant) -> None:
+    """A train already moving beats one that leaves later."""
+    coord = _make(hass)
+    coord.favourite_positions = {
+        "A": _rec("A", "upcoming", "2026-10-07T09:00:00+02:00"),
+        "B": _rec("B", "en_route", "2026-10-07T10:00:00+02:00"),
+    }
+    assert coord.current_favourite()["ctx_recon"] == "B"
+
+
+async def test_current_favourite_takes_the_earliest_in_a_phase(
+    hass: HomeAssistant,
+) -> None:
+    coord = _make(hass)
+    coord.favourite_positions = {
+        "LATE": _rec("LATE", "upcoming", "2026-10-07T11:00:00+02:00"),
+        "SOON": _rec("SOON", "upcoming", "2026-10-07T09:00:00+02:00"),
+        "NOTIME": _rec("NOTIME", "upcoming", None),
+    }
+    assert coord.current_favourite()["ctx_recon"] == "SOON"
+
+
+async def test_current_favourite_ignores_finished_and_empty(
+    hass: HomeAssistant,
+) -> None:
+    coord = _make(hass)
+    assert coord.current_favourite() is None  # nothing pinned
+    coord.favourite_positions = {
+        "OLD": _rec("OLD", "arrived", "2026-10-07T06:00:00+02:00"),
+    }
+    assert coord.current_favourite() is None
+
+
 async def test_start_helper_schedules_and_registers_teardown(hass: HomeAssistant) -> None:
     """The setup-time helper starts, refreshes and arms the unload hook."""
     coord = _make(hass)

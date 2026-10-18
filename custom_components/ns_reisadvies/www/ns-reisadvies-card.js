@@ -130,6 +130,16 @@ function t(key, hass, vars) {
   return str;
 }
 
+// Home Assistant's own raster tiles (core >= 2026.10). `tok` is
+// substituted by Leaflet from the layer options, so refreshing the
+// token is a field assignment plus a redraw.
+const NS_HA_TILE_URL = "/api/map_tiles/raster/{z}/{x}/{y}.png?token={tok}";
+// Leaflet itself: same pin the HA frontend uses, so the browser has
+// usually cached it already.
+const NS_LEAFLET_CSS_URL = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+const NS_LEAFLET_CSS_SRI =
+  "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+
 class NSReisadviesCard extends HTMLElement {
   setConfig(config) {
     // Wrap the whole body in a try/catch so an unexpected
@@ -1390,100 +1400,101 @@ class NSReisadviesCard extends HTMLElement {
     if (ctx.mapDiv) ctx.mapDiv.classList.toggle("ns-map-dark", dark);
   }
 
-  async _ensureHaMapLoaded() {
-    // <ha-map> ships in a lazily loaded chunk. Creating the built-in map
-    // card pulls that chunk in; the card element itself is discarded.
-    if (customElements.get("ha-map")) return true;
-    try {
-      if (typeof window.loadCardHelpers === "function") {
-        const helpers = await window.loadCardHelpers();
-        try {
-          helpers.createCardElement({ type: "map", entities: [] });
-        } catch (err) {
-          // An invalid map config still triggers the import.
-        }
-      }
-      await Promise.race([
-        customElements.whenDefined("ha-map"),
-        new Promise((r) => setTimeout(r, 6000)),
-      ]);
-    } catch (err) {
-      console.warn("[ns-reisadvies] could not load ha-map", err);
-    }
-    return !!customElements.get("ha-map");
+  // ---- base layer -------------------------------------------------
+  //
+  // Up to HA 2026.9 this ran on <ha-map> and borrowed its Leaflet
+  // instance. HA 2026.10 rewrote ha-map onto a vector engine and
+  // removed the public `leafletMap` handle, so that path cannot work
+  // any more: the wait for it timed out and every map fell back to
+  // OpenStreetMap's own servers, which answer embedded apps with a
+  // "403 Access blocked" tile. The card now keeps its own Leaflet --
+  // the rail layer, route lines and markers are all Leaflet overlays
+  // -- and takes only the base layer from Home Assistant.
+
+  _ensureLeafletCss(root) {
+    // Leaflet positions tiles, panes and markers from its own
+    // stylesheet. `_ensureLeafletLoaded` links it into document.head,
+    // which does not reach the modal: that is anchored in
+    // <home-assistant>'s shadow root, and document styles stop at a
+    // shadow boundary. Without this the map fetches every tile and
+    // builds every overlay, then paints them unpositioned on white.
+    const target = (root && root.nodeType === 11) ? root : document.head;
+    if (target.querySelector("link#ns-reisadvies-leaflet-css-scoped")) return;
+    const link = document.createElement("link");
+    link.id = "ns-reisadvies-leaflet-css-scoped";
+    link.rel = "stylesheet";
+    link.href = NS_LEAFLET_CSS_URL;
+    link.integrity = NS_LEAFLET_CSS_SRI;
+    link.crossOrigin = "";
+    target.appendChild(link);
   }
 
-  async _waitForHaMap(el) {
-    const deadline = Date.now() + 8000;
-    while (Date.now() < deadline && !el.leafletMap) {
-      await new Promise((r) => setTimeout(r, 50));
+  async _fetchTileToken() {
+    // HA 2026.10+ serves map tiles behind a rotating token: two are
+    // valid at a time and they turn over every 30 minutes. Older
+    // cores do not know the command, which is the signal to fall back.
+    const conn = this._hass && this._hass.connection;
+    if (!conn) return null;
+    try {
+      const res = await conn.sendMessagePromise({ type: "map_tiles/access_token" });
+      return (res && (res.token || res.access_token)) || null;
+    } catch (err) {
+      return null;
     }
-    if (!el.leafletMap) return null;
-    // ha-map fits the view to the home location once it finishes
-    // loading; let that settle before the card applies its own bounds.
-    try { await el.updateComplete; await el.updateComplete; } catch (err) { /* not a Lit element */ }
-    return el.leafletMap || null;
+  }
+
+  _startTileTokenRefresh(ctx) {
+    // Well inside the 30-minute rotation, so a map left open does not
+    // start 403-ing halfway through a journey.
+    this._stopTileTokenRefresh(ctx);
+    if (!ctx || !ctx.haTiles) return;
+    ctx.tokenHandle = setInterval(async () => {
+      const token = await this._fetchTileToken();
+      if (!token || !ctx.baseLayer || this._activeMap !== ctx) return;
+      ctx.baseLayer.options.tok = token;
+      ctx.baseLayer.redraw();
+    }, 20 * 60 * 1000);
+  }
+
+  _stopTileTokenRefresh(ctx) {
+    if (ctx && ctx.tokenHandle) {
+      clearInterval(ctx.tokenHandle);
+      ctx.tokenHandle = null;
+    }
   }
 
   async _buildMapSurface(body) {
-    // Preferred path: Home Assistant's own <ha-map>. It owns the base
-    // layer (vector tiles proxied by core since HA 2026.9) and the
-    // light/dark cartography, so the card inherits whatever map HA
-    // ships and follows the active theme, instead of pinning a tile
-    // provider of its own. Leaflet stays in charge of the overlays:
-    // ha-map exposes its Leaflet map, so the rail layer, route lines,
-    // stop markers and train marker are unchanged.
-    if (await this._ensureHaMapLoaded()) {
-      let el = null;
-      try {
-        el = document.createElement("ha-map");
-        el.className = "ns-leaflet";
-        el.autoFit = false;
-        el.clusterMarkers = false;
-        el.themeMode = this._isDarkMode() ? "dark" : "light";
-        // ha-map consumes its connection and config from Lit contexts
-        // provided by <home-assistant>. Seed them before connecting so
-        // the element also works if the modal ends up outside that tree
-        // (the provider overwrites them with the live values when it is
-        // inside it). Without a connection there is no tile token, and
-        // the base layer stays blank.
-        const hass = this._hass;
-        if (hass) {
-          if (el._connection === undefined) el._connection = { connection: hass.connection };
-          if (el._config === undefined) el._config = hass.config;
-        }
-        body.appendChild(el);
-        const map = await this._waitForHaMap(el);
-        if (map) {
-          let L = el.Leaflet || window.L;
-          if (!L && await this._ensureLeafletLoaded()) L = window.L;
-          if (L) {
-            if (el.shadowRoot) {
-              this._injectStyles(el.shadowRoot, "ns-reisadvies-map-styles", this._mapCss());
-            }
-            return { map, leaflet: L, haMapEl: el, mapDiv: null };
-          }
-        }
-      } catch (err) {
-        console.warn("[ns-reisadvies] ha-map failed, falling back to Leaflet", err);
-      }
-      if (el && el.parentNode) el.parentNode.removeChild(el);
-    }
-
-    // Fallback for hosts without <ha-map>: a plain Leaflet map on
-    // OpenStreetMap raster tiles, tinted in dark mode.
     if (!await this._ensureLeafletLoaded()) return null;
+    this._ensureLeafletCss(body.getRootNode());
     const L = window.L;
     const mapDiv = document.createElement("div");
     mapDiv.className = "ns-leaflet";
     mapDiv.classList.toggle("ns-map-dark", this._isDarkMode());
     body.appendChild(mapDiv);
     const map = L.map(mapDiv, { zoomControl: true, attributionControl: true });
-    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19,
-    }).addTo(map);
-    return { map, leaflet: L, haMapEl: null, mapDiv };
+
+    const token = await this._fetchTileToken();
+    const attribution =
+      '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>';
+    let baseLayer;
+    if (token) {
+      // Same cartography the rest of Home Assistant draws, proxied by
+      // core, so the card needs no tile provider of its own.
+      baseLayer = L.tileLayer(NS_HA_TILE_URL, {
+        tok: token,
+        maxZoom: 19,
+        attribution,
+      });
+    } else {
+      // HA < 2026.10 has no tile proxy. OpenStreetMap's servers refuse
+      // embedded apps, so this is a genuine last resort.
+      baseLayer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution,
+      });
+    }
+    baseLayer.addTo(map);
+    return { map, leaflet: L, haMapEl: null, mapDiv, baseLayer, haTiles: !!token };
   }
 
   async _ensureLeafletLoaded() {
@@ -1503,8 +1514,8 @@ class NSReisadviesCard extends HTMLElement {
         const link = document.createElement("link");
         link.id = "ns-reisadvies-leaflet-css";
         link.rel = "stylesheet";
-        link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-        link.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+        link.href = NS_LEAFLET_CSS_URL;
+        link.integrity = NS_LEAFLET_CSS_SRI;
         link.crossOrigin = "";
         document.head.appendChild(link);
       }
@@ -1579,6 +1590,9 @@ class NSReisadviesCard extends HTMLElement {
 
     this._activeMap.haMapEl = built.haMapEl;
     this._activeMap.mapDiv = built.mapDiv;
+    this._activeMap.baseLayer = built.baseLayer;
+    this._activeMap.haTiles = built.haTiles;
+    this._startTileTokenRefresh(this._activeMap);
     this._activeMap.leaflet = L;
     this._activeMap.lmap = map;
     this._activeMap.stopMarkers = [];
@@ -2705,6 +2719,7 @@ class NSReisadviesCard extends HTMLElement {
     if (!ctx) return;
     this._activeMap = null;
     if (ctx.pollHandle) clearInterval(ctx.pollHandle);
+    this._stopTileTokenRefresh(ctx);
     if (ctx.escHandler) document.removeEventListener("keydown", ctx.escHandler);
     if (ctx.sessionId && this._hass) {
       this._hass.callWS({
@@ -2713,9 +2728,8 @@ class NSReisadviesCard extends HTMLElement {
       }).catch(() => {});
     }
     // Tear down the map so its DOM listeners and tile downloads do not
-    // linger. <ha-map> removes its own Leaflet map when it leaves the
-    // DOM, so only the standalone fallback map is cleaned up by hand.
-    if (ctx.lmap && !ctx.haMapEl) {
+    // linger.
+    if (ctx.lmap) {
       try { ctx.lmap.remove(); } catch {}
     }
     if (ctx.modalEl && ctx.modalEl.parentNode) {
@@ -2987,7 +3001,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.18.0 ",
+  "%c NS-REISADVIES-CARD %c v2.18.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

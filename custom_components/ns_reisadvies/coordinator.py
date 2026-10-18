@@ -491,6 +491,27 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             }
         self._notify_favourite_listeners()
 
+    def current_favourite(self) -> dict[str, Any] | None:
+        """The favourite this route's tracker should report.
+
+        A trip already under way wins over one that has not left yet,
+        and within the same phase the earliest departure does. Returns
+        None when nothing is pinned, which leaves the tracker without
+        coordinates rather than removing it.
+        """
+        if not self.favourite_positions:
+            return None
+        rank = {"en_route": 0, "upcoming": 1, "arrived": 2}
+
+        def sort_key(record: dict[str, Any]) -> tuple[int, float]:
+            phase = str(record.get("phase") or "")
+            departure = parse_iso(record.get("departure"))
+            stamp = departure.timestamp() if departure else float("inf")
+            return (rank.get(phase, 3), stamp)
+
+        best = min(self.favourite_positions.values(), key=sort_key)
+        return best if sort_key(best)[0] < 2 else None
+
     @staticmethod
     def _trip_endpoint(trip: dict[str, Any], *, first: bool) -> str | None:
         """Name of the trip's first origin or final destination."""

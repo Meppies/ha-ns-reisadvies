@@ -43,10 +43,12 @@ slots, train composition, and an opt-in live train map.
 - **Companion Lovelace card** auto-registers as a Lovelace resource —
   no manual `resources:` editing.
 - **Favourites on the map** (opt-in): with *Show favourites on the map*
-  switched on, every pinned favourite gets a GPS `device_tracker`, so the
-  train you are travelling on appears on Home Assistant's map and can
-  drive zone automations. One tracker per favourite: it follows the train
-  you are on and moves along at a transfer. Positions are only fetched
+  switched on, every route gets a GPS `device_tracker` that follows the
+  favourite you are travelling on, so the train appears on Home
+  Assistant's map and can drive zone automations. The entity is named
+  after the route, so the id you put in an automation still means the
+  same thing tomorrow; which trip it is following is an attribute. It
+  moves along with you at a transfer, and positions are only fetched
   while a favourite is actually en route.
 
 [trnp]: https://treinposities.nl/
@@ -121,21 +123,28 @@ Re-open *Configure* on the integration tile to tweak:
 
 ### Favourites on the map
 
-Switch on **Show favourites on the map** in the integration options. From
-then on every favourite you pin in the card gets its own tracker:
+Switch on **Show favourites on the map** in the integration options.
+Each route then gets one tracker, named after the route:
 
 ```
-device_tracker.ns_fav_werk_07_52_hilversum
+device_tracker.ns_favourite_werk
 ```
 
-The tracker reports a position only while that favourite is actually en
+It follows whichever favourite on that route is being travelled: a trip
+already under way wins over one that has not left yet, and between two
+trips in the same state the earliest departure does. For a trip with a
+transfer it follows whichever train you are on at that moment.
+
+The tracker reports a position only while a favourite is actually en
 route — from five minutes before the planned departure until two minutes
 after arrival. Outside that window it has no coordinates, so it does not
-sit on the map pretending to be somewhere. For a trip with a transfer,
-the single tracker follows whichever train you are on at that moment.
+sit on the map pretending to be somewhere. The entity itself stays
+available between trips, so an automation pointed at it keeps working
+overnight instead of going unavailable every evening.
 
 Attributes you can branch on: `phase` (`upcoming` / `en_route` /
-`arrived`), `en_route`, `train_number`, `train_type`, `operator`,
+`arrived`), `en_route`, `favourite_ctx` (the trip being followed),
+`pinned_favourites`, `train_number`, `train_type`, `operator`,
 `leg_origin`, `leg_destination`, `direction`, `planned_departure`,
 `planned_arrival`, `trip_origin`, `trip_destination`, plus `speed`,
 `heading`, `near_station` and `position_fresh` while a fix is available.
@@ -148,7 +157,7 @@ automation:
   - alias: "Porch light on when my train reaches Hilversum"
     triggers:
       - trigger: zone
-        entity_id: device_tracker.ns_fav_werk_07_52_hilversum
+        entity_id: device_tracker.ns_favourite_werk
         zone: zone.hilversum_station
         event: enter
     actions:

@@ -4,6 +4,78 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.1] — 2026-10-18
+
+### Fixed — the live map had no map under it
+
+Reported as "the live map no longer shows a train position" after
+v2.18.0. The train position was never the problem: the backend returns
+it correctly (verified against the running instance — train 4350 at
+52.328 / 5.008, 101 km/h), and the rail line, stops and train marker
+were all being drawn. What was missing was the base layer.
+
+Home Assistant 2026.10 rewrote `<ha-map>` from Leaflet onto a vector
+engine and removed the public `leafletMap` handle this card has
+borrowed since v2.17.0. `_waitForHaMap` therefore waited out its full
+eight seconds on every open and fell through to the fallback path:
+OpenStreetMap's own raster tiles, which answer embedded applications
+with a "403 Access blocked" placeholder. The map came up as a wall of
+403 tiles with the correct train somewhere underneath.
+
+The card now keeps its own Leaflet instance — the rail layer, route
+lines and markers are all Leaflet overlays — and takes only the base
+layer from Home Assistant, through the tile proxy core ships in
+2026.10: `/api/map_tiles/raster/{z}/{x}/{y}.png`, authorised with the
+short-lived token from the `map_tiles/access_token` websocket command.
+Tokens rotate every thirty minutes, so an open map refreshes its token
+every twenty. On cores older than 2026.10 the command does not exist
+and the OpenStreetMap fallback remains, blocked or not.
+
+### Fixed — Leaflet's own stylesheet never reached the map
+
+Found while verifying the fix above on a live instance: with the tiles
+arriving, the modal still showed a couple of stray tiles on white. The
+map had in fact built completely — twelve tiles loaded, five markers,
+seven route lines, container 720x587 — but nothing was positioned.
+
+`_ensureLeafletLoaded` links leaflet.css into `document.head`. Since
+v2.17.0 the modal is anchored in `<home-assistant>`'s shadow root, and
+a document-level stylesheet does not cross a shadow boundary, so
+Leaflet's layout rules applied to none of it. The ha-map path hid this
+because ha-map brought its own styles. The stylesheet is now linked
+into whichever root the modal ends up in.
+
+Unrelated to this card, but worth knowing if the map still looks
+empty: on some 2026.10 instances Home Assistant's *own* map draws no
+tiles either, because the frontend's tile requests arrive without
+authorisation and come back 403. See home-assistant/core#185159.
+
+### Changed — one favourite tracker per route, not per favourite
+
+v2.18.0 gave every pinned favourite its own entity, keyed on a digest
+of its `ctxRecon`. A favourite is a single dated departure, so that
+entity was born in the morning and gone by the evening: the entity_id
+changed every day, and each expired favourite left an `unavailable`
+entry behind in the registry.
+
+That makes the feature's whole point — zone automations — impractical,
+since an automation has to name an entity that still exists tomorrow.
+Each route now has one tracker instead, named after the route:
+
+```
+device_tracker.ns_favourite_werk
+```
+
+It follows whichever favourite on that route is being travelled (en
+route beats upcoming; within a phase the earliest departure wins), and
+reports the trip it is following in the `favourite_ctx` attribute. The
+entity stays available between trips, without coordinates, so an
+automation pointed at it does not go unavailable every evening.
+
+The per-favourite entities v2.18.0 created are removed from the
+registry on upgrade — the trips they named have departed and cannot
+come back.
+
 ## [2.18.0] — 2026-10-07
 
 ### Added — favourites on the map, behind a switch
