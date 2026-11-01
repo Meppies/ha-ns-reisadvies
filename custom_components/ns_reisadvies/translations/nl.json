@@ -55,13 +55,15 @@
                 "filter_days": "Dagen van de week",
                 "filter_time": "Tijdstip",
                 "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
-                "filter_date": "Specifieke datum"
+                "filter_date": "Specifieke datum",
+                "filter_train_types": "Treinsoort"
               },
               "data_description": {
                 "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
                 "filter_time": "Ankermoment voor de reis-zoekopdracht. Werkt samen met de marge-slider hieronder. Leeg laten betekent: gebruik de huidige tijd.",
                 "filter_window_minutes": "Hoeveel minuten vóór en na de gekozen tijd in de resultaten blijven. 0 betekent: laat alleen reizen op of ná het ankermoment zien.",
-                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is."
+                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is.",
+                "filter_train_types": "Toon alleen reizen waarin elke trein een van deze soorten is, bijvoorbeeld IC en ICD. Een reis met ook een sprinter erin valt dan weg. Leeg = alle treinen. Je kunt ook zelf een code typen."
               }
             }
           }
@@ -87,13 +89,15 @@
                 "filter_days": "Dagen van de week",
                 "filter_time": "Tijdstip",
                 "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
-                "filter_date": "Specifieke datum"
+                "filter_date": "Specifieke datum",
+                "filter_train_types": "Treinsoort"
               },
               "data_description": {
                 "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
                 "filter_time": "Ankermoment voor de reis-zoekopdracht. Werkt samen met de marge-slider hieronder. Leeg laten betekent: gebruik de huidige tijd.",
                 "filter_window_minutes": "Hoeveel minuten vóór en na de gekozen tijd in de resultaten blijven. 0 betekent: laat alleen reizen op of ná het ankermoment zien.",
-                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is."
+                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is.",
+                "filter_train_types": "Toon alleen reizen waarin elke trein een van deze soorten is, bijvoorbeeld IC en ICD. Een reis met ook een sprinter erin valt dan weg. Leeg = alle treinen. Je kunt ook zelf een code typen."
               }
             }
           }

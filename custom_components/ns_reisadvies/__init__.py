@@ -53,6 +53,7 @@ from .const import (
     CONF_FILTER_TIME,
     CONF_FILTER_WINDOW_MINUTES,
     CONF_FILTER_DATE,
+    CONF_FILTER_TRAIN_TYPES,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
     DEFAULT_FETCH_COMPOSITION,
@@ -410,6 +411,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
                 )
             ),
             filter_date=subentry.data.get(CONF_FILTER_DATE),
+            filter_train_types=subentry.data.get(CONF_FILTER_TRAIN_TYPES),
         )
         await coordinator.async_load_tracked()
         # Use async_refresh (which never throws) instead of

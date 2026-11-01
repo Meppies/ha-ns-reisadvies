@@ -55,6 +55,8 @@ from .const import (
     CONF_FILTER_TIME,
     CONF_FILTER_WINDOW_MINUTES,
     CONF_FILTER_DATE,
+    CONF_FILTER_TRAIN_TYPES,
+    TRAIN_TYPE_OPTIONS,
     CONF_FIRST_WEEKDAY,
     CONF_ROUTE_NAME,
     DEFAULT_SCAN_INTERVAL,
@@ -425,6 +427,13 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 _filter_date = (src.get(CONF_FILTER_DATE) or "").strip()
                 if _filter_date:
                     route_data[CONF_FILTER_DATE] = _filter_date
+                _train_types = [
+                    str(t).strip().upper()
+                    for t in (src.get(CONF_FILTER_TRAIN_TYPES) or [])
+                    if str(t).strip()
+                ]
+                if _train_types:
+                    route_data[CONF_FILTER_TRAIN_TYPES] = _train_types
 
                 if reconfigure:
                     return self.async_update_and_abort(
@@ -549,6 +558,21 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                             "suggested_value": defaults.get(CONF_FILTER_DATE),
                         },
                     ): DateSelector(),
+                    # Train-type filter: only keep trips whose every
+                    # train leg is one of these NS category codes.
+                    # custom_value lets a user type a code that is not
+                    # in the list (an operator code NS adds later).
+                    vol.Optional(
+                        CONF_FILTER_TRAIN_TYPES,
+                        default=list(defaults.get(CONF_FILTER_TRAIN_TYPES, [])),
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=TRAIN_TYPE_OPTIONS,
+                            mode=SelectSelectorMode.DROPDOWN,
+                            multiple=True,
+                            custom_value=True,
+                        ),
+                    ),
                 }),
                 # Section is shown expanded by default.
                 {"collapsed": False},

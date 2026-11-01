@@ -202,6 +202,19 @@ are combinable; leaving them blank keeps the default *next trip from
 now* behaviour. Filters are exposed inside the route form under a
 collapsible **Optional filters** section.
 
+#### Optional train-type filter (v2.19.0, fork)
+
+Under **Optional filters** a route can be limited to one or more train
+types, by NS category code: `IC`, `ICD`, `SPR`, `ICE`, `EST`, … (other
+codes can be typed). A trip stays only when **every** train in it is one
+of the chosen types, so with `IC` + `ICD` a trip that also needs a
+sprinter is left out. Walking legs don't count. Leave it empty for every
+train. Pinned favourites stay, whatever their type. The active filter is
+on the sensor as the attribute `filter_train_types`.
+
+NS returns a handful of trips per search, so a strict filter can leave
+fewer rows than `max_rows`; widen the time window if you want more.
+
 ## Lovelace card
 
 The card auto-registers via Lovelace resources. Add it to your

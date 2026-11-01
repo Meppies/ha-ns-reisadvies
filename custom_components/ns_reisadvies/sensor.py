@@ -255,6 +255,9 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
             "filter_days": list(
                 getattr(self.coordinator, "filter_days", []) or []
             ),
+            "filter_train_types": list(
+                getattr(self.coordinator, "filter_train_types", []) or []
+            ),
             "filter_date": (
                 fd.isoformat()
                 if (fd := getattr(self.coordinator, "filter_date", None))

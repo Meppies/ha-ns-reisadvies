@@ -26,7 +26,11 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from ._filter import apply_window_filter, compute_target_datetime
+from ._filter import (
+    apply_train_type_filter,
+    apply_window_filter,
+    compute_target_datetime,
+)
 from .const import (
     API_URL,
     ARCGIS_TREINEN_URL,
@@ -208,6 +212,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         filter_time: str | None = None,
         filter_window_minutes: int = 0,
         filter_date: str | None = None,
+        filter_train_types: list[str] | None = None,
     ) -> None:
         # The hub config entry; used to read/write
         # ``entry.runtime_data.stations_geo`` (the per-HA-boot stations
@@ -243,6 +248,10 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self.filter_time: _dt_time | None = _parse_time(filter_time)
         self.filter_window_minutes: int = max(0, min(360, int(filter_window_minutes or 0)))
         self.filter_date: _dt_date | None = _parse_date(filter_date)
+        # Train-type filter: NS category codes, upper case. Empty = all.
+        self.filter_train_types: list[str] = [
+            str(t).strip().upper() for t in (filter_train_types or []) if str(t).strip()
+        ]
 
         # v2.16.0: how many calendar days the trip-search anchor
         # advances. 0 = today; 1 = tomorrow; 2+ = day after that.
@@ -950,6 +959,21 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                         x.get("legs") or [{}]
                     )[0].get("origin", {}).get("plannedDateTime", "")
                 )
+
+                # Train-type filter runs before the window filter, so a
+                # "single closest train" pick (time set, window 0)
+                # chooses among the allowed train types only. Pinned
+                # favourites stay, whatever their type.
+                if self.filter_train_types:
+                    allowed = apply_train_type_filter(
+                        all_trips, self.filter_train_types,
+                    )
+                    allowed_ids = {id(t) for t in allowed}
+                    all_trips = [
+                        t for t in all_trips
+                        if id(t) in allowed_ids
+                        or t.get("ctxRecon") in pinned_ctx
+                    ]
 
                 # Per-route filter: keep only trips matching the
                 # requested window. Skipped entirely when the route

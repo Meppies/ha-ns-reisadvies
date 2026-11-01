@@ -62,6 +62,13 @@ CONF_FILTER_DAYS = "filter_days"
 CONF_FILTER_TIME = "filter_time"
 CONF_FILTER_WINDOW_MINUTES = "filter_window_minutes"
 CONF_FILTER_DATE = "filter_date"
+# - filter_train_types: list[str] of NS category codes (``IC``, ``ICD``,
+#   ``SPR`` ...). Empty/None = every train type. A trip is kept only when
+#   every train leg in it is one of the chosen types.
+CONF_FILTER_TRAIN_TYPES = "filter_train_types"
+# Category codes offered in the picker. Users may type others (custom
+# values are allowed), so a code NS adds later still works.
+TRAIN_TYPE_OPTIONS = ["IC", "ICD", "SPR", "ICE", "EST", "NJ", "ST", "SNG"]
 
 # Defaults
 DEFAULT_SCAN_INTERVAL = 5

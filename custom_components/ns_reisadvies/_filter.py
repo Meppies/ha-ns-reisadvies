@@ -167,3 +167,53 @@ def apply_window_filter(
         if earliest <= dep <= latest:
             out.append(trip)
     return out
+
+
+def _is_train_leg(leg: dict[str, Any]) -> bool:
+    """Return True for a leg made by train.
+
+    Walking and other non-train legs (``product.type`` other than
+    ``TRAIN``, or no product at all) never decide whether a trip is kept.
+    """
+    product = leg.get("product") or {}
+    if not product:
+        return False
+    return str(product.get("type") or "TRAIN").upper() == "TRAIN"
+
+
+def apply_train_type_filter(
+    trips: list[dict[str, Any]],
+    train_types: list[str] | None,
+) -> list[dict[str, Any]]:
+    """Keep only the trips whose every train leg is one of ``train_types``.
+
+    * Empty or None ``train_types``: the trips come back unchanged.
+    * A trip with a leg of another type (an ``ICD`` followed by a
+      ``SPR`` when only ``IC``/``ICD`` are chosen) is dropped: you would
+      still have to take that sprinter.
+    * A trip without any train leg is dropped, as it cannot match.
+
+    Matching ignores case and checks both ``categoryCode`` and
+    ``shortCategoryName``, so a code in either field matches.
+    """
+    wanted = {str(t).strip().upper() for t in (train_types or []) if str(t).strip()}
+    if not wanted:
+        return trips
+
+    def _matches(leg: dict[str, Any]) -> bool:
+        product = leg.get("product") or {}
+        codes = {
+            str(product.get(k) or "").strip().upper()
+            for k in ("categoryCode", "shortCategoryName")
+        }
+        return bool(codes & wanted)
+
+    kept: list[dict[str, Any]] = []
+    for trip in trips:
+        train_legs = [
+            leg for leg in (trip.get("legs") or [])
+            if isinstance(leg, dict) and _is_train_leg(leg)
+        ]
+        if train_legs and all(_matches(leg) for leg in train_legs):
+            kept.append(trip)
+    return kept
