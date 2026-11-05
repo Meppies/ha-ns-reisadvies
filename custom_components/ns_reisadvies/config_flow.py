@@ -55,6 +55,7 @@ from .const import (
     CONF_FILTER_TIME,
     CONF_FILTER_WINDOW_MINUTES,
     CONF_FILTER_DATE,
+    CONF_FILTER_TRAIN_TYPES,
     CONF_FIRST_WEEKDAY,
     CONF_ROUTE_NAME,
     DEFAULT_SCAN_INTERVAL,
@@ -68,6 +69,7 @@ from .const import (
     FAV_TRACK_SECONDS_MAX,
     DEFAULT_FILTER_WINDOW_MINUTES,
     DEFAULT_FIRST_WEEKDAY,
+    TRAIN_TYPE_CODES,
 )
 from .stations import STATIONS
 
@@ -130,6 +132,45 @@ def _weekday_options(
     )
     order = [(i + start) % 7 for i in range(7)]
     return [SelectOptionDict(value=str(d), label=names[d]) for d in order]
+
+
+# Train-type labels, localised here for the same reason as the weekday
+# names above: options carrying their own label keep the order we
+# choose, while ``translation_key`` hands the list to a frontend that
+# sorts it alphabetically. The code is kept in the label because the
+# sensor reports codes, and a user typing a custom one needs to see
+# which shape it should take.
+_TRAIN_TYPE_NAMES: dict[str, dict[str, str]] = {
+    "en": {
+        "IC": "Intercity (IC)",
+        "ICD": "Intercity direct (ICD)",
+        "SPR": "Sprinter (SPR)",
+        "ST": "Local train (ST)",
+        "ICE": "ICE International (ICE)",
+        "EST": "Eurostar (EST)",
+        "NJ": "Night train (NJ)",
+    },
+    "nl": {
+        "IC": "Intercity (IC)",
+        "ICD": "Intercity direct (ICD)",
+        "SPR": "Sprinter (SPR)",
+        "ST": "Stoptrein (ST)",
+        "ICE": "ICE International (ICE)",
+        "EST": "Eurostar (EST)",
+        "NJ": "Nachttrein (NJ)",
+    },
+}
+
+
+def _train_type_options(language: str = "en") -> list[SelectOptionDict]:
+    """The train-type picker, in the order of TRAIN_TYPE_CODES."""
+    names = _TRAIN_TYPE_NAMES.get(
+        (language or "en").lower()[:2], _TRAIN_TYPE_NAMES["en"],
+    )
+    return [
+        SelectOptionDict(value=code, label=names.get(code, code))
+        for code in TRAIN_TYPE_CODES
+    ]
 
 
 def _read_first_weekday(parent: Any) -> str:
@@ -425,6 +466,18 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 _filter_date = (src.get(CONF_FILTER_DATE) or "").strip()
                 if _filter_date:
                     route_data[CONF_FILTER_DATE] = _filter_date
+                # Stored only when something is selected, so clearing
+                # the field removes the key and the route goes back to
+                # every train type.
+                _train_types = list(
+                    dict.fromkeys(
+                        str(t).strip().upper()
+                        for t in (src.get(CONF_FILTER_TRAIN_TYPES) or [])
+                        if str(t).strip()
+                    )
+                )
+                if _train_types:
+                    route_data[CONF_FILTER_TRAIN_TYPES] = _train_types
 
                 if reconfigure:
                     return self.async_update_and_abort(
@@ -470,6 +523,7 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
         _hass = getattr(self, "hass", None)
         _lang = getattr(getattr(_hass, "config", None), "language", "en")
         weekday_options = _weekday_options(_read_first_weekday(parent), _lang)
+        train_type_options = _train_type_options(_lang)
 
         # v2.16.9: optional clearable fields (route name, time of day,
         # specific date) use ``description={"suggested_value": ...}``
@@ -549,6 +603,26 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                             "suggested_value": defaults.get(CONF_FILTER_DATE),
                         },
                     ): DateSelector(),
+                    # v2.19.0: limit the route to one or more NS train
+                    # categories. custom_value is on because regional
+                    # operators use codes beyond the listed ones, and
+                    # the sensor's ``available_train_types`` attribute
+                    # shows which codes this route actually runs.
+                    vol.Optional(
+                        CONF_FILTER_TRAIN_TYPES,
+                        default=[
+                            str(t).strip().upper()
+                            for t in defaults.get(CONF_FILTER_TRAIN_TYPES, [])
+                            if str(t).strip()
+                        ],
+                    ): SelectSelector(
+                        SelectSelectorConfig(
+                            options=train_type_options,
+                            mode=SelectSelectorMode.DROPDOWN,
+                            multiple=True,
+                            custom_value=True,
+                        ),
+                    ),
                 }),
                 # Section is shown expanded by default.
                 {"collapsed": False},

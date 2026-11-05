@@ -167,3 +167,62 @@ def apply_window_filter(
         if earliest <= dep <= latest:
             out.append(trip)
     return out
+
+
+def leg_category_codes(leg: dict[str, Any]) -> set[str]:
+    """Upper-case NS category codes for one leg.
+
+    Empty for a leg with no product (walking, and the transfer legs NS
+    sometimes returns), which is what marks a leg as "not boarded" for
+    the train-type filter.
+    """
+    product = leg.get("product") or {}
+    codes = {
+        str(product.get(key) or "").strip().upper()
+        for key in ("categoryCode", "shortCategoryName")
+    }
+    codes.discard("")
+    return codes
+
+
+def train_types_in(trips: list[dict[str, Any]]) -> list[str]:
+    """Every category code present in ``trips``, sorted.
+
+    Surfaced on the sensor so a route shows which codes it actually
+    sees -- the regional operators in particular are easier to read off
+    a live route than to guess.
+    """
+    seen: set[str] = set()
+    for trip in trips:
+        for leg in trip.get("legs") or []:
+            if isinstance(leg, dict):
+                seen |= leg_category_codes(leg)
+    return sorted(seen)
+
+
+def apply_train_type_filter(
+    trips: list[dict[str, Any]],
+    train_types: list[str] | None,
+) -> list[dict[str, Any]]:
+    """Keep the trips whose every boarded leg is one of ``train_types``.
+
+    * Empty or None ``train_types``: the trips come back untouched.
+    * Matching ignores case and accepts either ``categoryCode`` or
+      ``shortCategoryName``, since NS fills them inconsistently.
+    * Legs without a product (walking, transfers) are ignored.
+    * A trip with no boarded leg at all cannot match and is dropped.
+    """
+    wanted = {str(t).strip().upper() for t in (train_types or []) if str(t).strip()}
+    if not wanted:
+        return trips
+
+    kept: list[dict[str, Any]] = []
+    for trip in trips:
+        boarded = [
+            codes
+            for leg in (trip.get("legs") or [])
+            if isinstance(leg, dict) and (codes := leg_category_codes(leg))
+        ]
+        if boarded and all(codes & wanted for codes in boarded):
+            kept.append(trip)
+    return kept

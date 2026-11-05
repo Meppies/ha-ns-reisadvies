@@ -26,10 +26,17 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from ._filter import apply_window_filter, compute_target_datetime
+from ._filter import (
+    apply_train_type_filter,
+    apply_window_filter,
+    compute_target_datetime,
+    train_types_in,
+)
 from .const import (
     API_URL,
     ARCGIS_TREINEN_URL,
+    FILTER_EXTRA_SEARCHES,
+    FILTER_MIN_RESULTS,
     DEFAULT_FAV_TRACK_SECONDS,
     DOMAIN,
     FAV_TRACK_GRACE_MINUTES,
@@ -208,6 +215,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         filter_time: str | None = None,
         filter_window_minutes: int = 0,
         filter_date: str | None = None,
+        filter_train_types: list[str] | None = None,
     ) -> None:
         # The hub config entry; used to read/write
         # ``entry.runtime_data.stations_geo`` (the per-HA-boot stations
@@ -243,6 +251,18 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self.filter_time: _dt_time | None = _parse_time(filter_time)
         self.filter_window_minutes: int = max(0, min(360, int(filter_window_minutes or 0)))
         self.filter_date: _dt_date | None = _parse_date(filter_date)
+        # v2.19.0: NS category codes this route accepts, upper case and
+        # de-duplicated with the user's order kept. Empty = every type.
+        self.filter_train_types: list[str] = list(
+            dict.fromkeys(
+                str(t).strip().upper()
+                for t in (filter_train_types or [])
+                if str(t).strip()
+            )
+        )
+        # Every code seen in the last fetch, before filtering, so the
+        # sensor can report what this route actually runs.
+        self.available_train_types: list[str] = []
 
         # v2.16.0: how many calendar days the trip-search anchor
         # advances. 0 = today; 1 = tomorrow; 2+ = day after that.
@@ -697,6 +717,80 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
 
     # ---- data fetch ----
 
+    @staticmethod
+    def _last_departure_iso(trips: list[dict[str, Any]]) -> str | None:
+        """Planned departure of the latest trip in the list, if any."""
+        stamps = [
+            str(
+                ((trip.get("legs") or [{}])[0].get("origin") or {})
+                .get("plannedDateTime")
+                or ""
+            )
+            for trip in trips
+        ]
+        stamps = [s for s in stamps if s]
+        return max(stamps) if stamps else None
+
+    async def _async_search_more(
+        self,
+        headers: dict[str, str],
+        params: dict[str, str],
+        trips: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Ask NS for later trips until enough survive the filter.
+
+        NS answers a search with a handful of trips, so a route that
+        only accepts intercities can be left with one row out of six.
+        Each extra search starts a minute after the latest trip already
+        in hand, which is the same forward paging the user would get by
+        scrolling in the NS app.
+
+        Best-effort by design: any error or timeout simply stops the
+        loop and leaves the trips already fetched untouched, because a
+        thin list is a far better outcome than a failed refresh.
+        """
+        if not self.filter_train_types:
+            return trips
+
+        merged = list(trips)
+        for _ in range(FILTER_EXTRA_SEARCHES):
+            if len(apply_train_type_filter(merged, self.filter_train_types)) >= (
+                FILTER_MIN_RESULTS
+            ):
+                break
+            last_iso = self._last_departure_iso(merged)
+            anchor = parse_iso(last_iso)
+            if anchor is None:
+                break
+            next_params = dict(params)
+            next_params["dateTime"] = (anchor + timedelta(minutes=1)).isoformat()
+            try:
+                async with async_timeout.timeout(10):
+                    async with self._session.get(
+                        API_URL, headers=headers, params=next_params,
+                    ) as response:
+                        if response.status != 200:
+                            _LOGGER.debug(
+                                "Train-type filter: follow-up search -> HTTP %s",
+                                response.status,
+                            )
+                            break
+                        payload = await response.json()
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                _LOGGER.debug("Train-type filter: follow-up search failed: %s", err)
+                break
+
+            known = {t.get("ctxRecon") for t in merged if t.get("ctxRecon")}
+            fresh = [
+                trip
+                for trip in (payload.get("trips") or [])
+                if trip.get("ctxRecon") not in known
+            ]
+            if not fresh:
+                break
+            merged.extend(fresh)
+        return merged
+
     def _note_unavailable(self, reason: str) -> None:
         """Log once when we transition into the unavailable state.
 
@@ -796,7 +890,12 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         }
 
         try:
-            async with async_timeout.timeout(20):
+            # A filtered route may run up to two follow-up searches
+            # inside this block, so it gets a correspondingly larger
+            # budget. Unfiltered routes keep the old 20 seconds.
+            async with async_timeout.timeout(
+                40 if self.filter_train_types else 20
+            ):
                 # 1) Standard trip query for the configured route.
                 async with self._session.get(API_URL, headers=headers, params=params) as response:
                     if response.status in (401, 403):
@@ -848,6 +947,12 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                         )
                     data = await response.json()
                     normal_trips = data.get("trips", []) or []
+
+                # 1b) v2.19.0: top the list up when a train-type filter
+                # would otherwise leave only a row or two.
+                normal_trips = await self._async_search_more(
+                    headers, params, normal_trips,
+                )
 
                 # 2) Pinned favourites — fetched in parallel.
                 # Trips that the API no longer recognises (400/404) are pruned.
@@ -950,6 +1055,26 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                         x.get("legs") or [{}]
                     )[0].get("origin", {}).get("plannedDateTime", "")
                 )
+
+                # v2.19.0: train-type filter. Runs before the window
+                # filter so a "time set, window 0" route picks the
+                # closest *allowed* train instead of filtering the one
+                # train the window already settled on. Pinned
+                # favourites survive whatever their type, exactly as
+                # they survive the stale-trip pass above.
+                self.available_train_types = train_types_in(all_trips)
+                if self.filter_train_types:
+                    allowed = apply_train_type_filter(
+                        all_trips, self.filter_train_types,
+                    )
+                    allowed_ctx = {
+                        t.get("ctxRecon") for t in allowed if t.get("ctxRecon")
+                    }
+                    all_trips = [
+                        t for t in all_trips
+                        if t.get("ctxRecon") in allowed_ctx
+                        or t.get("ctxRecon") in pinned_ctx
+                    ]
 
                 # Per-route filter: keep only trips matching the
                 # requested window. Skipped entirely when the route

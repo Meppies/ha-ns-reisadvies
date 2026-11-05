@@ -4,6 +4,52 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.0] — 2026-11-05
+
+### Added — per-route train-type filter
+
+A route can now be limited to one or more NS train categories, in the
+**Optional filters** section of the route form alongside the weekday
+and time filters. The picker carries proper names (Intercity, Intercity
+direct, Sprinter, …) and accepts typed codes for the regional
+operators.
+
+A trip is kept only when every leg you would board is one of the chosen
+types: with `IC` and `ICD` selected, a trip that also needs a sprinter
+is dropped, because you would still have to take that sprinter. Walking
+legs and transfers carry no product and are ignored. Pinned favourites
+are exempt, exactly as they are from the stale-trip pass.
+
+The filter runs before the time-window pass, so a route with a time set
+and a zero window picks the closest *allowed* train rather than
+filtering away the one train the window had already settled on.
+
+Two supporting details:
+
+- **The list stays usable.** NS answers a search with a handful of
+  trips, so a strict filter can leave a single row out of six. When too
+  few survive, the route searches again from a minute after the last
+  trip it holds — at most twice per refresh, only while the filter is
+  set, and best-effort: any error or timeout stops the loop and leaves
+  the trips already fetched alone, because a thin list beats a failed
+  refresh. The per-refresh budget grows from 20 to 40 seconds for a
+  filtered route only.
+- **Codes are discoverable.** The new sensor attribute
+  `available_train_types` lists every category code seen in the last
+  fetch, before filtering, so a route tells you which code its regional
+  operator uses instead of leaving you to guess. The active selection
+  is on the sensor as `filter_train_types`.
+
+Legs are identified by their category code (`categoryCode` or
+`shortCategoryName`, either one, case-insensitive) rather than by
+`product.type`. Nothing else in this integration reads that field and
+no captured NS payload here contains it, so keying the feature on it
+would have been a guess; a walking leg carries no product and therefore
+no category code, which is the distinction that actually matters.
+
+Raised by @woldhek in #2, implemented here with the wiring, the
+follow-up search and the test coverage.
+
 ## [2.18.1] — 2026-10-18
 
 ### Fixed — the live map had no map under it

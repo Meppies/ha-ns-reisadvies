@@ -50,18 +50,20 @@
           "sections": {
             "filters": {
               "name": "Optionele filters — leeg laten voor standaardgedrag",
-              "description": "Alle vier velden hieronder zijn optioneel. Leeg laten = eerstvolgende reis vanaf nu, elke dag. Invullen pint de sensor op specifieke weekdagen, een tijdstip, een datum of een marge rondom een tijd.",
+              "description": "Alle vijf velden hieronder zijn optioneel. Leeg laten = eerstvolgende reis vanaf nu, elke dag. Invullen pint de sensor op specifieke weekdagen, een tijdstip, een datum of een marge rondom een tijd.",
               "data": {
                 "filter_days": "Dagen van de week",
                 "filter_time": "Tijdstip",
                 "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
-                "filter_date": "Specifieke datum"
+                "filter_date": "Specifieke datum",
+                "filter_train_types": "Treintypes"
               },
               "data_description": {
                 "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
                 "filter_time": "Ankermoment voor de reis-zoekopdracht. Werkt samen met de marge-slider hieronder. Leeg laten betekent: gebruik de huidige tijd.",
                 "filter_window_minutes": "Hoeveel minuten vóór en na de gekozen tijd in de resultaten blijven. 0 betekent: laat alleen reizen op of ná het ankermoment zien.",
-                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is."
+                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is.",
+                "filter_train_types": "Beperk deze route tot een of meer NS-treincategorieën. Een reis blijft alleen staan als élke trein erin van een gekozen type is: kies je Intercity en Intercity direct, dan valt een reis met een sprinter erin af. Laat leeg om alle types toe te staan. Gepinde favorieten blijven altijd staan, ongeacht hun type. Andere codes kun je zelf intypen; het attribuut available_train_types op de sensor laat zien welke codes deze route echt rijdt."
               }
             }
           }
@@ -82,18 +84,20 @@
           "sections": {
             "filters": {
               "name": "Optionele filters — leeg laten voor standaardgedrag",
-              "description": "Alle vier velden hieronder zijn optioneel. Leeg laten = eerstvolgende reis vanaf nu, elke dag. Invullen pint de sensor op specifieke weekdagen, een tijdstip, een datum of een marge rondom een tijd.",
+              "description": "Alle vijf velden hieronder zijn optioneel. Leeg laten = eerstvolgende reis vanaf nu, elke dag. Invullen pint de sensor op specifieke weekdagen, een tijdstip, een datum of een marge rondom een tijd.",
               "data": {
                 "filter_days": "Dagen van de week",
                 "filter_time": "Tijdstip",
                 "filter_window_minutes": "Marge rondom de gekozen tijd (± minuten)",
-                "filter_date": "Specifieke datum"
+                "filter_date": "Specifieke datum",
+                "filter_train_types": "Treintypes"
               },
               "data_description": {
                 "filter_days": "Kies één of meerdere weekdagen. Zodra de geselecteerde dag van vandaag voorbij is, springt de sensor naar de volgende geselecteerde dag. Leeg laten betekent: elke dag.",
                 "filter_time": "Ankermoment voor de reis-zoekopdracht. Werkt samen met de marge-slider hieronder. Leeg laten betekent: gebruik de huidige tijd.",
                 "filter_window_minutes": "Hoeveel minuten vóór en na de gekozen tijd in de resultaten blijven. 0 betekent: laat alleen reizen op of ná het ankermoment zien.",
-                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is."
+                "filter_date": "Pin de route op één specifieke datum. Dag-van-de-week en doorrol-gedrag worden overgeslagen — de sensor wordt leeg zodra die datum plus de marge voorbij is.",
+                "filter_train_types": "Beperk deze route tot een of meer NS-treincategorieën. Een reis blijft alleen staan als élke trein erin van een gekozen type is: kies je Intercity en Intercity direct, dan valt een reis met een sprinter erin af. Laat leeg om alle types toe te staan. Gepinde favorieten blijven altijd staan, ongeacht hun type. Andere codes kun je zelf intypen; het attribuut available_train_types op de sensor laat zien welke codes deze route echt rijdt."
               }
             }
           }

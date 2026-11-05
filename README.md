@@ -202,6 +202,35 @@ are combinable; leaving them blank keeps the default *next trip from
 now* behaviour. Filters are exposed inside the route form under a
 collapsible **Optional filters** section.
 
+#### Train types (v2.19.0)
+
+A route can be limited to one or more NS train categories, in the same
+**Optional filters** section as the weekday and time filters:
+
+```
+Train types: Intercity (IC), Intercity direct (ICD)
+```
+
+A trip survives only when **every** train you would board is one of the
+chosen types. With Intercity and Intercity direct selected, a trip that
+also needs a sprinter is dropped, because you would still have to take
+that sprinter. Walking legs and transfers are ignored. Leave the field
+empty to allow every type.
+
+Two things the filter deliberately does not do. It never removes a
+pinned favourite, whatever it runs on — a favourite was pinned on
+purpose. And it never silently leaves you with one row: NS answers a
+search with a handful of trips, so when too few survive the filter the
+route searches again from just after the last trip it has, at most
+twice per refresh, and only while the filter is set.
+
+The picker lists the common codes and accepts typed ones, because the
+regional operators use codes of their own and NS adds new ones without
+notice. To find out which codes a route actually runs, read the sensor
+attribute `available_train_types` — it reports every code seen in the
+last fetch, before filtering. The active selection is on the sensor as
+`filter_train_types`.
+
 ## Lovelace card
 
 The card auto-registers via Lovelace resources. Add it to your

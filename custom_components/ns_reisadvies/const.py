@@ -62,6 +62,24 @@ CONF_FILTER_DAYS = "filter_days"
 CONF_FILTER_TIME = "filter_time"
 CONF_FILTER_WINDOW_MINUTES = "filter_window_minutes"
 CONF_FILTER_DATE = "filter_date"
+# - filter_train_types: list of NS category codes ("IC", "SPR", ...).
+#   Empty means every type. A trip survives only when every leg you
+#   board is one of the chosen types.
+CONF_FILTER_TRAIN_TYPES = "filter_train_types"
+
+# Codes offered in the route form, in the order they are shown. The
+# picker also accepts typed values, because the regional operators use
+# codes that vary and NS adds new ones without notice; the sensor's
+# ``available_train_types`` attribute reports what a route really sees.
+TRAIN_TYPE_CODES: tuple[str, ...] = (
+    "IC", "ICD", "SPR", "ST", "ICE", "EST", "NJ",
+)
+
+# A strict filter thins out a page of NS results, so the search is
+# repeated from just after the last trip until enough survive. Two
+# extra calls at most, and only while the filter is on.
+FILTER_MIN_RESULTS = 5
+FILTER_EXTRA_SEARCHES = 2
 
 # Defaults
 DEFAULT_SCAN_INTERVAL = 5

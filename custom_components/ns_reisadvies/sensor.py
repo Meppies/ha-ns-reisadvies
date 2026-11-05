@@ -255,6 +255,14 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
             "filter_days": list(
                 getattr(self.coordinator, "filter_days", []) or []
             ),
+            "filter_train_types": list(
+                getattr(self.coordinator, "filter_train_types", []) or []
+            ),
+            # What this route actually runs, before filtering — the
+            # place to look up the code of a regional operator.
+            "available_train_types": list(
+                getattr(self.coordinator, "available_train_types", []) or []
+            ),
             "filter_date": (
                 fd.isoformat()
                 if (fd := getattr(self.coordinator, "filter_date", None))
