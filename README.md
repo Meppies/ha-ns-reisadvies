@@ -55,7 +55,22 @@ slots, train composition, and an opt-in live train map.
 
 ## Installation
 
-### Via HACS (custom repository)
+### Via the Marketplace (Home Assistant 2026.11 and later)
+
+Since Home Assistant 2026.11, HACS is built in as the **Marketplace**.
+
+1. *Settings → Marketplace → ⋮ → Custom repositories*. Adding a custom
+   repository needs the GitHub connection the Marketplace asks for.
+2. Add `https://github.com/Meppies/ha-ns-reisadvies`, type *Integration*.
+3. Open **NS Reisadvies** and install it. A first install needs no restart.
+4. *Settings → Devices & services → Add integration → NS Reisadvies*, or:
+
+   [![Open your Home Assistant instance and start setting up NS Reisadvies.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=ns_reisadvies)
+
+Updates need a restart; the Marketplace raises a repair with a restart
+button when one is due.
+
+### Via HACS (Home Assistant before 2026.11)
 
 1. Open HACS in Home Assistant.
 2. *Integrations → ⋮ → Custom repositories*.
@@ -77,8 +92,9 @@ slots, train composition, and an opt-in live train map.
 1. *Settings → Devices & services → NS Reisadvies → ⋮ → Delete*. This
    removes the hub entry, every route subentry, every sensor created
    by the integration and the per-route favourite-trip storage files.
-2. *HACS → Integrations → NS Reisadvies → ⋮ → Remove* to delete
-   `custom_components/ns_reisadvies/` from disk.
+2. *Settings → Marketplace → NS Reisadvies → ⋮ → Remove* (or, before
+   Home Assistant 2026.11, *HACS → Integrations → NS Reisadvies → ⋮ →
+   Remove*) to delete `custom_components/ns_reisadvies/` from disk.
 3. Optional clean-up: open *Settings → Dashboards → Resources* and
    remove the `/ns_reisadvies/ns-reisadvies-card.js` resource if it
    still appears (newer HA versions clean it up automatically when

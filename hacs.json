@@ -1,6 +1,8 @@
 {
   "name": "NS Reisadvies",
   "render_readme": true,
-  "homeassistant": "2024.4.0",
-  "country": ["NL"]
+  "homeassistant": "2025.3.0",
+  "country": [
+    "NL"
+  ]
 }

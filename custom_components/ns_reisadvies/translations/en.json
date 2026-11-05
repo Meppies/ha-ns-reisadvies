@@ -14,16 +14,29 @@
           "act_station": "The station where the journey starts.",
           "arr_station": "The station where the journey ends."
         }
+      },
+      "reauth_confirm": {
+        "data": {
+          "api_key": "API key"
+        },
+        "data_description": {
+          "api_key": "Your renewed NS API subscription key."
+        },
+        "description": "The NS API rejected your stored key. Paste a fresh API key from apiportal.ns.nl to reconnect.",
+        "title": "Reauthenticate NS Reisadvies"
       }
     },
     "error": {
       "same_station": "The departure and arrival station must be different.",
       "unknown_station": "That is not a recognised Dutch railway station — pick one from the list.",
-      "duplicate_route": "A route with these two stations already exists."
+      "duplicate_route": "A route with these two stations already exists.",
+      "cannot_connect": "Could not reach the NS API. Check your internet connection and try again.",
+      "invalid_auth": "The NS API rejected this key. Check it on apiportal.ns.nl and that the Ns-App subscription is active."
     },
     "abort": {
       "single_instance_allowed": "NS Reisadvies is already configured. Add more routes via the integration tile.",
-      "already_configured": "This route is already configured."
+      "already_configured": "This route is already configured.",
+      "reauth_successful": "NS Reisadvies has been reconnected with the new API key."
     }
   },
   "config_subentries": {
@@ -141,6 +154,10 @@
           "favourite_track_seconds": "How often the position of a pinned favourite is refreshed while it is en route. Shorter means a zone is less likely to be missed by a fast train. Range: 15 to 120 seconds."
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the NS API. Check your internet connection and try again.",
+      "invalid_auth": "The NS API rejected this key. Check it on apiportal.ns.nl and that the Ns-App subscription is active."
     }
   },
   "selector": {
@@ -185,7 +202,7 @@
     },
     "refresh_rail_cache": {
       "name": "Refresh rail cache",
-      "description": "Force a fresh download of the ProRail rail-network GeoJSON used by the live train map."
+      "description": "Force a fresh download of the ProRail rail-network GeoJSON used by the live train map. Use this when the live map renders straight-line routes — it usually means the cache file is missing or stale because a previous scheduled refresh failed."
     }
   },
   "exceptions": {
@@ -197,7 +214,20 @@
     },
     "api_unreachable": {
       "message": "Could not reach the NS API: {error}."
+    },
+    "coordinator_unavailable": {
+      "message": "The NS Reisadvies coordinator is not ready. Try again once the integration has finished loading."
+    },
+    "empty_ctx_recon": {
+      "message": "ctx_recon must be a non-empty string."
     }
   },
-  "issues": {}
+  "issues": {},
+  "entity": {
+    "sensor": {
+      "trips": {
+        "name": "Trips"
+      }
+    }
+  }
 }

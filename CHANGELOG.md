@@ -4,6 +4,27 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.1] — 2026-11-05
+
+### Fixed — twelve texts were missing for users
+
+Custom integrations load their texts only from `translations/`. Twelve
+strings existed only in `strings.json`, so users saw raw keys instead of
+text: the reauthentication screen (title, description and the API key
+field), the "cannot connect" and "invalid key" errors in setup and options,
+and two error messages. They are now in `translations/en.json`, translated
+in `translations/nl.json`, and `strings.json` is gone.
+
+### Changed — ready for the Home Assistant Marketplace
+
+- Home Assistant 2026.11 builds HACS in as the **Marketplace**. The README
+  explains installing from it; the HACS steps stay for older versions.
+- The manifest declares its integration category,
+  `vehicles_transport.public_transport`.
+- `hacs.json` now names Home Assistant 2025.3.0 as the minimum, the release
+  that introduced the config subentries the routes rely on. It said 2024.4.0.
+- CI actions moved off Node 20.
+
 ## [2.19.0] — 2026-11-05
 
 ### Added — per-route train-type filter

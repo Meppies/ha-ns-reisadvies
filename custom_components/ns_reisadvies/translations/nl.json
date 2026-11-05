@@ -14,16 +14,29 @@
           "act_station": "Het station waar de reis begint.",
           "arr_station": "Het station waar de reis eindigt."
         }
+      },
+      "reauth_confirm": {
+        "data": {
+          "api_key": "API-sleutel"
+        },
+        "data_description": {
+          "api_key": "Je vernieuwde NS API-abonnementssleutel."
+        },
+        "description": "De NS API weigert de opgeslagen sleutel. Plak een nieuwe API-sleutel van apiportal.ns.nl om opnieuw te verbinden.",
+        "title": "NS Reisadvies opnieuw verbinden"
       }
     },
     "error": {
       "same_station": "Vertrek- en aankomststation moeten verschillend zijn.",
       "unknown_station": "Geen geldig NS-station — kies er een uit de lijst.",
-      "duplicate_route": "Een route met deze stations bestaat al."
+      "duplicate_route": "Een route met deze stations bestaat al.",
+      "cannot_connect": "De NS API is niet bereikbaar. Controleer je internetverbinding en probeer het opnieuw.",
+      "invalid_auth": "De NS API weigert deze sleutel. Controleer hem op apiportal.ns.nl en of het Ns-App-abonnement actief is."
     },
     "abort": {
       "single_instance_allowed": "NS Reisadvies is al geconfigureerd. Voeg extra routes toe via de integratietegel.",
-      "already_configured": "Deze route is al geconfigureerd."
+      "already_configured": "Deze route is al geconfigureerd.",
+      "reauth_successful": "NS Reisadvies is opnieuw verbonden met de nieuwe API-sleutel."
     }
   },
   "config_subentries": {
@@ -141,6 +154,10 @@
           "favourite_track_seconds": "Hoe vaak de positie van een vastgezette favoriet wordt ververst terwijl de trein rijdt. Korter betekent dat een snelle trein een zone minder snel mist. Bereik: 15 tot 120 seconden."
         }
       }
+    },
+    "error": {
+      "cannot_connect": "De NS API is niet bereikbaar. Controleer je internetverbinding en probeer het opnieuw.",
+      "invalid_auth": "De NS API weigert deze sleutel. Controleer hem op apiportal.ns.nl en of het Ns-App-abonnement actief is."
     }
   },
   "selector": {
@@ -197,7 +214,20 @@
     },
     "api_unreachable": {
       "message": "Kan de NS-API niet bereiken: {error}."
+    },
+    "coordinator_unavailable": {
+      "message": "De NS Reisadvies-coördinator is nog niet klaar. Probeer het opnieuw zodra de integratie geladen is."
+    },
+    "empty_ctx_recon": {
+      "message": "ctx_recon moet een niet-lege tekst zijn."
     }
   },
-  "issues": {}
+  "issues": {},
+  "entity": {
+    "sensor": {
+      "trips": {
+        "name": "Reizen"
+      }
+    }
+  }
 }
