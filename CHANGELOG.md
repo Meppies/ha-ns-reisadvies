@@ -4,6 +4,29 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.2] — 2026-11-05
+
+### Security — the API key is masked
+
+The API key field was a plain text field. Typing a key showed it on
+screen, and the options form showed the stored key in full every time it
+was opened. All three forms that ask for the key (setup, reauthentication,
+options) now use a password field.
+
+### Fixed
+
+- A route with a time window showed "no trips" once its anchor time had
+  passed, while trains still ran inside the window. Example: weekdays
+  17:30 ±90 min, checked at 18:20. NS was asked for trips around 17:30,
+  all of which had left. The search now starts at the current time while
+  the window is open; the window itself is unchanged.
+
+### Changed
+
+- New routes are titled `From → To`, matching the device name. Existing
+  routes keep their title.
+- README: screenshots, taken on Home Assistant 2026.11 with live NS data.
+
 ## [2.19.1] — 2026-11-05
 
 ### Fixed — twelve texts were missing for users

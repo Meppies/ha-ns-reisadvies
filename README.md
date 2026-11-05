@@ -9,6 +9,8 @@ slots, train composition, and an opt-in live train map.
 [![Quality scale](https://img.shields.io/badge/quality--scale-platinum-e5e4e2.svg)](https://developers.home-assistant.io/docs/core/integration-quality-scale)
 [![Validate](https://github.com/Meppies/ha-ns-reisadvies/actions/workflows/validate.yml/badge.svg)](https://github.com/Meppies/ha-ns-reisadvies/actions/workflows/validate.yml)
 
+![Two routes on a dashboard, each trip with its train units shown](https://raw.githubusercontent.com/Meppies/ha-ns-reisadvies/main/docs/images/dashboard.png)
+
 ## What you get
 
 - **One hub, many routes.** Add the integration once, then add as many
@@ -52,6 +54,40 @@ slots, train composition, and an opt-in live train map.
   while a favourite is actually en route.
 
 [trnp]: https://treinposities.nl/
+
+## Screenshots
+
+Taken on Home Assistant 2026.11 with live NS data. The interface is in
+Dutch because the demo instance runs in Dutch; the integration follows
+your own language.
+
+**Two routes on a dashboard.** "Naar huis" uses a filter: weekdays,
+17:30 ±90 minutes, intercities only. With *Fetch train composition*
+switched on, every trip shows its train units.
+
+![Dashboard with two route cards](https://raw.githubusercontent.com/Meppies/ha-ns-reisadvies/main/docs/images/dashboard.png)
+
+**Live train map.** Tap *Live kaart* on a trip to follow the train.
+
+![Live map following IC 3067](https://raw.githubusercontent.com/Meppies/ha-ns-reisadvies/main/docs/images/live-map.png)
+
+**Setting up.** Enter your NS API key and your first route.
+
+![Setup form](https://raw.githubusercontent.com/Meppies/ha-ns-reisadvies/main/docs/images/setup.png)
+
+**Adding a route.** Each extra route is added from the integration
+page, with optional days, time window and train types.
+
+![Add-route form](https://raw.githubusercontent.com/Meppies/ha-ns-reisadvies/main/docs/images/route.png)
+
+**One hub, many routes.**
+
+![Integration page with two routes](https://raw.githubusercontent.com/Meppies/ha-ns-reisadvies/main/docs/images/integration.png)
+
+**Options.** The API key is masked; composition and the live map are
+switched on here.
+
+![Options form](https://raw.githubusercontent.com/Meppies/ha-ns-reisadvies/main/docs/images/options.png)
 
 ## Installation
 

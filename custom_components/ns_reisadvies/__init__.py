@@ -215,7 +215,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     CONF_TO_STATION: to_st,
                 }),
                 subentry_type=SUBENTRY_TYPE_ROUTE,
-                title=f"{from_st} -> {to_st}",
+                title=f"{from_st} → {to_st}",
                 unique_id=unique_id,
             )
         )
@@ -325,7 +325,7 @@ async def _recover_subentries_from_storage(
                     {CONF_FROM_STATION: fr, CONF_TO_STATION: to}
                 ),
                 subentry_type=SUBENTRY_TYPE_ROUTE,
-                title=f"{fr} -> {to}",
+                title=f"{fr} → {to}",
                 unique_id=f"{fr}_{to}".lower(),
             )
             hass.config_entries.async_add_subentry(entry, sub)

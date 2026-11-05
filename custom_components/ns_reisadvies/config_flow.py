@@ -73,6 +73,12 @@ from .const import (
 )
 from .stations import STATIONS
 
+# v2.19.2: the API key is a secret; show it masked in every form, also when
+# the options form pre-fills the stored key.
+_API_KEY_SELECTOR = TextSelector(
+    TextSelectorConfig(type=TextSelectorType.PASSWORD, autocomplete="off")
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -293,7 +299,7 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): _API_KEY_SELECTOR}),
             errors=errors,
         )
 
@@ -349,7 +355,7 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         subentries=[
                             {
                                 "subentry_type": SUBENTRY_TYPE_ROUTE,
-                                "title": f"{from_st} -> {to_st}",
+                                "title": f"{from_st} → {to_st}",
                                 "unique_id": f"{from_st}_{to_st}".lower(),
                                 "data": {
                                     CONF_FROM_STATION: from_st,
@@ -360,7 +366,7 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     )
 
         schema = vol.Schema({
-            vol.Required(CONF_API_KEY): str,
+            vol.Required(CONF_API_KEY): _API_KEY_SELECTOR,
             vol.Required(CONF_FROM_STATION): _station_selector(),
             vol.Required(CONF_TO_STATION): _station_selector(),
         })
@@ -440,7 +446,7 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 # used as the subentry title and as the basis for the
                 # sensor's friendly name and entity_id slug.
                 _route_name = (user_input.get(CONF_ROUTE_NAME) or "").strip()
-                title = _route_name if _route_name else f"{from_st} -> {to_st}"
+                title = _route_name if _route_name else f"{from_st} → {to_st}"
                 # Build the route data dict, preserving filter fields when set.
                 # Empty/None filter fields are dropped so subentries created in
                 # earlier versions stay byte-identical when the user re-saves.
@@ -706,7 +712,7 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
             CONF_API_KEY, "",
         )
         return vol.Schema({
-            vol.Required(CONF_API_KEY, default=str(api_val)): str,
+            vol.Required(CONF_API_KEY, default=str(api_val)): _API_KEY_SELECTOR,
             vol.Required(
                 CONF_SCAN_INTERVAL,
                 default=int(self._read(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)),

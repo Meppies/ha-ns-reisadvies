@@ -71,7 +71,7 @@ async def test_user_step_with_route_name_uses_name_as_title_and_unique_id():
 
 
 async def test_user_step_without_route_name_uses_legacy_title_and_unique_id():
-    """No route_name → legacy "from -> to" title and "from_to" unique_id;
+    """No route_name → legacy "from → to" title and "from_to" unique_id;
     backwards compatibility with v2.14.x routes is preserved."""
     f = _mk()
     await f.async_step_user(user_input={
@@ -80,7 +80,7 @@ async def test_user_step_without_route_name_uses_legacy_title_and_unique_id():
     })
     f.async_create_entry.assert_called_once()
     _, kwargs = f.async_create_entry.call_args
-    assert kwargs["title"] == "Hilversum -> Duivendrecht"
+    assert kwargs["title"] == "Hilversum → Duivendrecht"
     assert kwargs["unique_id"] == "hilversum_duivendrecht"
     assert CONF_ROUTE_NAME not in kwargs["data"]
 

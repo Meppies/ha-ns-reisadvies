@@ -883,10 +883,17 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         # leaves after midnight.
         self._target_day_offset = (target_dt.date() - now_dt.date()).days
         self._target_date = target_dt.date().isoformat()
+        # v2.19.2: once a window is open the anchor itself may already
+        # lie in the past (17:30 ±90 min, checked at 18:20). Searching
+        # from the anchor would return only trains that have left, and
+        # the stale-trip pass below would then empty the list although
+        # trains still run inside the window. Search from "now" in that
+        # case; the window filter still works from ``target_dt``.
+        search_dt = max(target_dt, now_dt)
         params = {
             "fromStation": self.from_station,
             "toStation": self.to_station,
-            "dateTime": target_dt.isoformat(),
+            "dateTime": search_dt.isoformat(),
         }
 
         try:

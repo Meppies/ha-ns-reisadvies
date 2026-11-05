@@ -480,3 +480,43 @@ async def test_target_day_offset_no_trips_keeps_provisional(
     assert coord._target_day_offset == (
         _dt(2026, 12, 24).date() - fixed_now.date()
     ).days
+
+
+async def test_update_data_open_window_searches_from_now(
+    hass: HomeAssistant,
+) -> None:
+    """Window already open, anchor passed → search from now, keep window.
+
+    Regression: a weekday 17:30 ±90 min route showed "no trips" at
+    18:20 because NS was asked for trips around 17:30, all of which
+    had departed and were dropped.
+    """
+    from datetime import datetime as _dt
+
+    fixed_now = _dt(2026, 11, 5, 18, 20)  # Thursday
+    trips_payload = {
+        "trips": [
+            {"ctxRecon": "a", "legs": [{"origin": {"plannedDateTime": "2026-11-05T18:39:00"}}]},
+            {"ctxRecon": "b", "legs": [{"origin": {"plannedDateTime": "2026-11-05T18:54:00"}}]},
+            # 19:24 — past the 19:00 window end
+            {"ctxRecon": "c", "legs": [{"origin": {"plannedDateTime": "2026-11-05T19:24:00"}}]},
+        ],
+    }
+    coord = _coord(
+        hass,
+        filter_days=[0, 1, 2, 3, 4],
+        filter_time="17:30",
+        filter_window_minutes=90,
+    )
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, trips_payload))
+    with patch(
+        "custom_components.ns_reisadvies.coordinator.datetime",
+        wraps=_dt,
+    ) as mock_dt:
+        mock_dt.now.return_value = fixed_now
+        out = await coord._async_update_data()
+    params = coord._session.get.call_args_list[0].kwargs["params"]
+    assert params["dateTime"].startswith("2026-11-05T18:20")
+    assert {t["ctxRecon"] for t in out} == {"a", "b"}
+    assert coord._target_day_offset == 0
