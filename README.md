@@ -57,7 +57,12 @@ slots, train composition, and an opt-in live train map.
 
 ### Via the Marketplace (Home Assistant 2026.11 and later)
 
-Since Home Assistant 2026.11, HACS is built in as the **Marketplace**.
+Since Home Assistant 2026.11, HACS is built in as the **Marketplace**. This
+button opens the repository in your own Marketplace and offers to add it:
+
+[![Open your Home Assistant instance and open this repository in the Marketplace.](https://my.home-assistant.io/badges/marketplace_repository.svg)](https://my.home-assistant.io/redirect/marketplace_repository/?owner=Meppies&repository=ha-ns-reisadvies&category=integration)
+
+Or by hand:
 
 1. *Settings → Marketplace → ⋮ → Custom repositories*. Adding a custom
    repository needs the GitHub connection the Marketplace asks for.
