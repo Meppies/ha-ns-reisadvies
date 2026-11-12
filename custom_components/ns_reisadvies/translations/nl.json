@@ -227,6 +227,12 @@
     "sensor": {
       "trips": {
         "name": "Reizen"
+      },
+      "delay": {
+        "name": "Vertraging"
+      },
+      "next_train": {
+        "name": "Volgende trein"
       }
     }
   }
