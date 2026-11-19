@@ -4,6 +4,33 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.20.0] — 2026-11-10
+
+### Added — delay and next-train sensors per route
+
+Each route device gets two sensors next to the trips sensor. Both read
+the route's trips after the train-type and time filters, so "my next
+intercity" is one entity instead of a template over the `trips` blob.
+
+- **Delay** — minutes of delay of the next train, `0` when on time
+  (device class duration, unit `min`).
+- **Next train** — that train as one line for a dashboard tile or a
+  small screen: `IC 08:09 +4, spoor 5` / `IC 08:09 vervalt`. Dutch or
+  English after Home Assistant's language; plain ASCII, because the
+  middle dot and arrows show as empty boxes on ESP32 display fonts.
+
+Shared attributes: `train`, `planned`, `expected`, `track`,
+`track_changed`, `status` (`on_time` / `delayed` / `cancelled`).
+Cancellation is read from `trip.status == "CANCELLED"`, as the card
+does. Every NS field used is one the integration or card already reads;
+the walking-leg check reuses `leg_category_codes` from the filter.
+
+The logic lives in a new pure module, `_departure.py`, tested on its
+own; separate tests cover the wiring — three sensors per route, unique
+ids and device, the state and attributes written to Home Assistant in
+both languages, and the texts and icons in `translations/` and
+`icons.json`.
+
 ## [2.19.2] — 2026-11-05
 
 ### Security — the API key is masked

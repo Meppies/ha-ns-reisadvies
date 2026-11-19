@@ -288,6 +288,27 @@ attribute `available_train_types` — it reports every code seen in the
 last fetch, before filtering. The active selection is on the sensor as
 `filter_train_types`.
 
+### Delay and next-train sensors
+
+Every route device carries two more sensors next to the trips sensor.
+Both read the route's filtered trips, so a train-type or time filter
+applies to them too.
+
+- **Delay**: the delay of the next train in
+  minutes, `0` when it runs on time.
+- **Next train**: that train as one short
+  line for a tile or a small screen, such as `IC 08:09 +4, platform 5`,
+  or `IC 08:09 cancelled`. A `!` after the platform means it changed.
+  The words follow Home Assistant's language (Dutch or English), and the
+  line uses plain ASCII so it shows on displays with a limited font.
+
+Both carry the same attributes: `train` (`IC 1522`), `planned`,
+`expected` (`HH:MM`), `track`, `track_changed` and `status` (`on_time`,
+`delayed` or `cancelled`). Their entity ids follow the route's name and
+Home Assistant's language, for example `sensor.werk_delay` or
+`sensor.werk_vertraging`; the route's device page lists them. The
+example under [Examples](#examples) triggers on `status`.
+
 ## Lovelace card
 
 The card auto-registers via Lovelace resources. Add it to your
@@ -491,6 +512,43 @@ automation:
             {% set t = state_attr('sensor.ns_hilversum_duivendrecht', 'trips')[0] %}
             Platform {{ t.legs[0].origin.actualTrack or t.legs[0].origin.plannedTrack }},
             delay {{ t.legs[0].origin.actualDateTime != t.legs[0].origin.plannedDateTime }}
+```
+
+A notification when the next train is delayed or cancelled on a
+weekday morning, using the delay sensor:
+
+```yaml
+automation:
+  - alias: "My train is delayed"
+    triggers:
+      - trigger: state
+        entity_id: sensor.hilversum_duivendrecht_delay
+        attribute: status
+        to: [delayed, cancelled]
+      - trigger: state                 # a new train moved to the front
+        entity_id: sensor.hilversum_duivendrecht_delay
+        attribute: train
+      - trigger: time                  # already delayed before the window
+        at: "07:30:00"
+    conditions:
+      - condition: time
+        weekday: [mon, tue, wed, thu, fri]
+        after: "07:30:00"
+        before: "09:30:00"
+      - condition: template
+        value_template: >-
+          {{ state_attr('sensor.hilversum_duivendrecht_delay', 'status')
+             in ['delayed', 'cancelled'] }}
+    actions:
+      - action: notify.mobile_app_phone
+        data:
+          title: >-
+            {{ state_attr('sensor.hilversum_duivendrecht_delay', 'train') }}
+            {{ state_attr('sensor.hilversum_duivendrecht_delay', 'status') }}
+          message: >-
+            {{ state_attr('sensor.hilversum_duivendrecht_delay', 'planned') }}
+            now {{ state_attr('sensor.hilversum_duivendrecht_delay', 'expected') }},
+            platform {{ state_attr('sensor.hilversum_duivendrecht_delay', 'track') }}
 ```
 
 Pin a trip from a script (the same call the heart icon makes):
