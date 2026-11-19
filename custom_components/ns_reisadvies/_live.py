@@ -245,6 +245,62 @@ def parse_journey(
     return stops
 
 
+def position_along(
+    stops: list[dict[str, Any]],
+    lat: Any,
+    lng: Any,
+    max_km: float = 25.0,
+) -> float | None:
+    """Where a GPS fix sits along the run, as an index with a fraction.
+
+    ``6.4`` means four tenths of the way from the seventh stop to the
+    eighth. That single number is all the card needs: every station
+    before it has been passed, every one after it has not, and the
+    stretch of line in between is divided at the fraction.
+
+    This is what a timetable cannot tell you. NS reports a time for
+    every stop whether or not the train has been there yet — a stop
+    still to come carries the time it is expected to be reached — so a
+    train running behind its own expectation looks, to the clock, as
+    though it has already passed the next station.
+
+    Returns None when there is no fix, when the run is too short to
+    place one on, or when the fix is further than ``max_km`` from the
+    line, which means it belongs to another train than the one drawn.
+    """
+    if len(stops) < 2:
+        return None
+    try:
+        point = (float(lat), float(lng))
+    except (TypeError, ValueError):
+        return None
+
+    # Degrees are not metres: a degree of longitude is shorter the
+    # further north you are, so scale it before measuring.
+    scale = cos(radians(point[0])) or 1.0
+    best: tuple[float, float] | None = None
+    for index in range(len(stops) - 1):
+        try:
+            ax, ay = float(stops[index]["lat"]), float(stops[index]["lng"]) * scale
+            bx, by = float(stops[index + 1]["lat"]), float(stops[index + 1]["lng"]) * scale
+        except (KeyError, TypeError, ValueError):
+            continue
+        px, py = point[0], point[1] * scale
+        dx, dy = bx - ax, by - ay
+        span = dx * dx + dy * dy
+        if span <= 0:
+            share = 0.0
+        else:
+            share = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / span))
+        nx, ny = ax + dx * share, ay + dy * share
+        gap = sqrt((px - nx) ** 2 + (py - ny) ** 2) * 111.0
+        if best is None or gap < best[1]:
+            best = (index + share, gap)
+    if best is None or best[1] > max_km:
+        return None
+    return best[0]
+
+
 def run_window(
     stops: list[dict[str, Any]],
 ) -> tuple[datetime | None, datetime | None]:

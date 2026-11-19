@@ -36,7 +36,9 @@ slots, train composition, and an opt-in live train map.
 - **Live train map** (opt-in): tap a small icon under the departure
   platform to open a modal with the train's real GPS position, its
   whole run, the stops, and a yellow / blue split that follows the
-  train's progress. Positions come from NS's own live vehicle feed,
+  train's progress. Stations the train passes without stopping shape
+  the line but carry no marker, so a direct intercity does not appear
+  to call at every village on the way. Positions come from NS's own live vehicle feed,
   with ProRail's public OBIS feed (the one [treinposities.nl][trnp]
   uses) as a second source; when neither has a fix the train is
   placed along its run from the times NS reports at each stop, so the
@@ -50,8 +52,12 @@ slots, train composition, and an opt-in live train map.
   blue for what is left, with the boundary where the train is — part
   way between two stations while it runs between them, and on the
   station while it stands there. Unfold the intermediate stops and
-  each one turns as the train leaves it behind. The same two colours
-  as the live map, so the card and the map read the same way.
+  each one gets its own dot and turns as the train leaves it behind.
+  The boundary follows the train's live position where there is one,
+  not the timetable: NS publishes a time for every station including
+  the ones still ahead, so a train running late would otherwise
+  colour a station it has not reached. The same two colours as the
+  live map, so the card and the map read the same way.
 - **Companion Lovelace card** auto-registers as a Lovelace resource —
   no manual `resources:` editing.
 - **Favourites on the map** (opt-in): with *Show favourites on the map*

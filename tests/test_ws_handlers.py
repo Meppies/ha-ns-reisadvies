@@ -7,10 +7,64 @@ import pytest
 
 from custom_components.ns_reisadvies import (
     _ws_track_train_poll, _ws_track_train_start, _ws_track_train_stop,
+    _ws_train_progress,
 )
 
 start_inner = _ws_track_train_start.__wrapped__  # type: ignore[attr-defined]
 poll_inner = _ws_track_train_poll.__wrapped__  # type: ignore[attr-defined]
+progress_inner = _ws_train_progress.__wrapped__  # type: ignore[attr-defined]
+
+
+def _hass_with(coord):
+    runtime = MagicMock()
+    runtime.coordinators = {"sub": coord}
+    runtime.live_sessions = {}
+    entry = MagicMock()
+    entry.runtime_data = runtime
+    fake_hass = MagicMock()
+    fake_hass.config_entries.async_entries.return_value = [entry]
+    return fake_hass
+
+
+async def test_ws_progress_places_the_train_on_its_run():
+    """The card asks where the train is; the clock does not decide."""
+    coord = MagicMock()
+    coord.async_journey_stops = AsyncMock(return_value=[
+        {"uicCode": "1", "name": "A", "lat": 52.4, "lng": 4.9},
+        {"uicCode": "2", "name": "B", "lat": 52.3, "lng": 4.9},
+        {"uicCode": "3", "name": "C", "lat": 52.2, "lng": 4.9},
+    ])
+    coord.async_fetch_vehicle_position = AsyncMock(
+        return_value={"lat": 52.25, "lng": 4.9, "source": "ns-obis"},
+    )
+    conn = MagicMock()
+    await progress_inner(_hass_with(coord), conn, {"id": 1, "train_number": "1825"})
+    result = conn.send_result.call_args[0][1]
+    assert result["position_index"] == pytest.approx(1.5, abs=0.01)
+    assert result["position"]["source"] == "ns-obis"
+    assert [s["name"] for s in result["stops"]] == ["A", "B", "C"]
+
+
+async def test_ws_progress_without_a_fix_says_so():
+    coord = MagicMock()
+    coord.async_journey_stops = AsyncMock(return_value=[
+        {"uicCode": "1", "name": "A", "lat": 52.4, "lng": 4.9},
+        {"uicCode": "2", "name": "B", "lat": 52.3, "lng": 4.9},
+    ])
+    coord.async_fetch_vehicle_position = AsyncMock(return_value=None)
+    conn = MagicMock()
+    await progress_inner(_hass_with(coord), conn, {"id": 1, "train_number": "1825"})
+    result = conn.send_result.call_args[0][1]
+    assert result["position_index"] is None
+    assert result["position"] is None
+
+
+async def test_ws_progress_needs_a_hub():
+    fake_hass = MagicMock()
+    fake_hass.config_entries.async_entries.return_value = []
+    conn = MagicMock()
+    await progress_inner(fake_hass, conn, {"id": 1, "train_number": "1825"})
+    assert conn.send_error.call_args[0][1] == "no_hub"
 
 
 async def test_ws_start_no_hub_sends_error():

@@ -35,6 +35,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.loader import async_get_integration
 
+from ._live import position_along
 from .const import (
     DOMAIN,
     CONFIG_ENTRY_VERSION,
@@ -443,6 +444,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         websocket_api.async_register_command(hass, _ws_track_train_start)
         websocket_api.async_register_command(hass, _ws_track_train_poll)
         websocket_api.async_register_command(hass, _ws_track_train_stop)
+        websocket_api.async_register_command(hass, _ws_train_progress)
         hass.data[DOMAIN]["_ws_registered"] = True
 
     # Schedule the rail-cache refresh once per HA boot. Runs ~5s after
@@ -846,6 +848,52 @@ def _ws_track_train_stop(
     connection.send_result(msg["id"], {"ok": True})
 
 
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "ns_reisadvies/train_progress",
+        vol.Required("train_number"): vol.Any(str, int),
+    }
+)
+@websocket_api.async_response
+async def _ws_train_progress(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Where one train is along its run, for the card's timeline.
+
+    The card draws its line from the timetable, which says where a
+    train is *meant* to be. This says where it actually is: the live
+    position placed on the run as an index with a fraction, so a train
+    running late does not colour a station it has not reached.
+
+    Cheap to ask for: both the run and the national vehicle feed are
+    cached and shared, so several open cards cost one request between
+    them.
+    """
+    coord = _any_coordinator(hass)
+    if coord is None:
+        connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
+        return
+
+    train_number = str(msg["train_number"])
+    stops = await coord.async_journey_stops(train_number)
+    position = await coord.async_fetch_vehicle_position(train_number)
+    index = (
+        position_along(stops, position.get("lat"), position.get("lng"))
+        if position else None
+    )
+    connection.send_result(
+        msg["id"],
+        {
+            "position_index": index,
+            "position": position,
+            "stops": [
+                {"uicCode": stop["uicCode"], "name": stop["name"]}
+                for stop in stops
+            ],
+        },
+    )
 
 
 def _backfill_entity_subentries(hass: HomeAssistant, entry: ConfigEntry) -> None:

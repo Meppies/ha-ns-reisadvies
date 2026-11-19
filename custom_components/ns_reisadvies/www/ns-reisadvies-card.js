@@ -695,7 +695,12 @@ class NSReisadviesCard extends HTMLElement {
         .stop-row .stop-time-cell .stop-time-line { display: inline-flex; align-items: baseline; gap: 4px; }
         .stop-row .stop-time-cell .stop-time-prefix { font-size: 0.75em; opacity: 0.65; font-weight: 700; text-transform: uppercase; }
         .stop-row .stop-time-cell .stop-delay { color: #ff5252; font-weight: bold; margin-left: 2px; }
-        .stop-row .stop-line-col { display: flex; justify-content: center; align-self: stretch; }
+        .stop-row .stop-line-col { position: relative; display: flex; justify-content: center; align-self: stretch; }
+        /* v2.23.0: a small dot for an intermediate stop, so a station
+           reads as a station rather than a gap in the dashes. */
+        .stop-row .stop-dot { position: absolute; top: 50%; left: 50%; width: 7px; height: 7px;
+          border-radius: 50%; background: var(--card-background-color);
+          border: 2px solid var(--ns-stop-line, #3b82f6); transform: translate(-50%, -50%); z-index: 2; }
         .stop-row .stop-line-col::before { content: ""; width: 0; border-left: 2px dashed var(--ns-stop-line, #3b82f6); height: 100%; }
         .stop-row .stop-info { padding-left: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.95em; color: var(--secondary-text-color); }
         .stop-row .stop-info .stop-name { flex: 1; word-break: break-word; }
@@ -870,6 +875,8 @@ class NSReisadviesCard extends HTMLElement {
         const legKey = `${tIdx}_${index}`;
         const isExpanded = this._expandedLegs.has(legKey);
 
+        const trainNum = (leg.product && leg.product.number) ? String(leg.product.number) : "";
+
         // v2.22.0: the vertical line is coloured along with the train.
         // Actual times where NS gives them, planned otherwise. The two
         // line pieces of this leg share one span: from leaving the
@@ -892,18 +899,31 @@ class NSReisadviesCard extends HTMLElement {
           ? stamp(firstStop.actualArrivalDateTime, firstStop.plannedArrivalDateTime,
                   firstStop.actualDepartureDateTime, firstStop.plannedDepartureDateTime)
           : progArrival;
+        // Where the clock says the train is, and — when the feed has
+        // the train — where it actually is. The second wins; see
+        // _paintProgress.
+        const progKey = (station) => String(
+          (station && (station.uicCode || station.stationCode)) || "",
+        );
+        const progName = (station) => String((station && station.name) || "");
+        const endStation = firstStop || leg.destination;
         const progAttrs = Number.isFinite(progStart) && Number.isFinite(progEnd)
           ? ` data-prog-group="${tIdx}-${index}" data-prog-start="${progStart}" data-prog-end="${progEnd}"`
+            + ` data-prog-train="${trainNum}" data-prog-from="${progKey(leg.origin)}"`
+            + ` data-prog-to="${progKey(endStation)}" data-prog-from-name="${progName(leg.origin)}"`
+            + ` data-prog-to-name="${progName(endStation)}"`
           : "";
-        const depDotAttr = Number.isFinite(progStart) ? ` data-prog-at="${progStart}"` : "";
-        const arrDotAttr = Number.isFinite(progArrival) ? ` data-prog-at="${progArrival}"` : "";
+        const dotAttrs = (station, moment) => (Number.isFinite(moment)
+          ? ` data-prog-at="${moment}" data-prog-train="${trainNum}"`
+            + ` data-prog-uic="${progKey(station)}" data-prog-name="${progName(station)}"`
+          : "");
+        const depDotAttr = dotAttrs(leg.origin, progStart);
+        const arrDotAttr = dotAttrs(leg.destination, progArrival);
         const stopLabel = sCount === 1 ? t("stop_one", this._hass) : t("stop_other", this._hass, { n: sCount });
         const toggleLabel = isExpanded ? t("hide_stops", this._hass) : t("show_stops", this._hass);
         const sText = sCount <= 0
           ? `<span class="direct-text">${t("direct", this._hass)}</span>`
           : `<span>${stopLabel}</span><span class="stops-toggle ${isExpanded ? "open" : ""}" data-leg-key="${legKey}" title="${toggleLabel}" role="button"><ha-icon icon="mdi:chevron-down"></ha-icon></span>`;
-
-        const trainNum = (leg.product && leg.product.number) ? String(leg.product.number) : "";
         // Live positions come from ProRail's OBIS feed, which only
         // tracks Dutch operators. Foreign carriers (DB ICE, NMBS,
         // Eurostar) and most replacement bus services are missing —
@@ -995,11 +1015,14 @@ class NSReisadviesCard extends HTMLElement {
               stop.plannedDepartureDateTime, stop.plannedArrivalDateTime,
             );
             const stopProgAttr = Number.isFinite(stopMoment)
-              ? ` data-prog-at="${stopMoment}"` : "";
+              ? ` data-prog-at="${stopMoment}" data-prog-train="${trainNum}"`
+                + ` data-prog-uic="${stop.uicCode || stop.stationCode || ""}"`
+                + ` data-prog-name="${stop.name || ""}"`
+              : "";
             const rowCls = stop.cancelled ? "stop-row cancelled" : "stop-row";
             html += `<div class="${rowCls}">
               <div class="stop-time-cell">${timeHtml}</div>
-              <div class="stop-line-col"${stopProgAttr}></div>
+              <div class="stop-line-col"${stopProgAttr}><span class="stop-dot"></span></div>
               <div class="stop-info"><span class="stop-name">${stop.name || unknownLabel}</span>${platformHtml}</div>
             </div>`;
           });
@@ -2529,6 +2552,15 @@ class NSReisadviesCard extends HTMLElement {
     if (!ctx.stopMarkers.length && stops.length) {
       stops.forEach((s, i) => {
         const isEndpoint = i === 0 || i === stops.length - 1;
+        // v2.23.0: a station the train races through is not a stop.
+        // It stays in the list — the line is drawn through it and the
+        // estimate uses it to know how far along the train is — but
+        // marking it would promise a halt that is not on offer. An
+        // intercity would otherwise appear to call at every village
+        // between Amsterdam and Utrecht.
+        if (!isEndpoint && String(s.status || "").toUpperCase() === "PASSING") {
+          return;
+        }
         const icon = L.divIcon({
           className: "ns-leaflet-stop-wrap",
           html: `<div class="ns-leaflet-stop${isEndpoint ? " endpoint" : ""}"></div>`,
@@ -2671,12 +2703,26 @@ class NSReisadviesCard extends HTMLElement {
     });
 
     groups.forEach(elements => {
-      const start = Number(elements[0].getAttribute("data-prog-start"));
-      const end = Number(elements[0].getAttribute("data-prog-end"));
+      const first = elements[0];
+      const start = Number(first.getAttribute("data-prog-start"));
+      const end = Number(first.getAttribute("data-prog-end"));
       if (!Number.isFinite(start) || !Number.isFinite(end)) return;
-      const frac = end > start
+      let frac = end > start
         ? Math.max(0, Math.min(1, (now - start) / (end - start)))
         : (now >= end ? 1 : 0);
+
+      // While the train is on its way, ask where it really is. The
+      // timetable only says where it is due, and NS gives a time for
+      // stations it has not reached yet, so a train running behind
+      // would otherwise colour a station it is still approaching.
+      const train = first.getAttribute("data-prog-train");
+      if (now >= start && now <= end) this._ensureProgress(train);
+      const live = this._progressIndex(
+        train,
+        first.getAttribute("data-prog-from"), first.getAttribute("data-prog-from-name"),
+        first.getAttribute("data-prog-to"), first.getAttribute("data-prog-to-name"),
+      );
+      if (live != null) frac = live;
       const total = elements.reduce((sum, el) => sum + el.offsetHeight, 0);
       if (total <= 0) return;
       const filled = frac * total;
@@ -2699,16 +2745,87 @@ class NSReisadviesCard extends HTMLElement {
 
     // An unfolded stop: its dashed piece and the station dots are
     // either behind the train or still ahead of it.
-    this.content.querySelectorAll(".stop-line-col[data-prog-at]").forEach(el => {
-      const at = Number(el.getAttribute("data-prog-at"));
-      el.style.setProperty(
-        "--ns-stop-line", Number.isFinite(at) && now >= at ? DONE : TODO,
+    const behindTheTrain = (el) => {
+      const passed = this._progressPassed(
+        el.getAttribute("data-prog-train"),
+        el.getAttribute("data-prog-uic"),
+        el.getAttribute("data-prog-name"),
       );
+      if (passed != null) return passed;
+      const at = Number(el.getAttribute("data-prog-at"));
+      return Number.isFinite(at) && now >= at;
+    };
+    this.content.querySelectorAll(".stop-line-col[data-prog-at]").forEach(el => {
+      el.style.setProperty("--ns-stop-line", behindTheTrain(el) ? DONE : TODO);
     });
     this.content.querySelectorAll(".tl-dot[data-prog-at]").forEach(el => {
-      const at = Number(el.getAttribute("data-prog-at"));
-      el.classList.toggle("tl-dot-done", Number.isFinite(at) && now >= at);
+      el.classList.toggle("tl-dot-done", behindTheTrain(el));
     });
+  }
+
+  // Ask the backend where a train is along its run, at most once every
+  // 20 seconds per train. The answer is cached on the card and the
+  // line is repainted when it lands; both the run and the national
+  // vehicle feed are cached in the integration, so several cards
+  // asking at once cost one request between them.
+  _ensureProgress(train) {
+    if (!train || !this._hass) return;
+    this._progress = this._progress || new Map();
+    const held = this._progress.get(train);
+    const now = Date.now();
+    if (held && now - held.at < 20000) return;
+    if (held && held.pending) return;
+    this._progress.set(train, { at: now, pending: true, data: held && held.data });
+    this._hass.callWS({
+      type: "ns_reisadvies/train_progress",
+      train_number: train,
+    }).then(data => {
+      this._progress.set(train, { at: Date.now(), pending: false, data });
+      this._paintProgress(false);
+    }).catch(() => {
+      // No position, an older Home Assistant, or the command is not
+      // registered: the clock-based colouring stands.
+      this._progress.set(train, { at: Date.now(), pending: false, data: null });
+    });
+  }
+
+  // The train's place in the run, as an index with a fraction, and the
+  // helpers that turn it into "how far along this leg" and "has this
+  // station been passed".
+  _progressFor(train) {
+    const held = train && this._progress && this._progress.get(train);
+    const data = held && held.data;
+    if (!data || typeof data.position_index !== "number") return null;
+    if (!Array.isArray(data.stops) || !data.stops.length) return null;
+    return data;
+  }
+
+  _stopIndex(data, uic, name) {
+    const wanted = String(uic || "");
+    const wantedName = String(name || "").toLowerCase();
+    for (let i = 0; i < data.stops.length; i++) {
+      const stop = data.stops[i];
+      if (wanted && String(stop.uicCode || "") === wanted) return i;
+      if (wantedName && String(stop.name || "").toLowerCase() === wantedName) return i;
+    }
+    return -1;
+  }
+
+  _progressIndex(train, fromUic, fromName, toUic, toName) {
+    const data = this._progressFor(train);
+    if (!data) return null;
+    const from = this._stopIndex(data, fromUic, fromName);
+    const to = this._stopIndex(data, toUic, toName);
+    if (from < 0 || to < 0 || to <= from) return null;
+    return Math.max(0, Math.min(1, (data.position_index - from) / (to - from)));
+  }
+
+  _progressPassed(train, uic, name) {
+    const data = this._progressFor(train);
+    if (!data) return null;
+    const index = this._stopIndex(data, uic, name);
+    if (index < 0) return null;
+    return data.position_index > index;
   }
 
   _updatePosLabel(pos, leg) {
@@ -3158,7 +3275,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.22.0 ",
+  "%c NS-REISADVIES-CARD %c v2.23.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

@@ -4,6 +4,50 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.23.0] — 2026-11-19
+
+### Fixed — the timeline follows the train, not the timetable
+
+Reported within the hour of v2.22.0: the dashes past Diemen Zuid were
+already yellow while the train had not reached it. The colouring went
+by the clock, and the clock is not evidence. NS publishes a time for
+every station on a run, including the ones still ahead — for those it
+is when the train is *expected* — so a train running behind its own
+expectation gets drawn past a station it is still approaching.
+
+The card now asks where the train actually is. A new websocket
+command, `ns_reisadvies/train_progress`, takes the live position from
+the national vehicle feed and places it on the train's run as an index
+with a fraction: `6.4` means four tenths of the way from the seventh
+stop to the eighth. Everything before that index is behind the train,
+everything after is ahead, and the stretch of line in between is
+divided at the fraction. The placing is a pure function,
+`position_along`, which projects the fix onto each leg of the run and
+takes the nearest — and refuses a fix more than 25 km off the line,
+because that is another train than the one drawn.
+
+It is asked for at most once every twenty seconds per train, and only
+while a train is actually under way. Both the run and the vehicle feed
+are cached inside the integration, so several open dashboards cost one
+request between them. Without a fix — a train that reports no GPS, an
+older Home Assistant, the feed down — the clock-based colouring of
+v2.22.0 stands.
+
+### Added — a dot for every intermediate stop
+
+Unfolded stops were a name beside a dashed line. Each one now has a
+small dot on the line, in the colour of that piece of line, so a
+station reads as a station rather than as a gap in the dashes.
+
+### Fixed — the live map no longer marks stations the train races past
+
+Since v2.21.0 the map has drawn the train's whole run, and the run
+includes the stations it passes without stopping — they are what makes
+the line follow the track and the estimate move smoothly between
+halts. They were marked like any other stop, so a direct intercity
+appeared to call at every village along the way. The line still runs
+through them; the marker is gone.
+
 ## [2.22.0] — 2026-11-19
 
 ### Added — the card's timeline shows where the train is

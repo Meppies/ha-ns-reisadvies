@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant
 
 from custom_components.ns_reisadvies._live import (
     parse_journey,
+    position_along,
     run_window,
     vehicle_index,
 )
@@ -523,3 +524,69 @@ async def test_arcgis_network_error_counts_as_a_failure(
     coord._session.get = MagicMock(side_effect=aiohttp.ClientError("down"))
     assert await coord.async_fetch_arcgis_position("1825") is None
     assert bucket["_arcgis_failures"] == 1
+
+
+# --------------------------------------------------------------------
+# placing a fix on the run
+# --------------------------------------------------------------------
+
+def _line() -> list[dict]:
+    """Four stops roughly due south of each other."""
+    return [
+        {"name": "A", "lat": 52.40, "lng": 4.90},
+        {"name": "B", "lat": 52.30, "lng": 4.90},
+        {"name": "C", "lat": 52.20, "lng": 4.90},
+        {"name": "D", "lat": 52.10, "lng": 4.90},
+    ]
+
+
+def test_position_along_reads_as_index_plus_fraction() -> None:
+    stops = _line()
+    assert position_along(stops, 52.40, 4.90) == pytest.approx(0.0)
+    assert position_along(stops, 52.30, 4.90) == pytest.approx(1.0)
+    assert position_along(stops, 52.25, 4.90) == pytest.approx(1.5, abs=0.01)
+    assert position_along(stops, 52.10, 4.90) == pytest.approx(3.0)
+
+
+def test_position_along_is_what_the_timetable_cannot_say() -> None:
+    """Halfway between two stops is 1.5, whatever the clock thinks."""
+    stops = _line()
+    where = position_along(stops, 52.26, 4.902)
+    assert where is not None
+    assert 1.0 < where < 2.0
+
+
+def test_position_along_refuses_a_fix_that_is_somewhere_else() -> None:
+    stops = _line()
+    # Groningen is nowhere near this line.
+    assert position_along(stops, 53.21, 6.56) is None
+    # Unless you allow it to be.
+    assert position_along(stops, 53.21, 6.56, max_km=400) is not None
+
+
+def test_position_along_needs_a_run_and_a_fix() -> None:
+    assert position_along([], 52.3, 4.9) is None
+    assert position_along([{"lat": 52.3, "lng": 4.9}], 52.3, 4.9) is None
+    assert position_along(_line(), None, 4.9) is None
+    assert position_along(_line(), "here", 4.9) is None
+
+
+def test_position_along_skips_a_stop_it_cannot_read() -> None:
+    """A broken stop takes the two stretches touching it with it."""
+    stops = [
+        {"name": "A", "lat": 52.40, "lng": 4.90},
+        {"name": "B", "lat": "?", "lng": 4.90},
+        {"name": "C", "lat": 52.20, "lng": 4.90},
+        {"name": "D", "lat": 52.10, "lng": 4.90},
+    ]
+    assert position_along(stops, 52.15, 4.90) == pytest.approx(2.5, abs=0.01)
+    # Nothing readable at all: nothing to place a train on.
+    assert position_along(stops[:2], 52.40, 4.90) is None
+
+
+def test_position_along_handles_two_stops_at_one_spot() -> None:
+    stops = [
+        {"name": "A", "lat": 52.30, "lng": 4.90},
+        {"name": "B", "lat": 52.30, "lng": 4.90},
+    ]
+    assert position_along(stops, 52.30, 4.90) == pytest.approx(0.0)
