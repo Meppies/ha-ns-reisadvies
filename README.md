@@ -45,6 +45,13 @@ slots, train composition, and an opt-in live train map.
   snapped onto actual tracks via A* over the rail graph. The base map
   is Home Assistant's own `ha-map`, so it uses whatever map HA ships
   and follows the light or dark theme.
+- **Progress on the card itself**: the vertical line of a journey is
+  drawn in two colours, yellow for the stretch already travelled and
+  blue for what is left, with the boundary where the train is — part
+  way between two stations while it runs between them, and on the
+  station while it stands there. Unfold the intermediate stops and
+  each one turns as the train leaves it behind. The same two colours
+  as the live map, so the card and the map read the same way.
 - **Companion Lovelace card** auto-registers as a Lovelace resource —
   no manual `resources:` editing.
 - **Favourites on the map** (opt-in): with *Show favourites on the map*

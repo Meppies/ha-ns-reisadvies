@@ -633,6 +633,10 @@ class NSReisadviesCard extends HTMLElement {
         .tl-line-col { position: relative; display: flex; justify-content: center; }
         .tl-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--card-background-color); border: 3px solid #3b82f6; z-index: 2; margin-top: 4px; }
         .tl-dot-fill { background: #3b82f6; }
+        /* v2.22.0: a station the train has already left, in the same
+           yellow the live map uses for the stretch behind the train. */
+        .tl-dot-done { border-color: #FFC917; }
+        .tl-dot-done.tl-dot-fill { background: #FFC917; }
         .tl-line { position: absolute; top: 10px; bottom: -10px; width: 3px; background: #3b82f6; z-index: 1; }
         .tl-info { padding-left: 12px; padding-bottom: 8px; }
         .tl-station-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -692,7 +696,7 @@ class NSReisadviesCard extends HTMLElement {
         .stop-row .stop-time-cell .stop-time-prefix { font-size: 0.75em; opacity: 0.65; font-weight: 700; text-transform: uppercase; }
         .stop-row .stop-time-cell .stop-delay { color: #ff5252; font-weight: bold; margin-left: 2px; }
         .stop-row .stop-line-col { display: flex; justify-content: center; align-self: stretch; }
-        .stop-row .stop-line-col::before { content: ""; width: 0; border-left: 2px dashed #3b82f6; height: 100%; }
+        .stop-row .stop-line-col::before { content: ""; width: 0; border-left: 2px dashed var(--ns-stop-line, #3b82f6); height: 100%; }
         .stop-row .stop-info { padding-left: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.95em; color: var(--secondary-text-color); }
         .stop-row .stop-info .stop-name { flex: 1; word-break: break-word; }
         .tl-platform-small { background: #003082; color: white; padding: 1px 6px; border-radius: 3px; font-weight: bold; font-size: 0.78em; white-space: nowrap; flex-shrink: 0; }
@@ -865,6 +869,34 @@ class NSReisadviesCard extends HTMLElement {
         const sCount = intermediates.length;
         const legKey = `${tIdx}_${index}`;
         const isExpanded = this._expandedLegs.has(legKey);
+
+        // v2.22.0: the vertical line is coloured along with the train.
+        // Actual times where NS gives them, planned otherwise. The two
+        // line pieces of this leg share one span: from leaving the
+        // origin to reaching whichever station comes next in the
+        // column — the first intermediate stop when the stops are
+        // unfolded, the destination when they are not.
+        const stamp = (...values) => {
+          for (const value of values) {
+            const ms = Date.parse(value || "");
+            if (Number.isFinite(ms)) return ms;
+          }
+          return NaN;
+        };
+        const progStart = stamp(leg.origin.actualDateTime, leg.origin.plannedDateTime);
+        const progArrival = stamp(
+          leg.destination.actualDateTime, leg.destination.plannedDateTime,
+        );
+        const firstStop = isExpanded && sCount > 0 ? intermediates[0] : null;
+        const progEnd = firstStop
+          ? stamp(firstStop.actualArrivalDateTime, firstStop.plannedArrivalDateTime,
+                  firstStop.actualDepartureDateTime, firstStop.plannedDepartureDateTime)
+          : progArrival;
+        const progAttrs = Number.isFinite(progStart) && Number.isFinite(progEnd)
+          ? ` data-prog-group="${tIdx}-${index}" data-prog-start="${progStart}" data-prog-end="${progEnd}"`
+          : "";
+        const depDotAttr = Number.isFinite(progStart) ? ` data-prog-at="${progStart}"` : "";
+        const arrDotAttr = Number.isFinite(progArrival) ? ` data-prog-at="${progArrival}"` : "";
         const stopLabel = sCount === 1 ? t("stop_one", this._hass) : t("stop_other", this._hass, { n: sCount });
         const toggleLabel = isExpanded ? t("hide_stops", this._hass) : t("show_stops", this._hass);
         const sText = sCount <= 0
@@ -903,13 +935,13 @@ class NSReisadviesCard extends HTMLElement {
         html += `
           <div class="tl-grid">
             <div><div class="tl-time ${cCls}">${tDep}</div>${dDep}</div>
-            <div class="tl-line-col"><div class="tl-dot ${index === 0 ? "tl-dot-fill" : ""}"></div><div class="tl-line"></div></div>
+            <div class="tl-line-col"><div class="tl-dot ${index === 0 ? "tl-dot-fill" : ""}"${depDotAttr}></div><div class="tl-line"${progAttrs}></div></div>
             <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.origin.name || unknownLabel}</span>
             <span class="${pCls} ${cCls}">${platformLabel} ${leg.origin.actualTrack || leg.origin.plannedTrack || "?"}</span></div>${mapIconHtml}</div>
           </div>
           <div class="tl-grid">
             <div class="tl-duration-small ${cCls}">${legDur}</div>
-            <div class="tl-line-col"><div class="tl-line"></div></div>
+            <div class="tl-line-col"><div class="tl-line"${progAttrs}></div></div>
             <div class="tl-travel-info ${cCls}"><span class="tl-direction-main ${cCls}">${leg.direction || unknownLabel}</span>
               <div class="tl-train-details">${sText}<span class="detail-separator">•</span>
               <ha-icon icon="${this.getIcon(leg.product)}" style="--mdc-icon-size:16px; margin-right:4px;"></ha-icon>${(leg.product && leg.product.displayName) || unknownLabel}
@@ -958,10 +990,16 @@ class NSReisadviesCard extends HTMLElement {
               ? `<span class="${stopPlatformCls}">${platformLabel} ${stopTrack}</span>`
               : "";
 
+            const stopMoment = stamp(
+              stop.actualDepartureDateTime, stop.actualArrivalDateTime,
+              stop.plannedDepartureDateTime, stop.plannedArrivalDateTime,
+            );
+            const stopProgAttr = Number.isFinite(stopMoment)
+              ? ` data-prog-at="${stopMoment}"` : "";
             const rowCls = stop.cancelled ? "stop-row cancelled" : "stop-row";
             html += `<div class="${rowCls}">
               <div class="stop-time-cell">${timeHtml}</div>
-              <div class="stop-line-col"></div>
+              <div class="stop-line-col"${stopProgAttr}></div>
               <div class="stop-info"><span class="stop-name">${stop.name || unknownLabel}</span>${platformHtml}</div>
             </div>`;
           });
@@ -970,7 +1008,7 @@ class NSReisadviesCard extends HTMLElement {
         html += `
           <div class="tl-grid">
             <div><div class="tl-time ${cCls}">${tArr}</div>${dArr}</div>
-            <div class="tl-line-col"><div class="tl-dot ${index === trip.legs.length - 1 ? "tl-dot-fill" : ""}"></div></div>
+            <div class="tl-line-col"><div class="tl-dot ${index === trip.legs.length - 1 ? "tl-dot-fill" : ""}"${arrDotAttr}></div></div>
             <div class="tl-info"><div class="tl-station-header"><span class="tl-station-name ${cCls}">${leg.destination.name || unknownLabel}</span>
             <span class="${pArrCls} ${cCls}">${platformLabel} ${leg.destination.actualTrack || leg.destination.plannedTrack || "?"}</span></div></div>
           </div>`;
@@ -1006,6 +1044,7 @@ class NSReisadviesCard extends HTMLElement {
       html += `</div>`;
     });
     this.content.innerHTML = html + `</div>`;
+    this._paintProgress();
 
     const hearts = this.content.querySelectorAll(`.fav-heart`);
     hearts.forEach(btn => {
@@ -2598,6 +2637,80 @@ class NSReisadviesCard extends HTMLElement {
     }
   }
 
+  // v2.22.0: colour the timeline's vertical line along with the train.
+  // The stretch already travelled turns the same yellow the live map
+  // uses, the rest stays blue, and the boundary sits where the train is
+  // — part-way between two stations when it is between them, on the
+  // station when it is standing there.
+  //
+  // The line of one leg is drawn as several elements of different
+  // heights (and, with the stops unfolded, one dashed piece per stop),
+  // so the division is worked out here, after render, when the browser
+  // knows how tall each piece turned out. Times come from NS: actual
+  // where it reports them, planned where it does not.
+  _paintProgress(retry = true) {
+    if (!this.content) return;
+    const DONE = "#FFC917";
+    const TODO = "#3b82f6";
+    const now = Date.now();
+
+    // Straight after innerHTML the browser may not have laid the card
+    // out yet, and every piece of line measures zero. Come back once
+    // it has rather than leaving the line unpainted.
+    const firstLine = this.content.querySelector(".tl-line[data-prog-group]");
+    if (retry && firstLine && firstLine.offsetHeight === 0) {
+      requestAnimationFrame(() => this._paintProgress(false));
+      return;
+    }
+
+    const groups = new Map();
+    this.content.querySelectorAll(".tl-line[data-prog-group]").forEach(el => {
+      const key = el.getAttribute("data-prog-group");
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(el);
+    });
+
+    groups.forEach(elements => {
+      const start = Number(elements[0].getAttribute("data-prog-start"));
+      const end = Number(elements[0].getAttribute("data-prog-end"));
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return;
+      const frac = end > start
+        ? Math.max(0, Math.min(1, (now - start) / (end - start)))
+        : (now >= end ? 1 : 0);
+      const total = elements.reduce((sum, el) => sum + el.offsetHeight, 0);
+      if (total <= 0) return;
+      const filled = frac * total;
+      let walked = 0;
+      elements.forEach(el => {
+        const height = el.offsetHeight;
+        const top = walked;
+        walked += height;
+        if (filled >= walked) {
+          el.style.background = DONE;
+        } else if (filled <= top || height <= 0) {
+          el.style.background = TODO;
+        } else {
+          const pct = ((filled - top) / height) * 100;
+          el.style.background =
+            `linear-gradient(to bottom, ${DONE} ${pct}%, ${TODO} ${pct}%)`;
+        }
+      });
+    });
+
+    // An unfolded stop: its dashed piece and the station dots are
+    // either behind the train or still ahead of it.
+    this.content.querySelectorAll(".stop-line-col[data-prog-at]").forEach(el => {
+      const at = Number(el.getAttribute("data-prog-at"));
+      el.style.setProperty(
+        "--ns-stop-line", Number.isFinite(at) && now >= at ? DONE : TODO,
+      );
+    });
+    this.content.querySelectorAll(".tl-dot[data-prog-at]").forEach(el => {
+      const at = Number(el.getAttribute("data-prog-at"));
+      el.classList.toggle("tl-dot-done", Number.isFinite(at) && now >= at);
+    });
+  }
+
   _updatePosLabel(pos, leg) {
     if (!this._activeMap || !this._activeMap.modalEl) return;
     const el = this._activeMap.modalEl.querySelector(".ns-map-pos");
@@ -3045,7 +3158,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.21.0 ",
+  "%c NS-REISADVIES-CARD %c v2.22.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

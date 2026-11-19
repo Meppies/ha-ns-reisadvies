@@ -4,6 +4,34 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.22.0] — 2026-11-19
+
+### Added — the card's timeline shows where the train is
+
+The live map has drawn the stretch behind the train in yellow and the
+stretch ahead in blue for a while. The card on the dashboard did not:
+its vertical line was blue from the departure station to the arrival
+station whatever the train was doing. It is now coloured the same way,
+so a glance at the dashboard says how far along the journey is without
+opening anything.
+
+The boundary sits where the train is. Between two stations it lands
+part way down the line, in proportion to the time between leaving the
+one and reaching the other; standing at a station it sits on that
+station. Unfold the intermediate stops and each dashed piece turns as
+the train leaves that stop behind, and the station dots follow along.
+A journey already finished is yellow end to end, one still to come
+stays blue.
+
+Times come from NS — actual where it reports them, planned where it
+does not — and the line is repainted on the card's own thirty-second
+tick, so it keeps creeping along between data refreshes. The division
+is worked out after the browser has laid the card out, because one
+leg's line is several elements of different heights and, with the
+stops unfolded, a dashed piece per stop; a first paint that measures
+zero comes back on the next frame rather than leaving the line
+unpainted.
+
 ## [2.21.0] — 2026-11-19
 
 ### Fixed — live train positions are back, and now cover the whole run
