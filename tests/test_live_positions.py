@@ -424,7 +424,10 @@ async def test_journey_cache_forgets_trains_nobody_asks_about(
 ) -> None:
     coord = _coord(hass)
     cache = hass.data.setdefault(DOMAIN, {}).setdefault("_journeys", {})
-    cache["999"] = {"at": 0.0, "stops": []}
+    # Far enough in the past to be stale whatever the clock reads: a
+    # literal 0.0 only looks old on a machine that has been up for a
+    # while, which made this pass here and fail on a fresh CI runner.
+    cache["999"] = {"at": time.monotonic() - 10_000, "stops": []}
     cache["bad"] = "not a dict"
     coord._session = MagicMock()
     coord._session.get = MagicMock(return_value=_resp(200, _journey()))
