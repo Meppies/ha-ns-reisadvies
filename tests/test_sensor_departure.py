@@ -11,6 +11,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorStateClass,
+)
+from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockEntityPlatform
 
@@ -87,7 +92,22 @@ async def test_setup_adds_three_sensors_per_route(hass: HomeAssistant) -> None:
         assert entities[2].unique_id == f"{route_uid}_next_train"
         for entity in entities[1:]:
             assert entity.device_info["identifiers"] == {(DOMAIN, route_uid)}
+        # Entity ids sit beside the trips sensor and are derived from the
+        # route, not from the translated entity name: a Dutch instance
+        # must not end up with sensor.<device>_vertraging.
+        trips_object_id = entities[0]._attr_suggested_object_id
+        assert entities[1]._attr_suggested_object_id == f"{trips_object_id}_delay"
+        assert entities[2]._attr_suggested_object_id == f"{trips_object_id}_next_train"
         assert kwargs["config_subentry_id"] in {"a", "b"}
+
+
+async def test_delay_is_recorded_as_a_measurement(hass: HomeAssistant) -> None:
+    """A delay in minutes belongs in long-term statistics."""
+    added = await _setup(hass, {"a": _route()})
+    delay = added[0][0][1]
+    assert delay.state_class == SensorStateClass.MEASUREMENT
+    assert delay.device_class == SensorDeviceClass.DURATION
+    assert delay.native_unit_of_measurement == UnitOfTime.MINUTES
 
 
 @pytest.mark.parametrize(

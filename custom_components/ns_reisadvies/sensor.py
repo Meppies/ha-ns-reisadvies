@@ -22,7 +22,11 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
@@ -103,8 +107,12 @@ async def async_setup_entry(
         # device and read the same (filtered) coordinator data.
         by_subentry[subentry_id].extend(
             [
-                NSReisadviesDelaySensor(coord, route_unique_id=unique_id),
-                NSReisadviesNextTrainSensor(coord, route_unique_id=unique_id),
+                NSReisadviesDelaySensor(
+                    coord, route_unique_id=unique_id, route_object_id=suggested,
+                ),
+                NSReisadviesNextTrainSensor(
+                    coord, route_unique_id=unique_id, route_object_id=suggested,
+                ),
             ]
         )
 
@@ -346,12 +354,26 @@ class _NSDepartureSensorBase(CoordinatorEntity[NSUpdateCoordinator], SensorEntit
     _unique_id_suffix: str = ""
 
     def __init__(
-        self, coordinator: NSUpdateCoordinator, *, route_unique_id: str
+        self,
+        coordinator: NSUpdateCoordinator,
+        *,
+        route_unique_id: str,
+        route_object_id: str | None = None,
     ) -> None:
-        """Attach to the route's device (identifiers only, so it merges)."""
+        """Attach to the route's device (identifiers only, so it merges).
+
+        ``route_object_id`` is the trips sensor's suggested entity_id, so
+        these sensors sit beside it as ``sensor.ns_werk_delay`` rather
+        than taking an id from the translated entity name, which would
+        differ per Home Assistant language.
+        """
         super().__init__(coordinator)
         self._attr_unique_id = f"{route_unique_id}_{self._unique_id_suffix}"
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, route_unique_id)})
+        if route_object_id:
+            self._attr_suggested_object_id = (
+                f"{route_object_id}_{self._unique_id_suffix}"
+            )
 
     @property
     def _departure(self) -> dict[str, Any] | None:
@@ -377,6 +399,9 @@ class NSReisadviesDelaySensor(_NSDepartureSensorBase):
     _unique_id_suffix = "delay"
     _attr_device_class = SensorDeviceClass.DURATION
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    # A delay is a measurement, so Home Assistant keeps long-term
+    # statistics: how late this route runs over a week or a month.
+    _attr_state_class = SensorStateClass.MEASUREMENT
 
     @property
     def native_value(self) -> int | None:

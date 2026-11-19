@@ -304,10 +304,11 @@ applies to them too.
 
 Both carry the same attributes: `train` (`IC 1522`), `planned`,
 `expected` (`HH:MM`), `track`, `track_changed` and `status` (`on_time`,
-`delayed` or `cancelled`). Their entity ids follow the route's name and
-Home Assistant's language, for example `sensor.werk_delay` or
-`sensor.werk_vertraging`; the route's device page lists them. The
-example under [Examples](#examples) triggers on `status`.
+`delayed` or `cancelled`). Their entity ids sit beside the route's trips
+sensor and follow its name, so a route called *Werk* gives
+`sensor.ns_werk`, `sensor.ns_werk_delay` and `sensor.ns_werk_next_train`
+whatever language Home Assistant runs in. The route's device page lists
+them. The example under [Examples](#examples) triggers on `status`.
 
 ## Lovelace card
 
@@ -522,11 +523,11 @@ automation:
   - alias: "My train is delayed"
     triggers:
       - trigger: state
-        entity_id: sensor.hilversum_duivendrecht_delay
+        entity_id: sensor.ns_hilversum_duivendrecht_delay
         attribute: status
         to: [delayed, cancelled]
       - trigger: state                 # a new train moved to the front
-        entity_id: sensor.hilversum_duivendrecht_delay
+        entity_id: sensor.ns_hilversum_duivendrecht_delay
         attribute: train
       - trigger: time                  # already delayed before the window
         at: "07:30:00"
@@ -537,18 +538,18 @@ automation:
         before: "09:30:00"
       - condition: template
         value_template: >-
-          {{ state_attr('sensor.hilversum_duivendrecht_delay', 'status')
+          {{ state_attr('sensor.ns_hilversum_duivendrecht_delay', 'status')
              in ['delayed', 'cancelled'] }}
     actions:
       - action: notify.mobile_app_phone
         data:
           title: >-
-            {{ state_attr('sensor.hilversum_duivendrecht_delay', 'train') }}
-            {{ state_attr('sensor.hilversum_duivendrecht_delay', 'status') }}
+            {{ state_attr('sensor.ns_hilversum_duivendrecht_delay', 'train') }}
+            {{ state_attr('sensor.ns_hilversum_duivendrecht_delay', 'status') }}
           message: >-
-            {{ state_attr('sensor.hilversum_duivendrecht_delay', 'planned') }}
-            now {{ state_attr('sensor.hilversum_duivendrecht_delay', 'expected') }},
-            platform {{ state_attr('sensor.hilversum_duivendrecht_delay', 'track') }}
+            {{ state_attr('sensor.ns_hilversum_duivendrecht_delay', 'planned') }}
+            now {{ state_attr('sensor.ns_hilversum_duivendrecht_delay', 'expected') }},
+            platform {{ state_attr('sensor.ns_hilversum_duivendrecht_delay', 'track') }}
 ```
 
 Pin a trip from a script (the same call the heart icon makes):

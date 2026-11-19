@@ -4,7 +4,7 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.20.0] — 2026-11-10
+## [2.20.0] — 2026-11-19
 
 ### Added — delay and next-train sensors per route
 
@@ -30,6 +30,22 @@ own; separate tests cover the wiring — three sensors per route, unique
 ids and device, the state and attributes written to Home Assistant in
 both languages, and the texts and icons in `translations/` and
 `icons.json`.
+
+Both sensors take their entity id from the route, beside the trips
+sensor — `sensor.ns_werk_delay`, not an id derived from the translated
+entity name, which would read `sensor.ns_werk_vertraging` on a Dutch
+instance and differ per language. The delay carries a measurement state
+class as well, so Home Assistant keeps long-term statistics on how late
+a route runs.
+
+`parse_iso` moved from `coordinator.py` to `_filter.py` in the same
+change. The departure helper is meant to be testable without Home
+Assistant, and reaching into the coordinator for that one function
+pulled in homeassistant, aiohttp and async_timeout behind it. The
+coordinator imports it from `_filter` now, so `from .coordinator import
+parse_iso` keeps working.
+
+Contributed by @woldhek in #3.
 
 ## [2.19.2] — 2026-11-05
 

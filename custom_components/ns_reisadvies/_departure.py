@@ -13,8 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._filter import leg_category_codes
-from .coordinator import parse_iso
+from ._filter import leg_category_codes, parse_iso
 
 STATUS_ON_TIME = "on_time"
 STATUS_DELAYED = "delayed"

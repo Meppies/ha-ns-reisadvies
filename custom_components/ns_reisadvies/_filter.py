@@ -12,8 +12,30 @@ up a hass fixture.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+
+
+def parse_iso(value: Any) -> datetime | None:
+    """Parse an NS ISO-8601 timestamp into an aware datetime.
+
+    NS returns offsets like ``2026-10-07T07:52:00+0200``. ``fromisoformat``
+    handles that from Python 3.11 on; anything unparseable yields None so
+    callers can treat the field as missing rather than raising.
+
+    Lives here rather than in the coordinator because the departure and
+    filter helpers both need it and neither should have to import a
+    module that brings in Home Assistant and aiohttp.
+    """
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 def compute_target_datetime(

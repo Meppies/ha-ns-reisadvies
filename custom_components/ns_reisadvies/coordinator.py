@@ -30,6 +30,7 @@ from ._filter import (
     apply_train_type_filter,
     apply_window_filter,
     compute_target_datetime,
+    parse_iso,
     train_types_in,
 )
 from .const import (
@@ -99,24 +100,6 @@ _API_KEY_INVISIBLE = (
     " "  # line separator
     " "  # paragraph separator
 )
-
-
-def parse_iso(value: Any) -> datetime | None:
-    """Parse an NS ISO-8601 timestamp into an aware datetime.
-
-    NS returns offsets like ``2026-10-07T07:52:00+0200``. ``fromisoformat``
-    handles that from Python 3.11 on; anything unparseable yields None so
-    callers can treat the field as missing rather than raising.
-    """
-    if not value or not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed
 
 
 def sanitize_api_key(value: Any) -> str:
