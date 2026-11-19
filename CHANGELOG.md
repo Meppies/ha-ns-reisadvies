@@ -4,6 +4,22 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.23.1] — 2026-11-19
+
+### Fixed — the station a train is standing in counts as reached
+
+A train waiting at Naarden-Bussum left Naarden-Bussum uncoloured: the
+station only turned once the train had pulled out of it. Two reasons,
+both now gone.
+
+A stopped train's fix sits at the platform, a few hundred metres from
+the point NS gives for the station itself, so it read as "not there
+yet". A fix within 500 m of a station is now taken as being at that
+station, and the answer is that station's index exactly — which also
+lands the coloured line on the station dot rather than a few pixels
+short of it. And the card asked whether the train was *past* a
+station; it now asks whether it has reached it.
+
 ## [2.23.0] — 2026-11-19
 
 ### Fixed — the timeline follows the train, not the timetable

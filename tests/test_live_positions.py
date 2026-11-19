@@ -556,6 +556,29 @@ def test_position_along_is_what_the_timetable_cannot_say() -> None:
     assert 1.0 < where < 2.0
 
 
+def test_position_along_counts_standing_in_a_station_as_being_there() -> None:
+    """A platform is a few hundred metres from the station's own point.
+
+    Without this the station stays uncoloured while the train sits in
+    it, which is what a traveller on the platform sees and does not
+    believe.
+    """
+    stops = _line()
+    # Roughly 300 m short of stop B, which is where a stopped train's
+    # fix tends to sit.
+    where = position_along(stops, 52.2973, 4.90)
+    assert where == pytest.approx(1.0)
+    # Far enough out to be on its way again.
+    moving = position_along(stops, 52.29, 4.90)
+    assert moving is not None and moving > 1.05
+
+
+def test_position_along_snapping_can_be_turned_off() -> None:
+    stops = _line()
+    free = position_along(stops, 52.2973, 4.90, snap_km=0.0)
+    assert free is not None and free != pytest.approx(1.0)
+
+
 def test_position_along_refuses_a_fix_that_is_somewhere_else() -> None:
     stops = _line()
     # Groningen is nowhere near this line.

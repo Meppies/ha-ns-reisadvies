@@ -2820,12 +2820,16 @@ class NSReisadviesCard extends HTMLElement {
     return Math.max(0, Math.min(1, (data.position_index - from) / (to - from)));
   }
 
+  // "Behind the train" includes the station it is standing in: the
+  // backend answers with that station's exact index while the train is
+  // at the platform, so a train waiting at Naarden-Bussum colours
+  // Naarden-Bussum rather than leaving it for when it pulls out.
   _progressPassed(train, uic, name) {
     const data = this._progressFor(train);
     if (!data) return null;
     const index = this._stopIndex(data, uic, name);
     if (index < 0) return null;
-    return data.position_index > index;
+    return data.position_index >= index;
   }
 
   _updatePosLabel(pos, leg) {
@@ -3275,7 +3279,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.23.0 ",
+  "%c NS-REISADVIES-CARD %c v2.23.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

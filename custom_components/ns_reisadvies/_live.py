@@ -250,6 +250,7 @@ def position_along(
     lat: Any,
     lng: Any,
     max_km: float = 25.0,
+    snap_km: float = 0.5,
 ) -> float | None:
     """Where a GPS fix sits along the run, as an index with a fraction.
 
@@ -263,6 +264,12 @@ def position_along(
     still to come carries the time it is expected to be reached — so a
     train running behind its own expectation looks, to the clock, as
     though it has already passed the next station.
+
+    A train within ``snap_km`` of a station counts as being at it, and
+    the answer is that station's index exactly. Standing at a platform
+    the fix is tens or hundreds of metres from the station's own
+    coordinates, which would otherwise read as "not there yet" and
+    leave the station uncoloured while the train sits in it.
 
     Returns None when there is no fix, when the run is too short to
     place one on, or when the fix is further than ``max_km`` from the
@@ -298,6 +305,18 @@ def position_along(
             best = (index + share, gap)
     if best is None or best[1] > max_km:
         return None
+
+    here = {"lat": point[0], "lng": point[1]}
+    nearest: tuple[int, float] | None = None
+    for index, stop in enumerate(stops):
+        try:
+            gap = _distance_km(stop, here)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if nearest is None or gap < nearest[1]:
+            nearest = (index, gap)
+    if nearest is not None and nearest[1] <= snap_km:
+        return float(nearest[0])
     return best[0]
 
 
