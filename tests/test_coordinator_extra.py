@@ -2,8 +2,9 @@
 
 These tests target the asynchronous fetcher methods that the v2.13.0
 test pass left uncovered: composition, stations geo, ArcGIS train
-position, the full rail-network paginator, the journey-route lookup,
-and the tracked-trips merge inside ``_async_update_data``.
+position, the full rail-network paginator, and the tracked-trips merge
+inside ``_async_update_data``. Live positions and the journey live in
+``test_live_positions.py``.
 
 Each test stubs ``coord._session`` with a MagicMock that returns a
 fake aiohttp response, so nothing here touches the network.
@@ -280,63 +281,6 @@ async def test_rail_network_empty_features(hass):
     coord._session.get = MagicMock(return_value=_resp(200, {"features": []}))
     assert await coord.async_fetch_full_rail_network() is None
 
-async def test_journey_route_empty_without_train_number(hass):
-    coord = _make(hass)
-    assert await coord.async_fetch_journey_route("") == []
-
-
-async def test_journey_route_empty_without_api_key(hass):
-    coord = _make(hass, api_key="")
-    assert await coord.async_fetch_journey_route("100") == []
-
-
-async def test_journey_route_returns_empty_on_http_error(hass):
-    coord = _make(hass)
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(return_value=_resp(500))
-    assert await coord.async_fetch_journey_route("1") == []
-
-
-async def test_journey_route_returns_empty_on_network_error(hass):
-    coord = _make(hass)
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=aiohttp.ClientError("net"))
-    assert await coord.async_fetch_journey_route("1") == []
-
-
-async def test_journey_route_returns_empty_on_no_stops(hass):
-    coord = _make(hass)
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(return_value=_resp(200, {"payload": {"stops": []}}))
-    assert await coord.async_fetch_journey_route("1") == []
-
-
-async def test_journey_route_success_with_passed_flag(hass):
-    coord = _make(hass)
-    coord._entry = None
-    payload = {"payload": {"stops": [
-        {"station": {"uicCode": "8400001", "stationCode": "AAA", "name": "Stop A"},
-         "status": "PASSED",
-         "actualDepartureDateTime": "2020-01-01T00:00:00+00:00"},
-        {"station": {"uicCode": "8400002", "stationCode": "BBB", "name": "Stop B"},
-         "status": "STOP",
-         "plannedDepartureDateTime": "2099-01-01T00:00:00+00:00"},
-        {"station": {"uicCode": "9999999", "stationCode": "ZZZ", "name": "Ghost"}},
-    ]}}
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, payload),
-        _resp(200, {"payload": [
-            {"code": "AAA", "UICCode": "8400001", "namen": {"lang": "Stop A"}, "lat": 52.0, "lng": 4.0},
-            {"code": "BBB", "UICCode": "8400002", "namen": {"lang": "Stop B"}, "lat": 52.1, "lng": 4.1},
-        ]}),
-    ])
-    out = await coord.async_fetch_journey_route("100")
-    assert len(out) == 2
-    assert out[0]["passed"] is True
-    assert out[1]["passed"] is False
-
-
 async def test_update_data_includes_tracked_trips(hass):
     coord = _make(hass)
     coord.tracked_trips = {"FAV1": time.time()}
@@ -425,67 +369,6 @@ async def test_update_data_tracked_trip_network_error_skipped(hass):
     out = await coord._async_update_data()
     # Tracked trip stays (skip != gone)
     assert "FAV1" in coord.tracked_trips
-
-
-async def test_live_train_empty_then_filter_off_also_empty_logs_warning(hass):
-    """vehicle URL returns empty, retry without filter also empty -> station-based fallback."""
-    coord = _make(hass)
-    coord._session = MagicMock()
-    # First call: route filter empty; retry: no filter, also empty; then station-based call returns empty too.
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, {"payload": {"treinen": []}}),
-        _resp(200, {"payload": {"treinen": []}}),
-        _resp(200, {"payload": {}}),  # station-based: no station_code -> None
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is None
-
-
-async def test_live_train_filter_no_match_multiple_vehicles(hass):
-    """Multiple vehicles, none match the route, none with single fallback -> station-based."""
-    coord = _make(hass)
-    payload = {"payload": {"treinen": [
-        {"route": "999", "lat": 52, "lng": 5},
-        {"route": "888", "lat": 52, "lng": 5},
-    ]}}
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, payload),
-        _resp(200, {"payload": {}}),  # station-based: no station -> None
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is None
-
-
-async def test_live_train_match_has_no_lat_falls_back(hass):
-    """Match found by route but lat is None -> station-based fallback."""
-    coord = _make(hass)
-    payload = {"payload": {"treinen": [{"route": "100"}]}}  # No lat/lng
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, payload),
-        _resp(200, {"payload": {}}),
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is None
-
-
-async def test_journey_route_with_status_passing_passed_flag(hass):
-    """Status PASSING_PASSED (extended status form) -> passed=True."""
-    coord = _make(hass)
-    coord._entry = None
-    payload = {"payload": {"stops": [
-        {"station": {"uicCode": "8400001", "stationCode": "AAA", "name": "Stop A"},
-         "status": "PASSING_PASSED"},
-    ]}}
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, payload),
-        _resp(200, {"payload": [{"code": "AAA", "UICCode": "8400001", "namen": {"lang": "Stop A"}, "lat": 52.0, "lng": 4.0}]}),
-    ])
-    out = await coord.async_fetch_journey_route("100")
-    assert len(out) == 1
-    assert out[0]["passed"] is True
 
 
 async def test_stations_geo_logs_count(hass, caplog):

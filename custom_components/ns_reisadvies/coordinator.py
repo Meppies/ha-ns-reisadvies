@@ -33,9 +33,15 @@ from ._filter import (
     parse_iso,
     train_types_in,
 )
+from ._live import parse_journey, run_window, vehicle_index
 from .const import (
     API_URL,
+    ARCGIS_BACKOFF_MINUTES,
+    ARCGIS_FAILURES_BEFORE_BACKOFF,
     ARCGIS_TREINEN_URL,
+    FAV_RUN_LOOKAROUND_HOURS,
+    JOURNEY_CACHE_SECONDS,
+    VEHICLE_CACHE_SECONDS,
     FILTER_EXTRA_SEARCHES,
     FILTER_MIN_RESULTS,
     DEFAULT_FAV_TRACK_SECONDS,
@@ -432,15 +438,49 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             "departure": dep, "arrival": arr,
         }
 
+    def _worth_following(
+        self, state: dict[str, Any], moment: datetime,
+    ) -> bool:
+        """Whether a pinned trip is close enough in time to look at.
+
+        A favourite pinned for tomorrow morning must not keep the feed
+        busy all night, so nothing is fetched outside a few hours around
+        the trip itself. Inside that span the train's own run decides.
+        """
+        reach = timedelta(hours=FAV_RUN_LOOKAROUND_HOURS)
+        for key in ("departure", "arrival"):
+            when = state.get(key)
+            if isinstance(when, datetime) and abs(when - moment) <= reach:
+                return True
+        return False
+
+    async def _async_train_is_running(
+        self, train_number: str, moment: datetime,
+    ) -> bool | None:
+        """Whether this train is somewhere on its own run right now.
+
+        Returns None when NS will not say — an older key gets a 404 on
+        the journey endpoint — so the caller can fall back to the
+        traveller's own travel window.
+        """
+        start, end = await self.async_journey_run(train_number)
+        if start is None or end is None:
+            return None
+        grace = timedelta(minutes=FAV_TRACK_GRACE_MINUTES)
+        return start - grace <= moment <= end + grace
+
     async def async_refresh_favourite_positions(
         self, now: datetime | None = None,
     ) -> None:
-        """Fetch a GPS fix for every pinned favourite that is en route.
+        """Fetch a GPS fix for every pinned favourite whose train runs.
 
-        Nothing is fetched for favourites that have not departed yet or
-        have arrived, so a pinned trip costs zero requests outside its
-        own travel window. The ArcGIS feed is the primary source; the
-        station-based fallback covers trains without OBIS reporting.
+        A train is followed for as long as its own run lasts, not just
+        while the traveller is on board: it is already worth seeing
+        while it approaches the departure station from wherever it
+        started, and it stays worth seeing as it carries on past the
+        arrival station. Outside a few hours around the trip nothing is
+        fetched at all, and the national vehicle feed behind this is one
+        shared request however many favourites are pinned.
         """
         if not self.track_favourites:
             if self.favourite_positions:
@@ -463,11 +503,18 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             product = leg.get("product") or {}
             train_number = str(product.get("number") or "")
             position: dict[str, Any] | None = None
-            if state["active"] and train_number:
-                position = await self.async_fetch_arcgis_position(train_number)
-                if position is None:
+            running = False
+            if train_number and self._worth_following(state, moment):
+                on_its_run = await self._async_train_is_running(
+                    train_number, moment,
+                )
+                # Without a journey to go on, fall back to the
+                # traveller's own window, which is what v2.20.0 and
+                # earlier used on its own.
+                running = bool(state["active"]) if on_its_run is None else on_its_run
+                if running:
                     dep = state.get("departure")
-                    position = await self._async_station_based_position(
+                    position = await self.async_fetch_train_position(
                         train_number,
                         anchor_iso=dep.isoformat() if isinstance(dep, datetime) else None,
                     )
@@ -476,6 +523,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                 "ctx_recon": ctx,
                 "active": state["active"],
                 "phase": state["phase"],
+                "train_running": running,
                 "train_number": train_number,
                 "product": product,
                 "origin": (leg.get("origin") or {}).get("name"),
@@ -486,9 +534,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                 "trip_origin": self._trip_endpoint(state["trip"], first=True),
                 "trip_destination": self._trip_endpoint(state["trip"], first=False),
                 # Keep the last known fix while the train is between
-                # reports; drop it once the trip is over so an arrived
-                # train does not linger on the map.
-                "position": position or (previous.get("position") if state["active"] else None),
+                # reports; drop it once the run is over so a train that
+                # finished for the day does not linger on the map.
+                "position": position or (previous.get("position") if running else None),
                 "position_fresh": position is not None,
                 "updated_at": moment.isoformat(),
             }
@@ -501,6 +549,11 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         and within the same phase the earliest departure does. Returns
         None when nothing is pinned, which leaves the tracker without
         coordinates rather than removing it.
+
+        A trip the traveller has finished still counts while its train
+        is on its way to the next station — that is the whole point of
+        following the train rather than the journey — but it gives way
+        to any trip still to come.
         """
         if not self.favourite_positions:
             return None
@@ -513,7 +566,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             return (rank.get(phase, 3), stamp)
 
         best = min(self.favourite_positions.values(), key=sort_key)
-        return best if sort_key(best)[0] < 2 else None
+        if sort_key(best)[0] < 2:
+            return best
+        return best if best.get("train_running") else None
 
     @staticmethod
     def _trip_endpoint(trip: dict[str, Any], *, first: bool) -> str | None:
@@ -1255,20 +1310,188 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         )
         return {"type": "FeatureCollection", "features": features}
 
+    def _shared(self) -> dict[str, Any]:
+        """The bucket every route coordinator in this install shares.
+
+        Live positions and journeys are properties of a train, not of a
+        route, so two routes that happen to use the same train fetch it
+        once between them.
+        """
+        bucket: dict[str, Any] = self.hass.data.setdefault(DOMAIN, {})
+        return bucket
+
+    async def async_fetch_vehicles(self) -> dict[str, dict[str, Any]]:
+        """Every train NS currently reports a GPS position for.
+
+        Requested without the ``lat``/``lng``/``radius`` parameters the
+        NS App sends. Those are interpreted in metres, so asking for a
+        radius of 300 around a point in the middle of the country —
+        which is what this integration did until v2.21.0 — returns an
+        empty list, and live positions quietly vanished from the map.
+        Unfiltered, the whole country is roughly 40 kB, fetched once per
+        ``VEHICLE_CACHE_SECONDS`` and shared by every route and every
+        open map.
+        """
+        if not self.api_key:
+            return {}
+        bucket = self._shared()
+        cached = self._cached_vehicles(bucket)
+        if cached is not None:
+            return cached
+        lock = bucket.get("_vehicles_lock")
+        if not isinstance(lock, asyncio.Lock):
+            lock = bucket["_vehicles_lock"] = asyncio.Lock()
+        async with lock:
+            # Another tick may have filled the cache while we queued.
+            cached = self._cached_vehicles(bucket)
+            if cached is not None:
+                return cached
+            headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+            index: dict[str, dict[str, Any]] = {}
+            for url in (
+                VIRTUAL_TRAIN_VEHICLE_URL,
+                VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL,
+            ):
+                try:
+                    async with async_timeout.timeout(15):
+                        async with self._session.get(url, headers=headers) as resp:
+                            if resp.status != 200:
+                                _LOGGER.debug(
+                                    "Vehicle feed %s -> HTTP %s", url, resp.status,
+                                )
+                                continue
+                            payload = await resp.json()
+                except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                    _LOGGER.debug("Vehicle feed %s failed: %s", url, err)
+                    continue
+                index = vehicle_index(payload)
+                if index:
+                    break
+            # An empty result is cached too: a feed that is down should
+            # not be asked again on every single lookup.
+            bucket["_vehicles"] = {"at": time.monotonic(), "by_ride": index}
+            return index
+
+    @staticmethod
+    def _cached_vehicles(
+        bucket: dict[str, Any],
+    ) -> dict[str, dict[str, Any]] | None:
+        """The shared vehicle index while it is still fresh."""
+        entry = bucket.get("_vehicles")
+        if not isinstance(entry, dict):
+            return None
+        if time.monotonic() - float(entry.get("at") or 0) >= VEHICLE_CACHE_SECONDS:
+            return None
+        index: dict[str, dict[str, Any]] = entry.get("by_ride") or {}
+        return index
+
+    async def async_fetch_vehicle_position(
+        self, train_number: str,
+    ) -> dict[str, Any] | None:
+        """This train's GPS fix from NS's own live vehicle feed."""
+        if not train_number:
+            return None
+        vehicles = await self.async_fetch_vehicles()
+        fix: dict[str, Any] | None = vehicles.get(str(train_number).strip())
+        return fix
+
+    async def async_fetch_train_position(
+        self, train_number: str, anchor_iso: str | None = None,
+    ) -> dict[str, Any] | None:
+        """The best position available for one train.
+
+        NS's own vehicle feed first, because it is national and shared;
+        ProRail's ArcGIS feed second, in case it ever answers again; and
+        the station-based estimate last, so a train that reports no GPS
+        at all still appears somewhere truthful.
+        """
+        position = await self.async_fetch_vehicle_position(train_number)
+        if position is None:
+            position = await self.async_fetch_arcgis_position(train_number)
+        if position is None:
+            position = await self._async_station_based_position(
+                train_number, anchor_iso,
+            )
+        return position
+
+    async def async_journey_stops(self, train_number: str) -> list[dict[str, Any]]:
+        """The train's complete run for today, parsed and cached.
+
+        Everything the live map needs beyond the traveller's own leg:
+        the stations before they board, the ones after they get out, and
+        the times NS reports at each of them.
+        """
+        if not train_number or not self.api_key:
+            return []
+        key = str(train_number).strip()
+        cache = self._shared().setdefault("_journeys", {})
+        entry = cache.get(key)
+        if isinstance(entry, dict):
+            age = time.monotonic() - float(entry.get("at") or 0)
+            if age < JOURNEY_CACHE_SECONDS:
+                fresh: list[dict[str, Any]] = entry.get("stops") or []
+                return fresh
+
+        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        stops: list[dict[str, Any]] = []
+        try:
+            async with async_timeout.timeout(15):
+                async with self._session.get(
+                    JOURNEY_API_URL,
+                    headers=headers,
+                    params={"train": key, "omitCrowdForecast": "true"},
+                ) as resp:
+                    if resp.status == 200:
+                        stops = parse_journey(await resp.json())
+                    else:
+                        _LOGGER.debug(
+                            "Journey %s -> HTTP %s", key, resp.status,
+                        )
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Journey %s failed: %s", key, err)
+
+        now = time.monotonic()
+        cache[key] = {"at": now, "stops": stops}
+        # Keep the cache from growing for the rest of the day: anything
+        # nobody asked about for a while can go.
+        for stale in [
+            k for k, v in cache.items()
+            if isinstance(v, dict)
+            and now - float(v.get("at") or 0) > JOURNEY_CACHE_SECONDS * 10
+        ]:
+            cache.pop(stale, None)
+        return stops
+
+    async def async_journey_run(
+        self, train_number: str,
+    ) -> tuple[datetime | None, datetime | None]:
+        """When this train starts its run and when it finishes it."""
+        return run_window(await self.async_journey_stops(train_number))
+
     async def async_fetch_arcgis_position(self, train_number: str) -> dict[str, Any] | None:
         """Live train GPS via ProRail's public ArcGIS NS_treinlocaties.
 
         Returns smooth lat/lng + speed (km/h) + heading (degrees) +
-        epoch-ms timestamp, the same feed treinposities.nl uses. No NS
-        API key required for this endpoint. The query filters on
-        ``treinNummer`` so we get exactly the user's run, not a random
-        rotation that shares the ritnummer.
+        epoch-ms timestamp. No NS API key required for this endpoint.
+        The query filters on ``treinNummer`` so we get exactly the
+        user's run, not a random rotation that shares the ritnummer.
+
+        This is the second source, behind NS's own vehicle feed: the
+        service has been answering "Error invoking service" for a while,
+        and it answers with that error inside an HTTP 200, so a failure
+        is recognised from the body rather than the status. After a few
+        of them the feed is left alone for ``ARCGIS_BACKOFF_MINUTES``
+        rather than costing a request per train per tick.
         """
         if not train_number:
             return None
         try:
             target = int(str(train_number).strip())
         except (TypeError, ValueError):
+            return None
+        bucket = self._shared()
+        blocked = bucket.get("_arcgis_quiet_until")
+        if blocked is not None and time.monotonic() < float(blocked):
             return None
         try:
             async with async_timeout.timeout(10):
@@ -1286,12 +1509,19 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                             "ArcGIS treinlocaties %s -> HTTP %s",
                             target, resp.status,
                         )
+                        self._note_arcgis_failure(bucket, f"HTTP {resp.status}")
                         return None
                     data = await resp.json()
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             _LOGGER.debug("ArcGIS fetch %s failed: %s", target, err)
+            self._note_arcgis_failure(bucket, str(err))
             return None
 
+        error = (data or {}).get("error")
+        if error:
+            self._note_arcgis_failure(bucket, str(error)[:120])
+            return None
+        bucket["_arcgis_failures"] = 0
         feats = (data or {}).get("features") or []
         if not feats:
             return None
@@ -1312,284 +1542,21 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             "source": "prorail-obis",
         }
 
-    async def async_fetch_journey_route(self, train_number: str) -> list[dict[str, Any]]:
-        """Return the FULL list of stops the given train makes today.
-
-        Each stop includes name + lat/lng + a `passed` flag so the card
-        can split the route polyline into yellow (already-travelled) and
-        blue (still-to-go) segments.
-        """
-        if not train_number or not self.api_key:
-            return []
-        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
-        try:
-            async with async_timeout.timeout(15):
-                async with self._session.get(
-                    JOURNEY_API_URL,
-                    headers=headers,
-                    params={"train": str(train_number), "omitCrowdForecast": "true"},
-                ) as resp:
-                    if resp.status != 200:
-                        return []
-                    data = await resp.json()
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            return []
-
-        payload = (data or {}).get("payload") or {}
-        stops_raw = payload.get("stops") or []
-        if not stops_raw:
-            return []
-
-        geo = await self.async_fetch_stations_geo()
-        from datetime import datetime, timezone
-        now = datetime.now(timezone.utc)
-
-        def _passed(stop: dict[str, Any]) -> bool:
-            # Trust an explicit status value first.
-            status = (stop.get("status") or "").upper()
-            if status in {"PASSED", "PASSING_PASSED", "DEPARTED"}:
-                return True
-            # Otherwise derive from the actual departure time. For the
-            # destination there is no departure, so use actualArrival.
-            for key in ("actualDepartureDateTime", "actualArrivalDateTime",
-                        "plannedDepartureDateTime", "plannedArrivalDateTime"):
-                ts = stop.get(key)
-                if not ts:
-                    continue
-                try:
-                    # NS uses ISO-8601 with offset. fromisoformat handles
-                    # "+0200" since Python 3.11; otherwise normalise.
-                    parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                except (TypeError, ValueError):
-                    continue
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                if "Departure" in key:
-                    return parsed < now
-                # arrival of destination — only "passed" if we are well
-                # past it.
-                return parsed < now
-            return False
-
-        # Build a name lookup once so we can resolve stops whose codes
-        # do not match the /v2/stations cache (rare but happens with
-        # foreign or recently renamed stations).
-        by_name = {v["name"].casefold(): v for v in geo.values()}
-
-        out: list[dict[str, Any]] = []
-        unresolved: list[str] = []
-        for stop in stops_raw:
-            station = stop.get("station") or {}
-            uic = str(station.get("uicCode") or stop.get("uicCode") or "")
-            code = (
-                station.get("stationCode")
-                or stop.get("stationCode")
-                or station.get("code")
-                or ""
-            ).upper()
-            stop_name = (
-                station.get("name") or stop.get("name") or ""
-            ).strip()
-            geo_entry = (
-                (geo.get(uic) if uic else None)
-                or (geo.get(code) if code else None)
-                or (by_name.get(stop_name.casefold()) if stop_name else None)
-            )
-            if not geo_entry:
-                if stop_name or code or uic:
-                    unresolved.append(stop_name or code or uic)
-                continue
-            out.append({
-                "name": geo_entry["name"],
-                "lat": geo_entry["lat"],
-                "lng": geo_entry["lng"],
-                "uicCode": uic,
-                "code": code,
-                "passed": _passed(stop),
-                "status": (stop.get("status") or "").upper(),
-            })
-        if unresolved:
-            _LOGGER.debug(
-                "Train %s journey: %d stops resolved, %d skipped: %s",
-                train_number, len(out), len(unresolved), unresolved,
-            )
-        return out
-
-    async def async_fetch_live_train(
-        self, train_number: str, anchor_iso: str | None = None
-    ) -> dict[str, Any] | None:
-        """Return the live GPS position for a single train.
-
-        Primary: /virtual-train-api/vehicle?route=<ritnummer> — the same
-        feed the NS App uses for the live train map. Returns smooth
-        lat/lng plus speed (km/h) and heading. Falls back to
-        /virtual-train-api/api/vehicle and finally to a station-based
-        lookup via the composition endpoint.
-
-        ``anchor_iso`` (ISO-8601 like "2026-04-30T08:25:00+0200") is
-        passed as ``dateTime`` to /v1/trein/{nr} when the bulk endpoint
-        is empty. NS uses it to disambiguate ritnummers reused across
-        the day so we get the actual physical train the user is on
-        rather than another rotation that happens to share the number.
-        """
-        if not train_number:
-            return None
-        if not self.api_key:
-            return None
-        bucket = self.hass.data.setdefault(DOMAIN, {})
-        warned_once = bool(bucket.get("_live_train_warned"))
-        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
-        # First try with `route` filter (ritnummer); if the result is empty,
-        # we'll retry without the filter so we can match client-side. The
-        # bbox + radius are kept reasonable so we get a manageable response.
-        base_params = {
-            "lat": "52.10",
-            "lng": "5.30",
-            "radius": "300",  # km — covers all NL plus near border
-            "limit": "100",
-            "features": "drukte",
-        }
-        params = dict(base_params)
-        params["route"] = str(train_number)
-
-        async def _try(
-            url: str, q: dict[str, Any]
-        ) -> tuple[int, str, Any]:
-            """Return (status, body-or-error-text, parsed-json-or-None)."""
-            try:
-                async with async_timeout.timeout(15):
-                    async with self._session.get(
-                        url, headers=headers, params=q,
-                    ) as resp:
-                        if resp.status != 200:
-                            body = ""
-                            try:
-                                body = (await resp.text())[:300]
-                            except Exception:  # noqa: BLE001
-                                pass
-                            return resp.status, body, None
-                        return resp.status, "", await resp.json()
-            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
-                return 0, str(err), None
-
-        status, body, data = await _try(VIRTUAL_TRAIN_VEHICLE_URL, params)
-        if data is None:
-            status, body, data = await _try(VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL, params)
-
-        if data is None:
-            if not warned_once:
-                bucket["_live_train_warned"] = True
-                _LOGGER.warning(
-                    "Live vehicle fetch %s -> HTTP %s. Body: %s",
-                    train_number, status, body,
-                )
-            return await self._async_station_based_position(train_number)
-
-        if isinstance(data, list):
-            vehicles = data
-        elif isinstance(data, dict):
-            payload = data.get("payload")
-            if isinstance(payload, dict):
-                # Real shape from /virtual-train-api/vehicle:
-                # {"payload": {"treinen": [...]}}
-                vehicles = (
-                    payload.get("treinen")
-                    or payload.get("trains")
-                    or payload.get("vehicles")
-                    or []
-                )
-            elif isinstance(payload, list):
-                vehicles = payload
-            else:
-                vehicles = (
-                    data.get("treinen")
-                    or data.get("vehicles")
-                    or data.get("trains")
-                    or []
-                )
-        else:
-            vehicles = []
-
-        # Keep only dict-shaped entries — defensive in case the API
-        # returns a list of strings or other primitives.
-        vehicles = [v for v in vehicles if isinstance(v, dict)]
-
-        if not vehicles:
-            # Empty with route filter — retry WITHOUT filter and match
-            # client-side. Some NS API tiers return all trains; the
-            # `route` param is then a no-op.
-            status2, body2, data2 = await _try(
-                VIRTUAL_TRAIN_VEHICLE_URL, base_params,
-            )
-            if data2 is None:
-                status2, body2, data2 = await _try(
-                    VIRTUAL_TRAIN_VEHICLE_FALLBACK_URL, base_params,
-                )
-            if isinstance(data2, dict):
-                payload2 = data2.get("payload")
-                if isinstance(payload2, dict):
-                    vehicles = (
-                        payload2.get("treinen")
-                        or payload2.get("trains")
-                        or payload2.get("vehicles")
-                        or []
-                    )
-                elif isinstance(payload2, list):
-                    vehicles = payload2
-            elif isinstance(data2, list):
-                vehicles = data2
-            vehicles = [v for v in vehicles if isinstance(v, dict)]
-
-        if not vehicles:
-            if not warned_once:
-                bucket["_live_train_warned"] = True
-                snippet = str(data)[:400]
-                _LOGGER.warning(
-                    "Live vehicle fetch %s: empty. Raw response: %s",
-                    train_number, snippet,
-                )
-            return await self._async_station_based_position(train_number, anchor_iso)
-
-        target = str(train_number)
-        match = None
-        for v in vehicles:
-            ride_id = str(
-                v.get("route") or v.get("ritId") or v.get("ritnummer")
-                or v.get("journeyId") or v.get("trainNumber") or ""
-            )
-            if ride_id == target:
-                match = v
-                break
-        if not match and len(vehicles) == 1:
-            # API filtered server-side: trust it.
-            match = vehicles[0]
-        if not match:
-            if not warned_once:
-                bucket["_live_train_warned"] = True
-                # Show what keys are in the first vehicle so we can adapt.
-                sample = vehicles[0] if vehicles else {}
-                _LOGGER.warning(
-                    "Live vehicle fetch %s: route filter found no match. "
-                    "Got %d vehicles; sample keys: %s; sample: %s",
-                    train_number, len(vehicles),
-                    list(sample.keys()),
-                    str(sample)[:400],
-                )
-            return await self._async_station_based_position(train_number, anchor_iso)
-
-        lat = match.get("lat") or match.get("latitude")
-        lng = match.get("lng") or match.get("lon") or match.get("longitude")
-        if lat is None or lng is None:
-            return await self._async_station_based_position(train_number, anchor_iso)
-        return {
-            "lat": float(lat),
-            "lng": float(lng),
-            "speed": match.get("snelheid") or match.get("speed"),
-            "heading": match.get("richting") or match.get("heading"),
-            "ts": match.get("tijd") or match.get("time"),
-            "type": match.get("type") or match.get("categorie"),
-            "source": "vehicle",
-        }
+    @staticmethod
+    def _note_arcgis_failure(bucket: dict[str, Any], reason: str) -> None:
+        """Count a failed ArcGIS call and go quiet after a few."""
+        failures = int(bucket.get("_arcgis_failures") or 0) + 1
+        bucket["_arcgis_failures"] = failures
+        if failures < ARCGIS_FAILURES_BEFORE_BACKOFF:
+            return
+        bucket["_arcgis_quiet_until"] = (
+            time.monotonic() + ARCGIS_BACKOFF_MINUTES * 60
+        )
+        bucket["_arcgis_failures"] = 0
+        _LOGGER.debug(
+            "ArcGIS positions unavailable (%s); pausing it for %d minutes",
+            reason, ARCGIS_BACKOFF_MINUTES,
+        )
 
     async def _async_station_based_position(
         self, train_number: str, anchor_iso: str | None = None,

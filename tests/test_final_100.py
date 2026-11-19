@@ -133,54 +133,6 @@ async def test_composition_warned_once_subsequent_failures_use_debug(hass):
 # ---- coordinator: live_train no-warning-yet empty + no-match warning ----
 
 
-async def test_live_train_first_warning_on_empty(hass):
-    """warned_once=False + empty result triggers warning + sets warned (line 832)."""
-    coord = _coord(hass)
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, {"payload": {"treinen": []}}),
-        _resp(200, {"payload": {"treinen": []}}),  # retry without filter, also empty
-        _resp(200, {"payload": {}}),  # station-based fallback: no station_code
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is None
-    # warned flag should now be set
-    assert coord.hass.data.get(DOMAIN, {}).get("_live_train_warned") is True
-
-
-async def test_live_train_first_warning_on_no_match(hass):
-    """warned_once=False + multiple vehicles none matching -> warning (lines 844-847)."""
-    coord = _coord(hass)
-    payload = {"payload": {"treinen": [
-        {"route": "X", "lat": 52, "lng": 5},
-        {"route": "Y", "lat": 52, "lng": 5},
-    ]}}
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, payload),
-        _resp(200, {"payload": {}}),  # station-based fallback returns None
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is None
-    assert coord.hass.data.get(DOMAIN, {}).get("_live_train_warned") is True
-
-
-async def test_live_train_first_warning_on_5xx(hass):
-    """warned_once=False + 5xx on both endpoints -> warning + station-based fallback (lines 811-818)."""
-    coord = _coord(hass)
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(503, text_payload="down"),
-        _resp(503, text_payload="also down"),
-        _resp(200, {"payload": {}}),
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is None
-
-
-# ---- coordinator: stations_geo log line (507) ----
-
-
 async def test_stations_geo_after_runtime_set_logs(hass, caplog):
     """stations_geo runtime path stores result back on runtime + logs (line 507)."""
     import logging
@@ -199,23 +151,6 @@ async def test_stations_geo_after_runtime_set_logs(hass, caplog):
 # ---- coordinator: journey_route timezone branches ----
 
 
-async def test_journey_route_with_z_suffix_passed_iso(hass):
-    """Z-suffix ISO timestamp -> normalized + passed (line 678)."""
-    coord = _coord(hass)
-    coord._entry = None
-    payload = {"payload": {"stops": [
-        {"station": {"uicCode": "AAA", "name": "A"}, "status": "",
-         "actualArrivalDateTime": "2000-01-01T00:00:00Z"},  # Z suffix replaced
-    ]}}
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, payload),
-        _resp(200, {"payload": [{"code": "AAA", "UICCode": "AAA", "namen": {"lang": "A"}, "lat": 52, "lng": 4}]}),
-    ])
-    out = await coord.async_fetch_journey_route("100")
-    assert out[0]["passed"] is True
-
-
 async def test_composition_warned_once_network_error_uses_debug(hass):
     """warned_once=True + network error -> debug branch (line 246)."""
     import aiohttp
@@ -224,88 +159,6 @@ async def test_composition_warned_once_network_error_uses_debug(hass):
     coord._session = MagicMock()
     coord._session.get = MagicMock(side_effect=aiohttp.ClientError("net"))
     assert await coord._fetch_journey_composition("x", {}) is None
-
-
-async def test_live_train_data_dict_no_payload_key(hass):
-    """data dict has 'treinen' but no 'payload' -> branch lines 811-816."""
-    coord = _coord(hass)
-    payload = {"treinen": [{"route": "100", "lat": 52, "lng": 5}]}
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(return_value=_resp(200, payload))
-    out = await coord.async_fetch_live_train("100")
-    assert out is not None
-    assert out["lat"] == 52
-
-
-async def test_live_train_payload_is_list(hass):
-    """data['payload'] is a list -> branch line 808-809."""
-    coord = _coord(hass)
-    payload = {"payload": [{"route": "100", "lat": 52, "lng": 5}]}
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(return_value=_resp(200, payload))
-    out = await coord.async_fetch_live_train("100")
-    assert out is not None
-
-
-async def test_live_train_text_capture_raises_swallowed(hass):
-    """resp.text() raising in error path -> lines 775-776."""
-    coord = _coord(hass)
-    bad_resp = MagicMock()
-    bad_resp.status = 503
-    bad_resp.text = AsyncMock(side_effect=RuntimeError("text broken"))
-    bad_resp.__aenter__ = AsyncMock(return_value=bad_resp)
-    bad_resp.__aexit__ = AsyncMock(return_value=None)
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        bad_resp,
-        _resp(503),
-        _resp(200, {"payload": {}}),
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is None
-
-
-async def test_live_train_retry_data2_list_via_payload(hass):
-    """Retry path: data2 is a dict with payload list (lines 844-845)."""
-    coord = _coord(hass)
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, {"payload": {"treinen": []}}),
-        _resp(200, {"payload": [{"route": "100", "lat": 52, "lng": 5}]}),
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is not None
-
-
-async def test_live_train_retry_data2_bare_list(hass):
-    """Retry path: data2 is a bare list (lines 846-847)."""
-    coord = _coord(hass)
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, {"payload": {"treinen": []}}),
-        _resp(200, [{"route": "100", "lat": 52, "lng": 5}]),
-    ])
-    out = await coord.async_fetch_live_train("100")
-    assert out is not None
-
-
-async def test_journey_route_status_passing_passed_lower(hass):
-    """PASSING_PASSED in lowercase needs upper() (line 673 region)."""
-    coord = _coord(hass)
-    coord._entry = None
-    payload = {"payload": {"stops": [
-        {"station": {"uicCode": "AAA", "name": "A"}, "status": "passing_passed"},
-    ]}}
-    coord._session = MagicMock()
-    coord._session.get = MagicMock(side_effect=[
-        _resp(200, payload),
-        _resp(200, {"payload": [{"code": "AAA", "UICCode": "AAA", "namen": {"lang": "A"}, "lat": 52, "lng": 4}]}),
-    ])
-    out = await coord.async_fetch_journey_route("100")
-    assert out[0]["passed"] is True
-
-
-# ---- __init__ remaining branches ----
 
 
 async def test_periodic_rail_refresh_closure_invokes_refresh(hass):

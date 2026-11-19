@@ -26,8 +26,8 @@ async def test_ws_start_no_hub_sends_error():
 async def test_ws_start_happy_path_sends_result():
     coord = MagicMock()
     coord.async_fetch_stations_geo = AsyncMock(return_value={})
-    coord.async_fetch_journey_route = AsyncMock(return_value=[])
-    coord.async_fetch_arcgis_position = AsyncMock(return_value={"lat": 52, "lng": 5, "speed": 88, "heading": 90, "ts_ms": 1})
+    coord.async_journey_stops = AsyncMock(return_value=[])
+    coord.async_fetch_train_position = AsyncMock(return_value={"lat": 52, "lng": 5, "speed": 88, "heading": 90, "ts_ms": 1})
     runtime = MagicMock(); runtime.coordinators = {"sub": coord}; runtime.live_sessions = {}
     e = MagicMock(); e.runtime_data = runtime
     fake_hass = MagicMock()
@@ -43,12 +43,12 @@ async def test_ws_start_happy_path_sends_result():
 async def test_ws_start_journey_richer_than_leg_merges_passed_flags():
     coord = MagicMock()
     coord.async_fetch_stations_geo = AsyncMock(return_value={})
-    coord.async_fetch_journey_route = AsyncMock(return_value=[
+    coord.async_journey_stops = AsyncMock(return_value=[
         {"name": "A", "uicCode": "A", "lat": 52, "lng": 5, "passed": False},
         {"name": "HVS", "uicCode": "HVS", "lat": 52.2, "lng": 5.1, "passed": False},
         {"name": "C", "uicCode": "C", "lat": 52.3, "lng": 5.2, "passed": False},
     ])
-    coord.async_fetch_arcgis_position = AsyncMock(return_value=None)
+    coord.async_fetch_train_position = AsyncMock(return_value=None)
     runtime = MagicMock(); runtime.coordinators = {"sub": coord}; runtime.live_sessions = {}
     e = MagicMock(); e.runtime_data = runtime
     fake_hass = MagicMock()
@@ -86,7 +86,8 @@ async def test_ws_poll_no_coord():
 
 async def test_ws_poll_happy_returns_position():
     coord = MagicMock()
-    coord.async_fetch_arcgis_position = AsyncMock(return_value={"lat": 52, "lng": 5, "speed": 88, "heading": 90, "ts_ms": 1})
+    coord.async_fetch_train_position = AsyncMock(return_value={"lat": 52, "lng": 5, "speed": 88, "heading": 90, "ts_ms": 1})
+    coord.async_journey_stops = AsyncMock(return_value=[{"name": "A", "lat": 52, "lng": 5}])
     runtime = MagicMock(); runtime.live_sessions = {"sid": {"train_number": "100", "train_entity_id": "device_tracker.x"}}; runtime.coordinators = {"sub": coord}
     e = MagicMock(); e.runtime_data = runtime
     fake_hass = MagicMock()
@@ -95,12 +96,17 @@ async def test_ws_poll_happy_returns_position():
     with patch("custom_components.ns_reisadvies.async_call_later", return_value=lambda: None):
         await poll_inner(fake_hass, conn, {"id": 1, "session_id": "sid"})
     conn.send_result.assert_called_once()
-    assert conn.send_result.call_args[0][1]["train_position"]["lat"] == 52
+    result = conn.send_result.call_args[0][1]
+    assert result["train_position"]["lat"] == 52
+    # The poll carries the run along so the card can keep estimating
+    # from times NS confirmed after the map was opened.
+    assert result["journey_stops"] == [{"name": "A", "lat": 52, "lng": 5}]
 
 
 async def test_ws_poll_happy_no_position():
     coord = MagicMock()
-    coord.async_fetch_arcgis_position = AsyncMock(return_value=None)
+    coord.async_fetch_train_position = AsyncMock(return_value=None)
+    coord.async_journey_stops = AsyncMock(return_value=[])
     runtime = MagicMock(); runtime.live_sessions = {"sid": {"train_number": "100", "train_entity_id": "x"}}; runtime.coordinators = {"sub": coord}
     e = MagicMock(); e.runtime_data = runtime
     fake_hass = MagicMock()

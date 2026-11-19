@@ -4,6 +4,76 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.21.0] — 2026-11-19
+
+### Fixed — live train positions are back, and now cover the whole run
+
+The train on the live map had stopped moving. It sat on the departure
+station until the moment of departure, then followed the leg, then
+stuck to the arrival station. Two independent faults, both of which
+had to go:
+
+- **The NS vehicle feed was asked the wrong question.** The request
+  carried `lat`, `lng` and `radius=300` — the parameters the NS App
+  sends. NS reads that radius in metres, so the integration was asking
+  for trains within 300 m of a point in the middle of the country and
+  getting an empty list back every time. Without any parameters the
+  same endpoint returns every train that is reporting, which is a
+  single national request of roughly 40 kB. It is now fetched once per
+  ten seconds and shared by every route and every open map, so adding
+  routes costs nothing.
+- **ProRail's ArcGIS feed is down.** It answers "Error invoking
+  service" to every request, and it does so inside an HTTP 200, so the
+  integration read it as "this train is not reporting". It stays in
+  place as a second source in case it returns, but a failure is now
+  recognised from the body, and after three of them the feed is left
+  alone for half an hour instead of costing a request per train per
+  tick.
+
+With no position left to show, the card fell back to estimating from
+the timetable — over the traveller's own leg, which starts at the
+departure station. The estimate now walks the train's whole run: every
+station from where the train started to where it ends, including the
+ones it races through without stopping. Those carry no time from NS, so
+they are given one by spreading the gap between the surrounding stops
+over the distance travelled, and the stops that get such a time are
+flagged `estimated` rather than passed off as NS's own schedule. Beyond
+the last stop that reported an actual time, the schedule is shifted by
+the delay measured there, so a late train is never drawn ahead of
+itself. The live map's poll now returns the run as well, so a departure
+NS confirms while the map is open feeds straight into the estimate.
+
+Parsing the run is what made this possible: `/v2/journey` nests a
+station under `stop` and its times under `arrivals`/`departures`, while
+the integration read `station` and `actualDepartureDateTime` off the
+stop itself. Nothing matched, every stop was dropped, and the map had
+only ever drawn the leg — the "full train route" it promised since
+v2.11.0 had never actually reached it. The new parser reads the real
+shape and takes coordinates from the payload, so it no longer needs the
+station cache at all.
+
+### Changed — a favourite is followed for as long as its train runs
+
+Positions used to be fetched only between five minutes before departure
+and two minutes after arrival. A train is already worth watching while
+it approaches the station you board at, and still worth watching as it
+carries on past the one you get out at, so the train's own run decides
+now instead of the travel window. Outside a few hours around the trip
+nothing is fetched at all, and when NS will not serve the journey — an
+older key gets a 404 — the old travel window still applies.
+
+The tracker gained a `train_running` attribute: `en_route` remains
+about the traveller, `train_running` is about the train and comes on
+earlier. Its reported accuracy now follows the feed, which gives a
+horizontal accuracy per train, instead of a fixed 50 m. The live map
+keeps framing your own leg, so drawing the whole run does not zoom the
+view out to the width of the country.
+
+The dead `async_fetch_live_train` and the journey parser it sat beside
+are gone, 276 lines in all, along with the tests that covered them. The
+new parsing lives in `_live.py`, pure and tested on its own like
+`_filter.py` and `_departure.py`, at 100% coverage.
+
 ## [2.20.0] — 2026-11-19
 
 ### Added — delay and next-train sensors per route

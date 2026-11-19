@@ -34,10 +34,13 @@ slots, train composition, and an opt-in live train map.
 - **Check-out / check-in hint** rendered between legs whenever an
   operator change forces a new check.
 - **Live train map** (opt-in): tap a small icon under the departure
-  platform to open a modal with real GPS positions from ProRail's
-  OBIS feed (the same source [treinposities.nl][trnp] uses), the
-  full train route, the stops, and a yellow / blue split that
-  follows the train's progress. The whole NL rail network is cached
+  platform to open a modal with the train's real GPS position, its
+  whole run, the stops, and a yellow / blue split that follows the
+  train's progress. Positions come from NS's own live vehicle feed,
+  with ProRail's public OBIS feed (the one [treinposities.nl][trnp]
+  uses) as a second source; when neither has a fix the train is
+  placed along its run from the times NS reports at each stop, so the
+  marker is never simply missing. The whole NL rail network is cached
   weekly and rendered as a dim base layer; the route polyline is
   snapped onto actual tracks via A* over the rail graph. The base map
   is Home Assistant's own `ha-map`, so it uses whatever map HA ships
@@ -50,8 +53,9 @@ slots, train composition, and an opt-in live train map.
   Assistant's map and can drive zone automations. The entity is named
   after the route, so the id you put in an automation still means the
   same thing tomorrow; which trip it is following is an attribute. It
-  moves along with you at a transfer, and positions are only fetched
-  while a favourite is actually en route.
+  moves along with you at a transfer, and the train is followed for as
+  long as its own run lasts — so you can watch it approach your
+  departure station and carry on after you get out.
 
 [trnp]: https://treinposities.nl/
 
@@ -176,7 +180,7 @@ Re-open *Configure* on the integration tile to tweak:
 | `live_train_map`             | off     | Shows the live-map icon under each leg in the card.                                          |
 | `live_map_refresh_seconds`   | 10      | Polling cadence while the live map modal is open (5–60 s).                                   |
 | `track_favourites_on_map`    | off     | Publishes a GPS `device_tracker` per pinned favourite for the map and zone automations.      |
-| `favourite_track_seconds`    | 30      | Position cadence for pinned favourites while en route (15–120 s).                            |
+| `favourite_track_seconds`    | 30      | Position cadence for pinned favourites while their train runs (15–120 s).                    |
 
 ### Favourites on the map
 
@@ -192,15 +196,21 @@ already under way wins over one that has not left yet, and between two
 trips in the same state the earliest departure does. For a trip with a
 transfer it follows whichever train you are on at that moment.
 
-The tracker reports a position only while a favourite is actually en
-route — from five minutes before the planned departure until two minutes
-after arrival. Outside that window it has no coordinates, so it does not
-sit on the map pretending to be somewhere. The entity itself stays
-available between trips, so an automation pointed at it keeps working
-overnight instead of going unavailable every evening.
+The tracker reports a position for as long as the train itself is
+running (v2.21.0). A train normally starts well before the station you
+board at and keeps going after you get out, and both are worth seeing,
+so the train's own run decides rather than your travel window. Outside
+that run, and outside a few hours around the trip altogether, it has no
+coordinates — it does not sit on the map pretending to be somewhere. The
+entity itself stays available between trips, so an automation pointed at
+it keeps working overnight instead of going unavailable every evening.
+
+`en_route` is still about you: it is on while you are on board.
+`train_running` is about the train, and comes on earlier.
 
 Attributes you can branch on: `phase` (`upcoming` / `en_route` /
-`arrived`), `en_route`, `favourite_ctx` (the trip being followed),
+`arrived`), `en_route`, `train_running`, `favourite_ctx` (the trip being
+followed),
 `pinned_favourites`, `train_number`, `train_type`, `operator`,
 `leg_origin`, `leg_destination`, `direction`, `planned_departure`,
 `planned_arrival`, `trip_origin`, `trip_destination`, plus `speed`,
@@ -432,11 +442,14 @@ The integration also exposes:
 
 ## Known limitations
 
-- **Live-map GPS is OBIS-only.** The live train map uses ProRail's
-  public `NS_treinlocaties` feed (the same source `treinposities.nl`
-  uses). Trains operated by DB ICE, NMBS or Eurostar across foreign
-  routes are not on this feed; the live-map icon is hidden for those
-  legs.
+- **Live GPS is Dutch OBIS only.** Positions come from NS's own
+  vehicle feed, with ProRail's public `NS_treinlocaties` feed behind
+  it. Both carry trains reporting over OBIS in the Netherlands, so a
+  DB ICE, NMBS or Eurostar on a foreign stretch is on neither; the
+  live-map icon is hidden for those legs. The vehicle feed is national
+  — one request covers every train — so it is fetched once per ten
+  seconds and shared by every route and every open map, whatever is
+  pinned.
 - **Composition data has gaps.** Some trains do not appear in the
   `/v2/journey` endpoint (typically older NS rolling-stock or trains
   outside the active timetable window). The integration logs one

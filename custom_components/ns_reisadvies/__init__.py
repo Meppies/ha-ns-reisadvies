@@ -728,7 +728,7 @@ async def _ws_track_train_start(
     # /v2/journey returns 404 for some public NS-App keys, in which
     # case we keep the leg-derived list.
     leg_resolved = _resolve_stops(raw_stops, geo)
-    journey_full = await coord.async_fetch_journey_route(train_number)
+    journey_full = await coord.async_journey_stops(train_number)
     if len(journey_full) > len(leg_resolved):
         # Merge: take the journey list, but copy passed-flags from the
         # leg's stops where they overlap (leg has fresher actual
@@ -747,12 +747,11 @@ async def _ws_track_train_start(
     plotted = [s for s in resolved if s.get("lat") is not None and s.get("lng") is not None]
     journey_stops = resolved
 
-    # Live GPS position via ProRail's public ArcGIS NS_treinlocaties
-    # service — same feed as treinposities.nl. Returns real lat/lng,
-    # speed (km/h), heading (degrees) and a timestamp. Filters on the
-    # ritnummer server-side so the wrong-train problem of /v1/trein
-    # disappears.
-    pos = await coord.async_fetch_arcgis_position(train_number)
+    # Live GPS position: NS's own vehicle feed first (one national
+    # request, shared and cached), then ProRail's ArcGIS service, then
+    # the station-based estimate. All three report real lat/lng, and the
+    # first two add speed and heading.
+    pos = await coord.async_fetch_train_position(train_number, anchor_iso)
 
     session_id = secrets.token_hex(6)
     train_entity_id = f"device_tracker.ns_reisadvies_train_{session_id}"
@@ -811,7 +810,9 @@ async def _ws_track_train_poll(
         connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
         return
 
-    pos = await coord.async_fetch_arcgis_position(sess["train_number"])
+    pos = await coord.async_fetch_train_position(
+        sess["train_number"], sess.get("anchor"),
+    )
     if pos:
         _set_train_state(
             hass,
@@ -819,9 +820,15 @@ async def _ws_track_train_poll(
             f"Trein {sess['train_number']}",
             pos,
         )
+    # Send the run along as well. Its times move while the modal is
+    # open — a stop confirms its departure, a delay grows — and without
+    # them the card would keep estimating from the picture it had when
+    # the map was opened. The journey itself is cached, so this is at
+    # most one extra request a minute however fast the map polls.
+    journey = await coord.async_journey_stops(sess["train_number"])
     _arm_cleanup(hass, msg["session_id"])
     connection.send_result(
-        msg["id"], {"train_position": pos},
+        msg["id"], {"train_position": pos, "journey_stops": journey},
     )
 
 

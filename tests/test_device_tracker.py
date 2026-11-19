@@ -66,6 +66,10 @@ def _coord(hass: HomeAssistant, **kw) -> NSUpdateCoordinator:
     coord.data = [_trip()]
     coord.tracked_trips = {CTX: time.time()}
     coord.last_update_success = True
+    coord.async_fetch_vehicles = AsyncMock(return_value={})
+    coord.async_journey_run = AsyncMock(
+        return_value=(parse_iso(DEP), parse_iso(ARR)),
+    )
     return coord
 
 
@@ -129,6 +133,18 @@ async def test_position_and_attributes(hass: HomeAssistant) -> None:
     assert attrs["speed"] == 112
     assert attrs["position_source"] == "arcgis"
     assert attrs["position_fresh"] is True
+
+
+async def test_accuracy_follows_what_the_feed_reports(
+    hass: HomeAssistant,
+) -> None:
+    """NS reports a horizontal accuracy per train; use it."""
+    coord = _coord(hass)
+    coord.async_fetch_vehicles = AsyncMock(return_value={
+        "1825": {"lat": 52.3, "lng": 4.94, "accuracy": 427.7, "source": "ns-obis"},
+    })
+    await coord.async_refresh_favourite_positions(parse_iso(DEP) + timedelta(minutes=3))
+    assert _tracker(coord).location_accuracy == 428
 
 
 async def test_no_position_before_departure(hass: HomeAssistant) -> None:

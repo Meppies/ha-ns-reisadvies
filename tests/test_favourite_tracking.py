@@ -57,6 +57,14 @@ def _make(hass: HomeAssistant, **kw) -> NSUpdateCoordinator:
     coord.tracked_trips = {CTX: time.time()}
     coord.async_fetch_arcgis_position = AsyncMock(return_value=None)
     coord._async_station_based_position = AsyncMock(return_value=None)
+    # v2.21.0: a favourite is followed for as long as its train runs,
+    # which the journey endpoint settles. Here the run is the leg, so a
+    # test that wants the train under way can simply pick a moment
+    # inside it.
+    coord.async_fetch_vehicles = AsyncMock(return_value={})
+    coord.async_journey_run = AsyncMock(
+        return_value=(parse_iso(DEP), parse_iso(ARR)),
+    )
     return coord
 
 
@@ -119,27 +127,88 @@ async def test_favourite_state_follows_the_current_leg(hass: HomeAssistant) -> N
     assert between["leg"]["product"]["number"] == "5720"
 
 
-async def test_refresh_fetches_only_while_en_route(hass: HomeAssistant) -> None:
+async def test_refresh_fetches_while_the_train_runs(hass: HomeAssistant) -> None:
+    """Position while the train runs, nothing while it stands still."""
     coord = _make(hass)
     coord.async_fetch_arcgis_position = AsyncMock(
         return_value={"lat": 52.3, "lng": 4.94, "speed": 112, "heading": 90}
     )
-
+    # Hours before its run begins: no request at all.
     await coord.async_refresh_favourite_positions(parse_iso(DEP) - timedelta(hours=3))
     record = coord.favourite_positions[CTX]
     assert record["active"] is False
+    assert record["train_running"] is False
     assert record["position"] is None
     coord.async_fetch_arcgis_position.assert_not_awaited()
 
     await coord.async_refresh_favourite_positions(parse_iso(DEP) + timedelta(minutes=3))
     record = coord.favourite_positions[CTX]
     assert record["active"] is True
+    assert record["train_running"] is True
     assert record["position"]["lat"] == 52.3
     assert record["position_fresh"] is True
     assert record["train_number"] == "1825"
     assert record["trip_origin"] == "Duivendrecht"
     assert record["trip_destination"] == "Hilversum"
     coord.async_fetch_arcgis_position.assert_awaited_once()
+
+
+async def test_refresh_follows_a_train_the_traveller_is_not_on(
+    hass: HomeAssistant,
+) -> None:
+    """The point of v2.21.0: the train is visible around the trip too.
+
+    Before boarding the train is still on its way from wherever it
+    started, and after the traveller gets out it carries on. Both are
+    worth seeing, so the run decides rather than the travel window.
+    """
+    coord = _make(hass)
+    coord.async_journey_run = AsyncMock(return_value=(
+        parse_iso(DEP) - timedelta(hours=1),
+        parse_iso(ARR) + timedelta(hours=1),
+    ))
+    coord.async_fetch_vehicles = AsyncMock(return_value={
+        "1825": {"lat": 52.5, "lng": 4.8, "speed": 134, "source": "ns-obis"},
+    })
+
+    # Half an hour before departure: the traveller is at home, the
+    # train is somewhere north of Amsterdam.
+    await coord.async_refresh_favourite_positions(parse_iso(DEP) - timedelta(minutes=30))
+    record = coord.favourite_positions[CTX]
+    assert record["active"] is False
+    assert record["phase"] == "upcoming"
+    assert record["train_running"] is True
+    assert record["position"]["lat"] == 52.5
+    assert record["position"]["source"] == "ns-obis"
+    # The vehicle feed answered, so neither fallback was touched.
+    coord.async_fetch_arcgis_position.assert_not_awaited()
+    coord._async_station_based_position.assert_not_awaited()
+
+    # Half an hour after arrival the trip is over but the train is not.
+    await coord.async_refresh_favourite_positions(parse_iso(ARR) + timedelta(minutes=30))
+    record = coord.favourite_positions[CTX]
+    assert record["phase"] == "arrived"
+    assert record["train_running"] is True
+    assert record["position"]["lat"] == 52.5
+    # And the tracker keeps reporting it rather than going blank.
+    assert coord.current_favourite() is record
+
+
+async def test_refresh_uses_the_travel_window_without_a_journey(
+    hass: HomeAssistant,
+) -> None:
+    """An older key gets no journey; then the trip's own window rules."""
+    coord = _make(hass)
+    coord.async_journey_run = AsyncMock(return_value=(None, None))
+    coord.async_fetch_arcgis_position = AsyncMock(
+        return_value={"lat": 52.3, "lng": 4.94},
+    )
+
+    await coord.async_refresh_favourite_positions(parse_iso(DEP) - timedelta(minutes=30))
+    assert coord.favourite_positions[CTX]["position"] is None
+
+    await coord.async_refresh_favourite_positions(parse_iso(DEP) + timedelta(minutes=3))
+    assert coord.favourite_positions[CTX]["position"]["lat"] == 52.3
 
 
 async def test_refresh_falls_back_to_station_position(hass: HomeAssistant) -> None:

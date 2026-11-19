@@ -1554,15 +1554,23 @@ class NSReisadviesCard extends HTMLElement {
     // which keys on a non-unique ritnummer.
     this._activeMap.legStopsRaw = (Array.isArray(leg.stops) ? leg.stops : [])
       .filter(s => !s.passing);
+    // v2.21.0: the train's WHOLE run, with the times NS reports at each
+    // stop. The estimate walks over this rather than over the leg, so
+    // the train is somewhere sensible while it is still on its way to
+    // the departure station and after it has left the arrival station
+    // behind.
+    this._activeMap.journeyStopsRaw = Array.isArray(resp.journey_stops)
+      ? resp.journey_stops
+      : [];
     // v2.15.4: store leg.product on the active-map context so
     // _applyMapData (called repeatedly from polling + interpolation)
     // can read shortCategoryName without needing leg in scope. The
     // earlier parentNode crash hid this latent ReferenceError.
     this._activeMap.legProduct = leg.product || null;
-    // Prefer real GPS (ProRail OBIS via ArcGIS) when the backend
-    // returns a position; fall back to wall-clock interpolation when
-    // the ArcGIS feed has no recent fix for this train (briefly during
-    // station dwells, or for trains without OBIS reporting).
+    // Prefer the real GPS fix the backend returns; fall back to a
+    // wall-clock estimate over the train's run when no feed has a
+    // recent fix for this train (briefly during station dwells, or for
+    // trains that report no position at all).
     const trainPos = resp.train_position || this._interpolateTrainPos();
     if (!trainPos && stopsWithCoord.length === 0) {
       this._renderMapEmpty(modal);
@@ -2570,9 +2578,15 @@ class NSReisadviesCard extends HTMLElement {
       }
     }
 
-    // First-time fit to all points (stops + train).
+    // First-time fit. The drawn line is the train's whole run, which
+    // can stretch across the country, so the view is framed on the
+    // traveller's own leg plus wherever the train is — both the bit
+    // that matters and the train itself stay in sight.
     if (!ctx.fitDone) {
-      const allLatLngs = stops.map(s => [s.lat, s.lng]);
+      const focus = (ctx.legStopsRaw || [])
+        .filter(s => s.lat != null && s.lng != null);
+      const allLatLngs = (focus.length >= 2 ? focus : stops)
+        .map(s => [s.lat, s.lng]);
       if (trainPos && trainPos.lat != null) allLatLngs.push([trainPos.lat, trainPos.lng]);
       if (allLatLngs.length) {
         map.fitBounds(allLatLngs, { padding: [40, 40], maxZoom: 13 });
@@ -2621,18 +2635,24 @@ class NSReisadviesCard extends HTMLElement {
       }
     }
 
-    let interp = this._interpolateTrainPos();
     try {
       const resp = await this._hass.callWS({
         type: "ns_reisadvies/track_train_poll",
         session_id: ctx.sessionId,
       });
+      // v2.21.0: the poll brings the run's times along, so an estimate
+      // made between fixes uses departures NS confirmed since the map
+      // was opened instead of the picture it had at the start.
+      if (resp && Array.isArray(resp.journey_stops) && resp.journey_stops.length) {
+        ctx.journeyStopsRaw = resp.journey_stops;
+      }
       const real = resp && resp.train_position;
-      const pos = real || interp;
+      const pos = real || this._interpolateTrainPos();
       this._applyMapData(pos, resp && resp.journey_stops);
       this._updatePosLabel(pos);
     } catch (err) {
       console.warn("ns_reisadvies live map poll failed", err);
+      const interp = this._interpolateTrainPos();
       if (interp) {
         this._applyMapData(interp);
         this._updatePosLabel(interp);
@@ -2640,17 +2660,29 @@ class NSReisadviesCard extends HTMLElement {
     }
   }
 
-  // Compute the train's position from leg.stops + wall clock. Only
-  // actualDepartureDateTime counts as proof a train has left a stop —
-  // planned times are not enough, because NS confirms departures as
-  // they happen and a delay must NOT be turned into the marker
-  // teleporting forward. If we have no actualDeparture for the current
-  // stop, the train is still there.
+  // Estimate where the train is from the timetable of its WHOLE run.
+  //
+  // The full journey is preferred over the traveller's own leg. A train
+  // is normally already under way towards the departure station, and it
+  // carries on after the traveller gets out, so an estimate that only
+  // knows the leg parks the marker on the departure station until the
+  // moment of departure and pins it to the arrival station afterwards —
+  // which is exactly what users saw once the GPS feeds went quiet.
+  //
+  // Only an ACTUAL time counts as proof of where the train has been.
+  // Everything beyond the last confirmed stop is projected from the
+  // schedule, shifted by the delay measured at that stop, so a late
+  // train is never teleported ahead of itself.
   _interpolateTrainPos() {
     const ctx = this._activeMap;
     if (!ctx) return null;
-    const stops = (ctx.legStopsRaw || []).filter(s => s.lat != null && s.lng != null);
+    const hasCoord = s => s && s.lat != null && s.lng != null;
+    const journey = (ctx.journeyStopsRaw || []).filter(hasCoord);
+    const stops = journey.length >= 2
+      ? journey
+      : (ctx.legStopsRaw || []).filter(hasCoord);
     if (stops.length < 2) return null;
+
     const now = Date.now();
     const stamp = (s, k) => {
       const v = s && s[k];
@@ -2659,58 +2691,70 @@ class NSReisadviesCard extends HTMLElement {
       return Number.isFinite(d) ? d : null;
     };
 
-    // Find the LAST stop whose ACTUAL departure has happened. That's
-    // where the train confirmedly left from. Anything before then is
-    // history; anything after is speculation.
-    let lastDepartedIdx = -1;
-    for (let i = 0; i < stops.length; i++) {
-      const ad = stamp(stops[i], "actualDepartureDateTime");
-      if (ad != null && ad <= now) lastDepartedIdx = i;
+    // Delay at the last stop that reported an actual time.
+    let delay = 0;
+    for (const s of stops) {
+      const actual = stamp(s, "actualDepartureDateTime")
+        ?? stamp(s, "actualArrivalDateTime");
+      if (actual == null || actual > now) continue;
+      const planned = stamp(s, "plannedDepartureDateTime")
+        ?? stamp(s, "plannedArrivalDateTime");
+      if (planned != null) delay = actual - planned;
+    }
+    const shift = v => (v == null ? null : v + delay);
+    const leaveAt = s => stamp(s, "actualDepartureDateTime")
+      ?? shift(stamp(s, "plannedDepartureDateTime"));
+    const reachAt = s => stamp(s, "actualArrivalDateTime")
+      ?? shift(stamp(s, "plannedArrivalDateTime"));
+
+    const first = stops[0];
+    const last = stops[stops.length - 1];
+    const start = leaveAt(first) ?? reachAt(first);
+    if (start != null && now < start) {
+      return {
+        lat: first.lat, lng: first.lng, station_name: first.name,
+        source: "at-origin", estimated: true,
+      };
+    }
+    const finish = reachAt(last) ?? leaveAt(last);
+    if (finish != null && now >= finish) {
+      return {
+        lat: last.lat, lng: last.lng, station_name: last.name,
+        source: "arrived", estimated: true,
+      };
     }
 
-    if (lastDepartedIdx < 0) {
-      // Train has not been confirmed to leave any stop yet. Place it
-      // at the first stop whose actual ARRIVAL is in the past (just
-      // arrived at origin) — otherwise at origin.
-      let arrivedIdx = -1;
-      for (let i = 0; i < stops.length; i++) {
-        const aa = stamp(stops[i], "actualArrivalDateTime");
-        if (aa != null && aa <= now) arrivedIdx = i;
+    for (let i = 0; i < stops.length - 1; i++) {
+      const a = stops[i];
+      const b = stops[i + 1];
+      const left = leaveAt(a) ?? reachAt(a);
+      const arrives = reachAt(b) ?? leaveAt(b);
+      if (left == null || arrives == null) continue;
+      if (now >= arrives) continue;
+      if (now < left) {
+        // Reached `a`, not away yet: standing at the platform.
+        return {
+          lat: a.lat, lng: a.lng, station_name: a.name,
+          source: "at-stop", estimated: true,
+        };
       }
-      const o = stops[Math.max(0, arrivedIdx)];
-      return { lat: o.lat, lng: o.lng, station_name: o.name, source: "at-origin" };
+      const span = arrives - left;
+      if (span <= 0) continue;
+      const frac = Math.max(0, Math.min(1, (now - left) / span));
+      return {
+        lat: a.lat + (b.lat - a.lat) * frac,
+        lng: a.lng + (b.lng - a.lng) * frac,
+        station_name: `${a.name} \u2192 ${b.name}`,
+        source: "interpolated",
+        estimated: true,
+        frac,
+      };
     }
 
-    if (lastDepartedIdx >= stops.length - 1) {
-      // Past the final stop — pin at destination.
-      const e = stops[stops.length - 1];
-      return { lat: e.lat, lng: e.lng, station_name: e.name, source: "arrived" };
-    }
-
-    const a = stops[lastDepartedIdx];
-    const b = stops[lastDepartedIdx + 1];
-    // Has the train confirmedly arrived at `b` already? If yes, the
-    // train is dwelling AT `b` (waiting to depart).
-    const bActArr = stamp(b, "actualArrivalDateTime");
-    if (bActArr != null && bActArr <= now) {
-      return { lat: b.lat, lng: b.lng, station_name: b.name, source: "at-stop" };
-    }
-
-    // Still en-route between a and b. Interpolate along the chord
-    // using actual departure of `a` and the (planned-if-no-actual)
-    // arrival of `b`.
-    const aActDep = stamp(a, "actualDepartureDateTime");
-    const bArr = stamp(b, "plannedArrivalDateTime") ?? bActArr;
-    if (aActDep == null || bArr == null || bArr <= aActDep) {
-      return { lat: a.lat, lng: a.lng, station_name: a.name, source: "just-departed" };
-    }
-    const frac = Math.max(0, Math.min(1, (now - aActDep) / (bArr - aActDep)));
+    // No pair fitted: stay on the stop we are surest about.
     return {
-      lat: a.lat + (b.lat - a.lat) * frac,
-      lng: a.lng + (b.lng - a.lng) * frac,
-      station_name: `${a.name} → ${b.name}`,
-      source: "interpolated",
-      frac,
+      lat: last.lat, lng: last.lng, station_name: last.name,
+      source: "arrived", estimated: true,
     };
   }
 
@@ -3001,7 +3045,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.20.0 ",
+  "%c NS-REISADVIES-CARD %c v2.21.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

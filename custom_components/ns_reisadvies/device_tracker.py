@@ -195,8 +195,19 @@ class NSFavouriteTracker(CoordinatorEntity[NSUpdateCoordinator], TrackerEntity):
 
     @property
     def location_accuracy(self) -> int:
-        """Metres. The OBIS feed is good to roughly a train length."""
-        return 50 if self._position else 0
+        """Metres, as reported by the feed where it says so.
+
+        NS's vehicle feed gives a horizontal accuracy per train, often a
+        few hundred metres; where there is none, a train length is a
+        fair guess.
+        """
+        position = self._position
+        if not position:
+            return 0
+        reported = position.get("accuracy")
+        if isinstance(reported, (int, float)) and reported > 0:
+            return int(round(float(reported)))
+        return 50
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -206,7 +217,12 @@ class NSFavouriteTracker(CoordinatorEntity[NSUpdateCoordinator], TrackerEntity):
         product = record.get("product") or {}
         attributes: dict[str, Any] = {
             "phase": record.get("phase"),
+            # ``en_route`` is about the traveller, ``train_running``
+            # about the train: before boarding the train may well be
+            # under way already, which is exactly when its position is
+            # worth watching.
             "en_route": bool(record.get("active")),
+            "train_running": bool(record.get("train_running")),
             "pinned_favourites": len(self.coordinator.tracked_trips),
             "favourite_ctx": record.get("ctx_recon"),
             "train_number": record.get("train_number") or None,

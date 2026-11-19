@@ -1,4 +1,4 @@
-"""Coverage for async_fetch_live_train + WS handlers + rail cache + card resource."""
+"""Coverage for the station fallback, WS handlers, rail cache, card resource."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -39,102 +39,6 @@ def _coord(hass, **kw):
     c._store.async_load = AsyncMock(return_value=None)
     c._store.async_save = AsyncMock()
     return c
-
-
-async def test_live_train_empty_number_returns_none(hass):
-    c = _coord(hass)
-    assert await c.async_fetch_live_train("") is None
-
-
-async def test_live_train_no_api_key_returns_none(hass):
-    c = _coord(hass, api_key="")
-    assert await c.async_fetch_live_train("100") is None
-
-
-async def test_live_train_success_via_payload_treinen(hass):
-    c = _coord(hass)
-    payload = {"payload": {"treinen": [
-        {"route": "100", "lat": 52.0, "lng": 5.0, "snelheid": 88, "richting": 270, "tijd": 1, "type": "VIRM"},
-    ]}}
-    c._session = MagicMock()
-    c._session.get = MagicMock(return_value=_resp(200, payload))
-    out = await c.async_fetch_live_train("100")
-    assert out is not None
-    assert out["lat"] == 52.0
-    assert out["speed"] == 88
-    assert out["source"] == "vehicle"
-
-
-async def test_live_train_success_via_bare_list(hass):
-    c = _coord(hass)
-    data = [{"ritId": "200", "latitude": 51.9, "longitude": 4.5}]
-    c._session = MagicMock()
-    c._session.get = MagicMock(return_value=_resp(200, data))
-    out = await c.async_fetch_live_train("200")
-    assert out is not None
-    assert out["lat"] == 51.9
-
-
-async def test_live_train_success_via_payload_list(hass):
-    c = _coord(hass)
-    data = {"payload": [{"ritnummer": "300", "lat": 52.1, "lng": 5.1}]}
-    c._session = MagicMock()
-    c._session.get = MagicMock(return_value=_resp(200, data))
-    out = await c.async_fetch_live_train("300")
-    assert out is not None
-
-
-async def test_live_train_single_vehicle_no_match_trusts_it(hass):
-    c = _coord(hass)
-    payload = {"payload": {"treinen": [{"lat": 52.0, "lng": 5.0}]}}
-    c._session = MagicMock()
-    c._session.get = MagicMock(return_value=_resp(200, payload))
-    out = await c.async_fetch_live_train("999")
-    assert out is not None
-    assert out["lat"] == 52.0
-
-
-async def test_live_train_first_url_500_falls_to_fallback_url(hass):
-    c = _coord(hass)
-    payload = {"payload": {"treinen": [{"route": "100", "lat": 52, "lng": 5}]}}
-    c._session = MagicMock()
-    c._session.get = MagicMock(side_effect=[_resp(500, text_payload="oops"), _resp(200, payload)])
-    out = await c.async_fetch_live_train("100")
-    assert out is not None
-    assert out["lat"] == 52
-
-
-async def test_live_train_both_urls_fail_falls_to_station(hass):
-    c = _coord(hass)
-    c._session = MagicMock()
-    c._session.get = MagicMock(side_effect=[
-        _resp(500), _resp(500),
-        _resp(200, {"payload": {"station": "HVS"}}),
-        _resp(200, {"payload": [{"code": "HVS", "UICCode": "8400388", "namen": {"lang": "Hilversum"}, "lat": 52.2, "lng": 5.1}]}),
-    ])
-    c._entry = None
-    out = await c.async_fetch_live_train("100")
-    assert out is not None
-    assert out["station_code"] == "HVS"
-
-
-async def test_live_train_network_error_falls_to_station(hass):
-    c = _coord(hass)
-    c._session = MagicMock()
-    c._session.get = MagicMock(side_effect=aiohttp.ClientError("net"))
-    out = await c.async_fetch_live_train("100")
-    assert out is None
-
-
-async def test_live_train_empty_then_retry_without_filter_succeeds(hass):
-    c = _coord(hass)
-    c._session = MagicMock()
-    c._session.get = MagicMock(side_effect=[
-        _resp(200, {"payload": {"treinen": []}}),
-        _resp(200, {"payload": {"treinen": [{"route": "100", "lat": 52, "lng": 5}]}}),
-    ])
-    out = await c.async_fetch_live_train("100")
-    assert out is not None
 
 
 async def test_station_based_no_api_key(hass):

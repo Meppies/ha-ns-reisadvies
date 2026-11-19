@@ -99,6 +99,32 @@ FAV_TRACK_SECONDS_MAX = 120
 # previous run, and after arrival the number is reused elsewhere.
 FAV_TRACK_LEAD_MINUTES = 5
 FAV_TRACK_GRACE_MINUTES = 2
+
+# Live positions (v2.21.0). A favourite is followed for as long as its
+# train is running, not just while the traveller is on board, so the
+# train is visible while it is still on its way to the departure
+# station and while it carries on past the arrival station.
+#
+# NS's vehicle feed is national: one request holds every train that
+# reports a position, so it is fetched once and shared by every route
+# and every open map. Keeping it for a few seconds is enough to collapse
+# a tick's worth of lookups into that single request without the marker
+# ever lagging behind by a noticeable distance.
+VEHICLE_CACHE_SECONDS = 10
+# A train's own run barely changes, so its journey is re-read sparingly;
+# it is only needed to know when the run starts and ends and which
+# stations it passes.
+JOURNEY_CACHE_SECONDS = 60
+# ProRail's ArcGIS feed has been answering every request with an error
+# since well before v2.21.0. It is kept as a second source in case it
+# returns, but after this many consecutive failures it is left alone for
+# a while instead of costing a request per train per tick.
+ARCGIS_FAILURES_BEFORE_BACKOFF = 3
+ARCGIS_BACKOFF_MINUTES = 30
+# Outside this many hours around a pinned trip nothing is fetched at
+# all: a favourite pinned for tomorrow morning must not keep the feed
+# busy overnight.
+FAV_RUN_LOOKAROUND_HOURS = 4
 DEFAULT_FILTER_WINDOW_MINUTES = 0  # default: no fuzz around the target
 DEFAULT_FIRST_WEEKDAY = "0"  # Monday — NL/EU default; users in US locales can override
 
