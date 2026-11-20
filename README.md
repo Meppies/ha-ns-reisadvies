@@ -403,6 +403,11 @@ between leaving now, leaving at a time or arriving by one, and a
 filter on train types. The swap button turns the journey around for
 the way back.
 
+With *Fetch train composition* switched on in the integration options,
+a search result shows the carriages the same way a route's own card
+does. It costs one extra NS call per train in the answer, and trains a
+route refresh has already looked up that interval cost nothing.
+
 ### Disruptions card
 
 *Add card → Custom: NS Reisadvies — disruptions*. It lists what NS is
@@ -419,6 +424,17 @@ names. One disruption can name two separate stretches — "Zwolle -
 Emmen and Almelo - Hardenberg" — and those are drawn as two lines
 rather than one line joining them across country. A calamity has no
 stretch and therefore no map button.
+
+NS writes these texts itself, in Dutch and in English, and the card
+asks for them in the language of whoever is looking at it: set Home
+Assistant to English and the situation, the cause, the period and the
+advice come back in English. Those two are all NS publishes, and it
+answers a language it does not know in Dutch, so every other language
+is asked in English instead — a German or French dashboard reads the
+English rather than the Dutch. The odd piece of free-text advice is
+Dutch even in the English feed; that is NS's own gap, not a missing
+translation here. The sensors use the installation's language, since
+an attribute has only one reader.
 
 | Key         | Description                                                       |
 |-------------|-------------------------------------------------------------------|

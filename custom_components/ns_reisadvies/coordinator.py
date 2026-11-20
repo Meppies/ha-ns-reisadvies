@@ -33,7 +33,12 @@ from ._filter import (
     parse_iso,
     train_types_in,
 )
-from ._disruptions import affecting, parse_disruptions, station_keys_of
+from ._disruptions import (
+    affecting,
+    disruption_language,
+    parse_disruptions,
+    station_keys_of,
+)
 from ._live import parse_journey, run_window, vehicle_index
 from .const import (
     API_URL,
@@ -728,13 +733,26 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self._composition_cache[train_number] = slim
         return slim
 
-    async def _annotate_compositions(self, all_trips: list[dict[str, Any]], headers: dict[str, Any]) -> None:
-        """Add a `composition` field to every leg with a known train number."""
+    async def _annotate_compositions(
+        self,
+        all_trips: list[dict[str, Any]],
+        headers: dict[str, Any],
+        *,
+        reset: bool = True,
+    ) -> None:
+        """Add a `composition` field to every leg with a known train number.
+
+        ``reset`` clears the per-refresh cache first, which is what a
+        route refresh wants. A one-off search rides along on whatever
+        the last refresh already fetched instead, so looking a journey
+        up does not cost a round trip per train that is already known.
+        """
         if not self.fetch_composition:
             return
-        # Reset cache and warning gate at the start of this refresh
-        self._composition_cache = {}
-        self._composition_warned = False
+        if reset:
+            # Reset cache and warning gate at the start of this refresh
+            self._composition_cache = {}
+            self._composition_warned = False
 
         # Collect unique train numbers across all legs
         train_numbers: set[str] = set()
@@ -1334,24 +1352,43 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         )
         return {"type": "FeatureCollection", "features": features}
 
-    async def async_fetch_disruptions(self) -> list[dict[str, Any]]:
+    async def async_fetch_disruptions(
+        self, language: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Every disruption NS is publishing right now.
 
         One national request serves every route and every open card,
         so it is fetched once per ``DISRUPTIONS_CACHE_SECONDS`` and
         shared, the same way the vehicle feed is.
+
+        NS writes these texts itself, and writes them twice: ask with
+        ``Accept-Language: en`` and the situation, the cause, the
+        period, the phase and most of the advice come back in English.
+        Those are the only two it publishes, so everything that is not
+        Dutch is asked for in English rather than left to NS, which
+        answers a German or French reader in Dutch. The cache is per
+        language, because a Dutch sensor and an English card can both
+        be asking.
         """
         if not self.api_key:
             return []
+        lang = disruption_language(language or self.hass.config.language)
         bucket = self._shared()
-        entry = bucket.get("_disruptions")
+        cache = bucket.get("_disruptions")
+        if not isinstance(cache, dict):
+            cache = {}
+            bucket["_disruptions"] = cache
+        entry = cache.get(lang)
         if isinstance(entry, dict):
             age = time.monotonic() - float(entry.get("at") or 0)
             if age < DISRUPTIONS_CACHE_SECONDS:
                 fresh: list[dict[str, Any]] = entry.get("items") or []
                 return fresh
 
-        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        headers = {
+            "Ocp-Apim-Subscription-Key": self.api_key,
+            "Accept-Language": lang,
+        }
         items: list[dict[str, Any]] = []
         try:
             async with async_timeout.timeout(20):
@@ -1367,7 +1404,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         except (aiohttp.ClientError, asyncio.TimeoutError) as err:
             _LOGGER.debug("Disruptions failed: %s", err)
 
-        bucket["_disruptions"] = {"at": time.monotonic(), "items": items}
+        cache[lang] = {"at": time.monotonic(), "items": items}
         return items
 
     async def async_search_trips(
@@ -1432,6 +1469,11 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             trips = apply_train_type_filter(trips, train_types)
             if not trips:
                 return [], "no_match"
+        # The carriages, when the hub is set to fetch them: a search
+        # result should show what a route's own card shows. Filtering
+        # comes first so nothing is fetched for a trip about to be
+        # dropped.
+        await self._annotate_compositions(trips, headers, reset=False)
         return trips, None
 
     def _shared(self) -> dict[str, Any]:

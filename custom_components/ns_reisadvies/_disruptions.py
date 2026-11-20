@@ -28,6 +28,19 @@ DISRUPTION_TYPES = ("DISRUPTION", "MAINTENANCE", "CALAMITY")
 _TAGS = re.compile(r"<[^>]+>")
 
 
+def disruption_language(tag: str | None) -> str:
+    """Which of NS's two languages to ask these texts in.
+
+    NS publishes them in Dutch and in English and in nothing else, and
+    answers a reader it has no language for in Dutch. English is the
+    one more readers share, so Dutch is what a Dutch reader gets and
+    English is what everyone else gets, rather than leaving a German
+    or French Home Assistant with Dutch.
+    """
+    code = str(tag or "").strip().lower().replace("_", "-").split("-")[0]
+    return "nl" if code == "nl" else "en"
+
+
 def _text(value: Any) -> str:
     """Strip the bit of HTML NS puts in calamity bodies."""
     if not isinstance(value, str):

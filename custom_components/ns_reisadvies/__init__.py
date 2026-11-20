@@ -962,6 +962,7 @@ async def _ws_search(
         vol.Optional("types", default=[]): [str],
         vol.Optional("scope", default="all"): vol.In(["all", "routes", "stations"]),
         vol.Optional("stations", default=[]): [str],
+        vol.Optional("language"): vol.Any(str, None),
     }
 )
 @websocket_api.async_response
@@ -974,13 +975,20 @@ async def _ws_disruptions(
     only what touches the routes this installation follows, or only
     the stations the card was given. A calamity has no stretch of its
     own and is national news, so it is never narrowed away.
+
+    ``language`` is the language of the person looking at the card,
+    which is not necessarily the installation's: NS writes these
+    texts in Dutch and in English, so each gets its own.
     """
     coord = _any_coordinator(hass)
     if coord is None:
         connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
         return
 
-    items = of_types(await coord.async_fetch_disruptions(), list(msg.get("types") or []))
+    items = of_types(
+        await coord.async_fetch_disruptions(msg.get("language")),
+        list(msg.get("types") or []),
+    )
     scope = msg.get("scope") or "all"
     if scope == "routes":
         keys: set[str] = set()

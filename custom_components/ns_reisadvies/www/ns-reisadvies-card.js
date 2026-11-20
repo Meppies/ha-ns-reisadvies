@@ -4015,6 +4015,11 @@ class NSReisadviesDisruptionsCard extends NSReisadviesCard {
         types: this._types,
         scope: this._scope,
         stations: this._stationFilter,
+        // NS writes these texts in Dutch and in English, so ask in
+        // the language of whoever is looking at the card rather than
+        // the one the server happens to run in.
+        language: (this._hass.locale && this._hass.locale.language)
+          || this._hass.language || null,
       });
       this._items = (answer && answer.disruptions) || [];
       this._failed = false;
@@ -4423,7 +4428,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.25.1 ",
+  "%c NS-REISADVIES-CARD %c v2.26.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

@@ -4,6 +4,36 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.26.0] — 2026-11-20
+
+### Added — disruptions in your own language
+
+NS writes its disruption texts twice, in Dutch and in English, and the
+integration was only ever asking for the Dutch. The card now asks in
+the language of whoever is looking at it, so an English Home Assistant
+shows "Due to a switch failure: between Groningen and Leeuwarden no
+Express trains are running" where it used to show the Dutch. The
+situation, the cause, the period, the phase, the expected duration,
+the alternative transport and most of the advice all come back
+translated.
+
+Dutch and English are all NS publishes, and it answers a language it
+does not know in Dutch, which helps a German or French reader least
+of all. Everything that is not Dutch is therefore asked for in
+English. The occasional free-text advice stays Dutch even in the
+English feed — that is NS's own gap. The sensors use the
+installation's language; a card can differ from it, and each language
+is cached separately so a Dutch sensor and an English card cost one
+request each.
+
+### Added — the carriages in a search result
+
+*Fetch train composition* filled in the carriages on a route's own
+card but not on the search card, which showed the train type and
+nothing else. A search result now shows the same carriage strip, under
+the same option. Trains a route refresh has already looked up this
+interval cost no extra request.
+
 ## [2.25.1] — 2026-11-20
 
 ### Fixed — the disruption map drew lines that followed no railway

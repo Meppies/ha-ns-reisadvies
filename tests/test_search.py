@@ -107,6 +107,69 @@ async def test_search_changes_nothing_about_the_route(hass: HomeAssistant) -> No
     assert coord.from_station == "Duivendrecht"
 
 
+def _journey(train_type: str = "VIRM IV") -> dict:
+    """What /v2/journey answers with, trimmed to the stock."""
+    return {"payload": {"stops": [{
+        "status": "ORIGIN",
+        "actualStock": {
+            "trainType": train_type,
+            "numberOfParts": 2,
+            "numberOfSeats": 382,
+            "trainParts": [
+                {"type": "VIRM-IV", "image": {"uri": "https://ns.nl/virm-a.png"}},
+                {"type": "VIRM-IV", "image": {"uri": "https://ns.nl/virm-b.png"}},
+            ],
+        },
+    }]}}
+
+
+async def test_search_shows_the_carriages_the_hub_asks_for(
+    hass: HomeAssistant,
+) -> None:
+    """A search result shows what a route's own card shows (v2.26.0)."""
+    coord = _coord(hass, fetch_composition=True)
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(side_effect=[
+        _resp(200, {"trips": [_trip()]}),
+        _resp(200, _journey()),
+    ])
+    trips, problem = await coord.async_search_trips("A", "B")
+    assert problem is None
+    composition = trips[0]["legs"][0]["composition"]
+    assert composition["trainType"] == "VIRM IV"
+    assert len(composition["parts"]) == 2
+    assert coord._session.get.call_args.kwargs["params"]["train"] == "1825"
+
+
+async def test_search_leaves_the_carriages_out_when_the_hub_does(
+    hass: HomeAssistant,
+) -> None:
+    coord = _coord(hass)  # fetch_composition is off by default
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": [_trip()]}))
+    trips, _ = await coord.async_search_trips("A", "B")
+    assert "composition" not in trips[0]["legs"][0]
+    assert coord._session.get.call_count == 1
+
+
+async def test_search_rides_along_on_what_the_refresh_already_fetched(
+    hass: HomeAssistant,
+) -> None:
+    """The refresh's cache is reused rather than cleared and refilled."""
+    coord = _coord(hass, fetch_composition=True)
+    known = {"trainType": "ICM III", "numberOfParts": 3, "parts": []}
+    coord._composition_cache = {"1825": known, "9999": {"trainType": "SNG"}}
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, {"trips": [_trip()]}))
+
+    trips, _ = await coord.async_search_trips("A", "B")
+    assert trips[0]["legs"][0]["composition"] == known
+    # One call for the trips, none for a train already known, and the
+    # other train's entry is still there for the next refresh.
+    assert coord._session.get.call_count == 1
+    assert coord._composition_cache["9999"] == {"trainType": "SNG"}
+
+
 async def test_search_needs_a_key_and_two_stations(hass: HomeAssistant) -> None:
     assert await _coord(hass, api_key="").async_search_trips("A", "B") == (
         [], "no_api_key",

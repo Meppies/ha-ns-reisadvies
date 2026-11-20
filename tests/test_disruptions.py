@@ -20,6 +20,7 @@ from homeassistant.core import HomeAssistant
 from custom_components.ns_reisadvies import _ws_disruptions
 from custom_components.ns_reisadvies._disruptions import (
     affecting,
+    disruption_language,
     of_types,
     parse_disruptions,
     station_keys_of,
@@ -305,6 +306,58 @@ async def test_fetch_parses_and_shares(hass: HomeAssistant) -> None:
     other._session.get.assert_not_called()
 
 
+def test_only_a_dutch_reader_gets_dutch() -> None:
+    """NS publishes Dutch and English and nothing else (v2.26.0).
+
+    It answers a language it does not know in Dutch, which leaves a
+    German or French reader worse off than English would, so English
+    is what everyone but a Dutch reader is asked on their behalf.
+    """
+    assert disruption_language("nl") == "nl"
+    assert disruption_language("nl-NL") == "nl"
+    assert disruption_language("NL_nl") == "nl"
+    for tag in ("en", "en-GB", "de", "fr", "pl", "", "  ", None, "nonsense"):
+        assert disruption_language(tag) == "en"
+
+
+async def test_fetch_asks_in_the_language_it_was_given(
+    hass: HomeAssistant,
+) -> None:
+    hass.data.setdefault(DOMAIN, {}).pop("_disruptions", None)
+    coord = _coord(hass)
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, [DISRUPTION]))
+
+    await coord.async_fetch_disruptions("en")
+    assert coord._session.get.call_args.kwargs["headers"]["Accept-Language"] == "en"
+
+    # A second language is a second answer, not the cached first one.
+    await coord.async_fetch_disruptions("nl")
+    assert coord._session.get.call_args.kwargs["headers"]["Accept-Language"] == "nl"
+    assert coord._session.get.call_count == 2
+
+    # And each language is then served from its own cache.
+    await coord.async_fetch_disruptions("en")
+    assert coord._session.get.call_count == 2
+
+    # A language NS does not publish is asked in English, not Dutch,
+    # and shares the English answer.
+    await coord.async_fetch_disruptions("de")
+    assert coord._session.get.call_count == 2
+
+
+async def test_fetch_falls_back_to_the_installation_language(
+    hass: HomeAssistant,
+) -> None:
+    hass.data.setdefault(DOMAIN, {}).pop("_disruptions", None)
+    hass.config.language = "nl"
+    coord = _coord(hass)
+    coord._session = MagicMock()
+    coord._session.get = MagicMock(return_value=_resp(200, [DISRUPTION]))
+    await coord.async_fetch_disruptions()
+    assert coord._session.get.call_args.kwargs["headers"]["Accept-Language"] == "nl"
+
+
 async def test_fetch_survives_a_bad_answer(hass: HomeAssistant) -> None:
     hass.data.setdefault(DOMAIN, {}).pop("_disruptions", None)
     coord = _coord(hass)
@@ -450,6 +503,20 @@ async def test_ws_disruptions_narrows_to_chosen_stations() -> None:
         "id": 1, "scope": "stations", "stations": ["  "],
     })
     assert len(conn.send_result.call_args[0][1]["disruptions"]) == 2
+
+
+async def test_ws_disruptions_asks_in_the_viewer_s_language() -> None:
+    """The card's language, not the server's: they can differ."""
+    coord = _mock_coord(parse_disruptions([DISRUPTION]))
+    conn = MagicMock()
+    await disruptions_inner(_hass_with(coord), conn, {"id": 1, "language": "en"})
+    coord.async_fetch_disruptions.assert_awaited_once_with("en")
+
+    # Nothing sent means the installation's own language, decided in
+    # the coordinator rather than here.
+    coord = _mock_coord(parse_disruptions([DISRUPTION]))
+    await disruptions_inner(_hass_with(coord), MagicMock(), {"id": 1})
+    coord.async_fetch_disruptions.assert_awaited_once_with(None)
 
 
 async def test_ws_disruptions_needs_a_hub() -> None:
