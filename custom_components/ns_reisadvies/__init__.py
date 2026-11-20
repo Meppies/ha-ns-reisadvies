@@ -35,6 +35,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.loader import async_get_integration
 
+from ._dienstkaartje import on_train
 from ._disruptions import affecting, of_types, station_keys_of
 from ._live import position_along
 from .const import (
@@ -44,7 +45,12 @@ from .const import (
     CONF_API_KEY,
     CONF_FROM_STATION,
     CONF_TO_STATION,
+    CONF_DIENSTKAARTJE,
+    CONF_DIENSTKAARTJE_USERS,
     CONF_DISRUPTIONS,
+    DEFAULT_DIENSTKAARTJE,
+    DEFAULT_DIENSTKAARTJE_USERS,
+    DIENSTKAARTJE_AVAILABLE,
     DEFAULT_DISRUPTIONS,
     CONF_SCAN_INTERVAL,
     CONF_FAV_HOURS,
@@ -386,6 +392,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
     runtime.track_favourites_enabled = track_favourites
     runtime.favourite_track_seconds = favourite_track_seconds
     watch_disruptions = bool(_option(entry, CONF_DISRUPTIONS, DEFAULT_DISRUPTIONS))
+    # v2.27.0: Dienstkaartje. Off unless asked for, and then only for
+    # the people named in the options.
+    watch_dienstkaartje = DIENSTKAARTJE_AVAILABLE and bool(
+        _option(entry, CONF_DIENSTKAARTJE, DEFAULT_DIENSTKAARTJE)
+    )
+    dienstkaartje_users = _option(
+        entry, CONF_DIENSTKAARTJE_USERS, DEFAULT_DIENSTKAARTJE_USERS,
+    )
 
     # Coordinator per subentry. Stored on runtime.coordinators so the
     # sensor platform can pick them up via entry.runtime_data.
@@ -409,6 +423,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
             track_favourites=track_favourites,
             favourite_track_seconds=favourite_track_seconds,
             disruptions=watch_disruptions,
+            dienstkaartje=watch_dienstkaartje,
+            dienstkaartje_users=dienstkaartje_users,
             filter_days=subentry.data.get(CONF_FILTER_DAYS),
             filter_time=subentry.data.get(CONF_FILTER_TIME),
             filter_window_minutes=int(
@@ -453,6 +469,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         websocket_api.async_register_command(hass, _ws_stations)
         websocket_api.async_register_command(hass, _ws_search)
         websocket_api.async_register_command(hass, _ws_disruptions)
+        websocket_api.async_register_command(hass, _ws_dienstkaartje)
+        websocket_api.async_register_command(hass, _ws_dienstkaartje_on_train)
         hass.data[DOMAIN]["_ws_registered"] = True
 
     # Schedule the rail-cache refresh once per HA boot. Runs ~5s after
@@ -1012,6 +1030,75 @@ async def _ws_disruptions(
             ]
 
     connection.send_result(msg["id"], {"disruptions": items})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "ns_reisadvies/dienstkaartje",
+    }
+)
+@websocket_api.async_response
+async def _ws_dienstkaartje(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """The shifts of the people this installation follows.
+
+    Only the people named in the options: this command takes no
+    usernames of its own, so a card on a dashboard cannot look up
+    somebody the owner of the installation never asked about.
+    """
+    coord = _any_coordinator(hass)
+    if coord is None:
+        connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
+        return
+    if not coord.watch_dienstkaartje:
+        connection.send_result(msg["id"], {"enabled": False, "people": []})
+        return
+
+    people = await coord.async_fetch_dienstkaartje_followed()
+    connection.send_result(msg["id"], {
+        "enabled": True,
+        # Name plus the user's own role label, where they wrote one:
+        # Dienstkaartje publishes no such thing itself.
+        "following": [dict(entry) for entry in coord.dienstkaartje_follow],
+        "people": people,
+    })
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "ns_reisadvies/dienstkaartje/on_train",
+        vol.Required("trains"): [str],
+    }
+)
+@websocket_api.async_response
+async def _ws_dienstkaartje_on_train(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Who is working on these trains, beyond the follow list.
+
+    This is the expensive question — everyone on a shift has to be
+    asked after — so it is never part of a refresh: a card asks it
+    when the user presses the button, and the answer is shared for a
+    few minutes between everyone who asks.
+    """
+    coord = _any_coordinator(hass)
+    if coord is None:
+        connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
+        return
+    if not coord.watch_dienstkaartje:
+        connection.send_result(msg["id"], {"enabled": False, "trains": {}})
+        return
+
+    wanted = [str(train).strip() for train in msg.get("trains") or []]
+    wanted = [train for train in wanted if train][:40]
+    profiles = await coord.async_sweep_dienstkaartje()
+    found = {train: on_train(profiles, train) for train in wanted}
+    connection.send_result(msg["id"], {
+        "enabled": True,
+        "checked": len(profiles),
+        "trains": {train: people for train, people in found.items() if people},
+    })
 
 
 def _backfill_entity_subentries(hass: HomeAssistant, entry: ConfigEntry) -> None:

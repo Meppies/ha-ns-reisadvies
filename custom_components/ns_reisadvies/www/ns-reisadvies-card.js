@@ -3,6 +3,15 @@
 // localised via the small i18n helper below. Add a new language by
 // adding a translation block to I18N.
 
+// Mirrors DIENSTKAARTJE_AVAILABLE in const.py, and flips with it.
+// dienstkaartje.nl is somebody's hobby server with no published
+// terms, so its author has been asked whether this use is welcome
+// before any traffic goes their way. While this is false the card is
+// kept out of the card picker and says so if one is already on a
+// dashboard; the element stays registered so such a dashboard does
+// not break.
+const DIENSTKAARTJE_AVAILABLE = false;
+
 const I18N = {
   en: {
     select_sensor: "Select a sensor.",
@@ -84,6 +93,21 @@ const I18N = {
     disruptions_scope_routes: "Only my routes",
     disruptions_scope_stations: "Stations I pick",
     disruptions_stations_hint: "Station names, separated by commas.",
+    staff_ask: "Who is working this train?",
+    staff_none: "Nobody on a shift published these trains.",
+    staff_checked: "{n} people on a shift checked.",
+    staff_title: "Dienstkaartje",
+    staff_off: "Switch Dienstkaartje on in the integration options.",
+    staff_pending: "Dienstkaartje is not switched on in this version. "
+      + "Its author has been asked first whether this use of their site is welcome.",
+    staff_nobody: "No one is being followed yet.",
+    staff_off_duty: "No shift today.",
+    staff_private: "This shift is not public.",
+    staff_hidden_trains: "Train numbers hidden.",
+    staff_show_map: "Route",
+    staff_shift: "Shift",
+    staff_show_route: "Show the route of the shift on the map",
+    staff_source: "Shifts published by the staff themselves on dienstkaartje.nl",
   },
   nl: {
     select_sensor: "Selecteer een sensor.",
@@ -165,6 +189,21 @@ const I18N = {
     disruptions_scope_routes: "Alleen mijn routes",
     disruptions_scope_stations: "Stations die ik kies",
     disruptions_stations_hint: "Stationsnamen, gescheiden door komma's.",
+    staff_ask: "Wie rijdt deze trein?",
+    staff_none: "Niemand met dienst heeft deze treinen gepubliceerd.",
+    staff_checked: "{n} mensen met dienst bekeken.",
+    staff_title: "Dienstkaartje",
+    staff_off: "Zet Dienstkaartje aan in de instellingen van de integratie.",
+    staff_pending: "Dienstkaartje staat in deze versie uit. De maker is eerst "
+      + "gevraagd of dit gebruik van zijn site welkom is.",
+    staff_nobody: "Je volgt nog niemand.",
+    staff_off_duty: "Vandaag geen dienst.",
+    staff_private: "Deze dienst is niet openbaar.",
+    staff_hidden_trains: "Ritnummers verborgen.",
+    staff_show_map: "Route",
+    staff_shift: "Dienst",
+    staff_show_route: "Toon de route van de dienst op de kaart",
+    staff_source: "Diensten die medewerkers zelf publiceren op dienstkaartje.nl",
   },
 };
 
@@ -605,6 +644,118 @@ class NSReisadviesCard extends HTMLElement {
     return `<div class="tl-train-composition"><span class="tcomp-images">${imgs}</span></div>`;
   }
 
+  // Whether this installation follows anyone on Dienstkaartje. Asked
+  // once per page rather than per card, and the answer decides whether
+  // the "who is working?" button is there at all.
+  _dienstkaartjeAllowed() {
+    if (!DIENSTKAARTJE_AVAILABLE) return false;
+    if (NSReisadviesCard._dkEnabled === undefined && this._hass) {
+      NSReisadviesCard._dkEnabled = null;  // asking
+      this._hass.callWS({ type: "ns_reisadvies/dienstkaartje" })
+        .then(answer => {
+          NSReisadviesCard._dkEnabled = !!(answer && answer.enabled);
+          if (NSReisadviesCard._dkEnabled) this._refreshView();
+        })
+        .catch(() => { NSReisadviesCard._dkEnabled = false; });
+    }
+    return NSReisadviesCard._dkEnabled === true;
+  }
+
+  // The expensive question, asked only when the user presses the
+  // button: everyone on a shift right now is looked up, not just the
+  // people followed. The answer is cached on the server side for a
+  // few minutes, so pressing it again costs nothing.
+  async askWhoIsWorking(tripIndex, trips) {
+    const trip = (trips || [])[tripIndex];
+    if (!trip || !this._hass) return;
+    const trains = (trip.legs || [])
+      .map(leg => leg.product && leg.product.number)
+      .filter(Boolean)
+      .map(String);
+    if (!trains.length) return;
+    this._staffAsked = tripIndex;
+    this._staffBusy = true;
+    this._refreshView();
+    try {
+      const answer = await this._hass.callWS({
+        type: "ns_reisadvies/dienstkaartje/on_train", trains,
+      });
+      this._staffByTrain = Object.assign({}, this._staffByTrain,
+                                         (answer && answer.trains) || {});
+      this._staffChecked = (answer && answer.checked) || 0;
+    } catch (err) {
+      console.warn("[ns-reisadvies] dienstkaartje unavailable", err);
+    }
+    this._staffBusy = false;
+    this._refreshView();
+  }
+
+  // The ordinary card paints with updateContent(); the search and
+  // disruptions cards have a _render() of their own. One name for
+  // "draw yourself again" keeps the shared code out of that detail.
+  _refreshView() {
+    if (typeof this._render === "function") this._render();
+    else if (typeof this.updateContent === "function") this.updateContent();
+  }
+
+  // The picture that goes with a role the user wrote themselves.
+  // Dienstkaartje knows no roles, so this matches the words people
+  // actually type — in Dutch and in English — and falls back to a
+  // neutral badge for anything else, including no label at all.
+  static roleIcon(role) {
+    const word = String(role || "").toLowerCase();
+    if (!word) return "mdi:badge-account-horizontal-outline";
+    if (/machinist|driver|mach\b|bestuurder/.test(word)) return "mdi:train";
+    if (/conduct|hc\b|kaartje|ticket/.test(word)) return "mdi:ticket-confirmation-outline";
+    if (/steward|service|catering|koffie|coffee/.test(word)) return "mdi:coffee-outline";
+    if (/veiligheid|security|boa|handhav/.test(word)) return "mdi:shield-account-outline";
+    if (/rangeer|shunt|werkplaats|monteur|technic/.test(word)) return "mdi:wrench-outline";
+    return "mdi:badge-account-horizontal-outline";
+  }
+
+  // v2.27.0: who is working this train, from Dienstkaartje.
+  //
+  // Only the people the installation follows are here by default; the
+  // rest arrive in `_staffByTrain` after the user presses the button
+  // that asks about everyone on a shift. Either way this is what the
+  // person themselves publishes, so it is shown as they wrote it and
+  // nothing is inferred: no times where they hide times, no train
+  // where they hide the train.
+  renderStaff(leg) {
+    const number = leg && leg.product && leg.product.number;
+    const found = (leg && leg.staff) || [];
+    const extra = (this._staffByTrain && number
+      ? this._staffByTrain[String(number)] : null) || [];
+    const seen = new Set();
+    const people = found.concat(extra).filter(person => {
+      const key = (person && person.username || "").toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (!people.length) return "";
+    const chip = (person) => {
+      const where = [person.from, person.to].filter(Boolean).join(" → ");
+      const when = [person.departure, person.arrival]
+        .filter(Boolean)
+        .map(stamp => String(stamp).slice(11, 16))
+        .join(" – ");
+      const title = [person.role, where, when]
+        .filter(Boolean).join(" · ").replace(/"/g, "&quot;");
+      const name = String(person.username).replace(/</g, "&lt;");
+      const icon = NSReisadviesCard.roleIcon(person.role);
+      const avatar = person.avatar
+        ? `<img src="${String(person.avatar).replace(/"/g, "&quot;")}" alt=""
+                loading="lazy" data-fallback="${icon}">`
+        : `<ha-icon icon="${icon}"></ha-icon>`;
+      const role = person.role
+        ? `<span class="tl-staff-role">${String(person.role).replace(/</g, "&lt;")}</span>`
+        : "";
+      return `<span class="tl-staff-chip" title="${title}">${avatar}<span>${name}</span>${role}</span>`;
+    };
+    return `<div class="tl-staff">${people.map(chip).join("")}</div>`;
+  }
+
   getCrowd(c) {
     const colors = { LOW: "#4CAF50", MEDIUM: "#FF9800", HIGH: "#F44336" };
     const color = colors[c] || "#888";
@@ -713,6 +864,11 @@ class NSReisadviesCard extends HTMLElement {
         .trip-wrapper:last-child { border-bottom: none; margin-bottom: 0; }
         .trip-header-bar { display: flex; justify-content: flex-end; height: 30px; align-items: center; margin-bottom: 5px; }
         .fav-heart { cursor: pointer; z-index: 10; padding: 5px; }
+        .staff-ask {
+          cursor: pointer; z-index: 10; padding: 5px;
+          color: var(--secondary-text-color); opacity: 0.55;
+        }
+        .staff-ask:hover { opacity: 1; }
         .heart-grey { color: var(--disabled-text-color); opacity: 0.3; }
         .heart-red { color: #ff5252; opacity: 1; }
         .tl-grid { display: grid; grid-template-columns: 75px 25px 1fr; gap: 0; }
@@ -737,6 +893,26 @@ class NSReisadviesCard extends HTMLElement {
         .tl-train-details { color: var(--secondary-text-color); display: flex; align-items: center; flex-wrap: wrap; }
         .detail-separator { margin: 0 6px; opacity: 0.5; font-size: 0.8em; }
         .tl-train-meta { font-size: 0.85em; color: var(--secondary-text-color); margin-top: 4px; opacity: 0.8; }
+        /* Dienstkaartje: who is working this train (v2.27.0). */
+        .tl-staff { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+        .tl-staff-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 2px 8px 2px 3px;
+          border-radius: 999px;
+          background: var(--secondary-background-color, rgba(127,127,127,0.15));
+          color: var(--secondary-text-color);
+          font-size: 0.82em;
+          max-width: 100%;
+        }
+        .tl-staff-chip img, .tl-staff-chip ha-icon {
+          width: 20px; height: 20px; border-radius: 50%;
+          object-fit: cover; flex-shrink: 0; --mdc-icon-size: 16px;
+        }
+        .tl-staff-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .tl-staff-chip .tl-staff-role { opacity: 0.7; font-size: 0.92em; }
+        .tl-staff-chip .tl-staff-role::before { content: "· "; }
         .tl-train-composition { margin-top: 6px; max-width: 100%; overflow: hidden; }
         .tl-train-composition .tcomp-images {
           display: flex;
@@ -935,6 +1111,10 @@ class NSReisadviesCard extends HTMLElement {
 
       html += `<div class="trip-wrapper">
         <div class="trip-header-bar">
+          <div class="staff-ask" data-staff="${tIdx}" title="${t("staff_ask", this._hass)}"
+               style="${this._dienstkaartjeAllowed() ? "" : "display:none"}">
+            <ha-icon icon="${this._staffAsked === tIdx ? "mdi:account-search" : "mdi:account-search-outline"}"></ha-icon>
+          </div>
           <div class="fav-heart ${isFav ? "heart-red" : "heart-grey"}" data-idx="${tIdx}" data-ctx="${ctx || ""}" data-fav="${isFav}" style="${this._favouritesAllowed() ? "" : "display:none"}">
             <ha-icon icon="${isFav ? "mdi:heart" : "mdi:heart-outline"}"></ha-icon>
           </div>
@@ -1057,6 +1237,7 @@ class NSReisadviesCard extends HTMLElement {
               <span class="detail-separator">•</span>${this.getCrowd(leg.crowdForecast)}</div>
               <div class="tl-train-meta">${leg.name || unknownLabel}${leg.composition && leg.composition.trainType ? ' · ' + leg.composition.trainType : ''}</div>
               ${this.renderComposition(leg)}
+              ${this.renderStaff(leg)}
             </div>
           </div>`;
 
@@ -1171,6 +1352,13 @@ class NSReisadviesCard extends HTMLElement {
       btn.addEventListener("click", (e) => this.toggleStops(key, e));
     });
 
+    this.content.querySelectorAll(".staff-ask").forEach(btn => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        this.askWhoIsWorking(Number(btn.getAttribute("data-staff")), tripsToShow);
+      });
+    });
+
     // Event delegation at the card root so the handler survives any
     // re-render and so the click can't be intercepted by an ancestor
     // before reaching us. Use capture phase to win against HA's own
@@ -1204,6 +1392,39 @@ class NSReisadviesCard extends HTMLElement {
     // Touch devices scroll natively via swipe; mouse-wheel works too.
     const scrollers = this.content.querySelectorAll(`.tcomp-images`);
     scrollers.forEach(el => this._wireDragScroll(el));
+    this._hideBrokenImages();
+  }
+
+  // A carriage picture lives on NS's own image server and an avatar on
+  // Dienstkaartje's; either can be unreachable — no internet on that
+  // network, an ad blocker, their server down. The browser's broken
+  // image icon with the alt text beside it looks like a bug in the
+  // card, so an image that does not load is simply removed and what
+  // is left (the train type, the name) still reads.
+  _hideBrokenImages(root) {
+    const where = root || this.content;
+    if (!where) return;
+    where.querySelectorAll("img").forEach(img => {
+      if (img.dataset.nsImgWired) return;
+      img.dataset.nsImgWired = "1";
+      const drop = () => {
+        // A picture of a person leaves an icon behind; a carriage
+        // simply goes, because half a train is worse than none.
+        const fallback = img.getAttribute("data-fallback");
+        if (fallback) {
+          const icon = document.createElement("ha-icon");
+          icon.setAttribute("icon", fallback);
+          icon.className = img.className;
+          img.replaceWith(icon);
+          return;
+        }
+        img.remove();
+      };
+      img.addEventListener("error", drop);
+      // An image that already failed before the listener was attached
+      // reports complete with no natural width.
+      if (img.complete && img.naturalWidth === 0) drop();
+    });
   }
 
   _wireDragScroll(el) {
@@ -4346,6 +4567,343 @@ class NSReisadviesDisruptionsEditor extends HTMLElement {
   }
 }
 
+// v2.27.0: the people this installation follows on Dienstkaartje.
+//
+// dienstkaartje.nl is a hobby project by Dutchbeard where railway
+// staff publish the shift they are working themselves. This card
+// shows the shifts of the people named in the integration's options
+// and nobody else — it carries no usernames of its own, so adding it
+// to a dashboard cannot widen what is being asked after.
+//
+// It extends the ordinary card for the map: drawing a shift's route
+// reuses the tile token, the Leaflet loading and the modal that the
+// live train map already brings.
+class NSReisadviesDienstkaartjeCard extends NSReisadviesCard {
+  static getConfigElement() {
+    return document.createElement("ns-reisadvies-dienstkaartje-editor");
+  }
+
+  static getStubConfig() {
+    return { title: "Dienstkaartje", only_on_shift: false };
+  }
+
+  setConfig(config) {
+    const given = config || {};
+    super.setConfig({
+      title: "Dienstkaartje",
+      max_rows: 10,
+      scale: 100,
+      fav_slots: 0,
+      fav_hours: 0,
+      ...given,
+      entity: "",
+    });
+    this._onlyOnShift = !!given.only_on_shift;
+    this._people = null;
+    this._enabled = null;
+    this._failed = false;
+  }
+
+  getCardSize() { return 3; }
+  _favouritesAllowed() { return false; }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (this._activeMap) this._syncMapTheme();
+    if (!this.content) {
+      const card = document.createElement("ha-card");
+      card.header = this._config.title;
+      this.content = document.createElement("div");
+      this.content.style.padding = "0";
+      card.appendChild(this.content);
+      this.appendChild(card);
+      this.content.innerHTML =
+        `<div class="ns-dk-empty">${t("loading", this._hass)}</div>`;
+    }
+    if (first) {
+      this._load();
+      // A shift changes by the minute near a departure, but the
+      // integration caches the answer for two minutes anyway.
+      this._dkTick = setInterval(() => this._load(), 120 * 1000);
+    }
+  }
+
+  disconnectedCallback() {
+    if (super.disconnectedCallback) super.disconnectedCallback();
+    if (this._dkTick) clearInterval(this._dkTick);
+    this._dkTick = null;
+  }
+
+  async _load() {
+    if (!this._hass) return;
+    if (!DIENSTKAARTJE_AVAILABLE) {
+      this._enabled = false;
+      this._people = [];
+      this._following = [];
+      this._render();
+      return;
+    }
+    try {
+      // The routes are hundreds of points per leg and only the map
+      // uses them, so they are asked for when the map is opened.
+      const answer = await this._hass.callWS({ type: "ns_reisadvies/dienstkaartje" });
+      this._enabled = !!(answer && answer.enabled);
+      this._people = (answer && answer.people) || [];
+      // Each entry is {username, role}; older servers sent plain
+      // names, so both shapes are accepted.
+      this._following = ((answer && answer.following) || []).map(entry => (
+        typeof entry === "string" ? { username: entry, role: null } : entry
+      ));
+      this._failed = false;
+    } catch (err) {
+      console.warn("[ns-reisadvies] dienstkaartje unavailable", err);
+      this._failed = true;
+    }
+    this._render();
+  }
+
+  _render() {
+    if (!this.content || !this._hass) return;
+    const esc = (value) => String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const clock = (stamp) => (stamp ? String(stamp).slice(11, 16) : "");
+    const style = `
+      <style>
+        .ns-dk { padding: 4px 16px 16px 16px; }
+        .ns-dk-empty { padding: 20px 16px; text-align: center;
+          color: var(--secondary-text-color); }
+        .ns-dk-person { border-bottom: 1px solid var(--divider-color); padding: 12px 0; }
+        .ns-dk-person:last-child { border-bottom: none; }
+        .ns-dk-head { display: flex; gap: 10px; align-items: center; }
+        .ns-dk-avatar { width: 34px; height: 34px; border-radius: 50%;
+          object-fit: cover; flex-shrink: 0; background: var(--divider-color); }
+        .ns-dk-face { position: relative; flex-shrink: 0; line-height: 0; }
+        .ns-dk-badge {
+          position: absolute; right: -3px; bottom: -3px;
+          width: 17px; height: 17px; border-radius: 50%;
+          background: #FFC917; color: #003082;
+          display: inline-flex; align-items: center; justify-content: center;
+          --mdc-icon-size: 11px;
+          border: 2px solid var(--card-background-color);
+        }
+        .ns-dk-avatar ha-icon, ha-icon.ns-dk-avatar {
+          --mdc-icon-size: 22px; display: inline-flex;
+          align-items: center; justify-content: center;
+          color: var(--secondary-text-color);
+        }
+        .ns-dk-name { font-weight: 700; color: var(--primary-text-color); flex: 1;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ns-dk-shift { color: var(--secondary-text-color); font-size: 0.85em;
+          white-space: nowrap; }
+        .ns-dk-role { color: var(--secondary-text-color); font-size: 0.82em;
+          background: var(--secondary-background-color, rgba(127,127,127,0.15));
+          padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+        .ns-dk-legs { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+        .ns-dk-leg { display: grid; grid-template-columns: 58px 1fr; gap: 8px;
+          font-size: 0.9em; color: var(--primary-text-color);
+          padding: 4px 6px; border-radius: 6px; }
+        .ns-dk-leg.now { background: rgba(255, 201, 23, 0.18); }
+        .ns-dk-train { font-weight: 700; color: #003082; white-space: nowrap; }
+        .ns-dk-leg.now .ns-dk-train { color: inherit; }
+        .ns-dk-where { overflow: hidden; text-overflow: ellipsis; }
+        .ns-dk-times { color: var(--secondary-text-color); font-size: 0.85em; }
+        .ns-dk-mapbtn { border: none; background: none; cursor: pointer;
+          padding: 0 0 0 4px; vertical-align: -3px; color: #FF6B00;
+          --mdc-icon-size: 16px; }
+        .ns-dk-mapbtn:hover { opacity: 0.75; }
+        .ns-dk-note { color: var(--secondary-text-color); font-size: 0.85em;
+          margin-top: 6px; }
+        .ns-dk-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+        .ns-dk-btn { font-family: inherit; font-size: 0.85em; padding: 5px 10px;
+          border-radius: 999px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color); color: var(--secondary-text-color);
+          cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+        .ns-dk-btn ha-icon { --mdc-icon-size: 16px; color: #FF6B00; }
+        .ns-dk-source { color: var(--secondary-text-color); font-size: 0.78em;
+          margin-top: 12px; opacity: 0.8; }
+      </style>`;
+
+    const empty = (message) => {
+      this.content.innerHTML = `${style}<div class="ns-dk-empty">${message}</div>`;
+    };
+    if (this._failed) return empty(t("search_unavailable", this._hass));
+    if (this._people === null) return empty(t("loading", this._hass));
+    if (!DIENSTKAARTJE_AVAILABLE) return empty(t("staff_pending", this._hass));
+    if (this._enabled === false) return empty(t("staff_off", this._hass));
+    if (!(this._following || []).length) return empty(t("staff_nobody", this._hass));
+
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const nowText = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} `
+      + `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+    const known = new Map((this._people || []).map(person => [person.username, person]));
+    const rows = (this._following || []).map((entry, index) => {
+      const username = entry.username;
+      const person = known.get(username);
+      const role = (person && person.role) || entry.role || null;
+      const icon = NSReisadviesCard.roleIcon(role);
+      // Their own picture from Dienstkaartje if they have one, with a
+      // small badge for the role you gave them; the role's icon if
+      // they have no picture; a neutral badge if neither.
+      const face = person && person.avatar
+        ? `<img class="ns-dk-avatar" src="${esc(person.avatar)}" alt="" loading="lazy"
+                data-fallback="${icon}">`
+        : `<span class="ns-dk-avatar"><ha-icon icon="${icon}"></ha-icon></span>`;
+      const avatar = role
+        ? `<span class="ns-dk-face">${face}<span class="ns-dk-badge"
+             title="${esc(role)}"><ha-icon icon="${icon}"></ha-icon></span></span>`
+        : face;
+      const roleTag = role ? `<span class="ns-dk-role">${esc(role)}</span>` : "";
+      if (!person) {
+        return `
+          <div class="ns-dk-person">
+            <div class="ns-dk-head">${avatar}
+              <span class="ns-dk-name">${esc(username)}</span>${roleTag}</div>
+            <div class="ns-dk-note">${t("staff_private", this._hass)}</div>
+          </div>`;
+      }
+      const legs = person.legs || [];
+      if (this._onlyOnShift && !person.on_shift) return "";
+      const shift = person.shows_times && (person.shift_start || person.shift_end)
+        ? `${clock(person.shift_start)} – ${clock(person.shift_end)}`
+        : "";
+      let body;
+      if (!person.on_shift) {
+        body = `<div class="ns-dk-note">${t("staff_off_duty", this._hass)}</div>`;
+      } else if (!person.shows_train_numbers || !legs.length) {
+        body = `<div class="ns-dk-note">${t("staff_hidden_trains", this._hass)}</div>`;
+      } else {
+        body = `<div class="ns-dk-legs">${legs.map(leg => {
+          const running = leg.departure_time && leg.arrival_time
+            && leg.departure_time <= nowText && nowText <= leg.arrival_time;
+          const times = person.shows_times
+            ? `<span class="ns-dk-times"> · ${clock(leg.departure_time)}–${clock(leg.arrival_time)}</span>`
+            : "";
+          return `
+            <div class="ns-dk-leg ${running ? "now" : ""}">
+              <span class="ns-dk-train">${esc(leg.service_number || "")}</span>
+              <span class="ns-dk-where">${esc(leg.departure_station)} → ${esc(leg.arrival_station)}${times}
+                ${leg.service_number ? `<button class="ns-dk-mapbtn" type="button"
+                    data-train="${esc(leg.service_number)}"
+                    data-from="${esc(leg.departure_station)}"
+                    data-to="${esc(leg.arrival_station)}"
+                    title="${t("live_map_title", this._hass)}">
+                  <ha-icon icon="mdi:map-marker-radius-outline"></ha-icon></button>` : ""}
+              </span>
+            </div>`;
+        }).join("")}</div>`;
+      }
+
+      return `
+        <div class="ns-dk-person">
+          <div class="ns-dk-head">${avatar}
+            <span class="ns-dk-name">${esc(username)}</span>${roleTag}
+            ${shift ? `<span class="ns-dk-shift">${esc(shift)}</span>` : ""}
+          </div>
+          ${body}
+        </div>`;
+    }).join("");
+
+    this.content.innerHTML = `${style}<div class="ns-dk">${rows}
+      <div class="ns-dk-source">${t("staff_source", this._hass)}</div></div>`;
+    this._hideBrokenImages();
+    this.content.querySelectorAll(".ns-dk-mapbtn").forEach(button => {
+      button.addEventListener("click", () => {
+        this.openTrainMap(
+          button.getAttribute("data-train"),
+          button.getAttribute("data-from"),
+          button.getAttribute("data-to"),
+        );
+      });
+    });
+  }
+
+  // The train someone is working, on the ordinary live map.
+  //
+  // Dienstkaartje would hand over the route of a leg as a few hundred
+  // coordinate pairs, and it is not asked for: a train number is
+  // enough. The live map already draws the whole run from NS's own
+  // journey feed, snaps it to the ProRail network and puts the train's
+  // real position on it, so the number is all this site has to give.
+  openTrainMap(trainNumber, from, to) {
+    const number = String(trainNumber || "").trim();
+    if (!number) return;
+    // The ordinary card resolves a leg out of its sensor; this card
+    // has no sensor, so it hands the live map the leg directly.
+    this._mapLeg = {
+      product: { number, displayName: "" },
+      origin: { name: from || "" },
+      destination: { name: to || "" },
+      stops: [],
+    };
+    this.openLiveMap(0, 0, { num: number });
+  }
+
+  _resolveLeg() {
+    return this._mapLeg
+      ? { trip: { legs: [this._mapLeg] }, leg: this._mapLeg, tripIdx: 0, legIdx: 0 }
+      : null;
+  }
+}
+
+
+// What a Dienstkaartje card decides for itself: its title, and
+// whether to list people who are not working today. Who is followed
+// is an installation-wide setting, not a per-card one.
+class NSReisadviesDienstkaartjeEditor extends HTMLElement {
+  setConfig(config) { if (config) this._config = config; }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._rendered && this._config) {
+      this._rendered = true;
+      this.render();
+    }
+  }
+
+  render() {
+    if (!this._hass || !this._config) return;
+    const cfg = this._config;
+    this.innerHTML = `
+      <style>
+        .ns-ed { padding: 16px; }
+        .ns-ed .row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+        .ns-ed .hint { color: var(--secondary-text-color); font-size: 0.85em;
+          margin-top: 12px; }
+      </style>
+      <div class="ns-ed">
+        <ha-textfield label="${t("editor_title", this._hass)}" id="title"
+                      style="width:100%;"></ha-textfield>
+        <div class="row">
+          <ha-switch id="only" ${cfg.only_on_shift ? "checked" : ""}></ha-switch>
+          <span>${t("staff_shift", this._hass)}</span>
+        </div>
+        <div class="hint">${t("staff_source", this._hass)}</div>
+      </div>`;
+
+    const titleField = this.querySelector("#title");
+    if (titleField) {
+      titleField.value = cfg.title || "Dienstkaartje";
+      titleField.addEventListener("change", (ev) => this._fire({ title: ev.target.value }));
+    }
+    const only = this.querySelector("#only");
+    if (only) {
+      only.addEventListener("change", (ev) => {
+        this._fire({ only_on_shift: !!ev.target.checked });
+      });
+    }
+  }
+
+  _fire(obj) {
+    const newConfig = { ...this._config, ...obj };
+    this._config = newConfig;
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: newConfig } }));
+  }
+}
+
 // Registration — HA 2026.5.0+ runs Lovelace resource modules during a
 // View Transition. Calling customElements.define inside a transition
 // can silently no-op (the registry change is rolled back when the
@@ -4380,6 +4938,16 @@ const _NSRegister = () => {
       if (!(e instanceof DOMException)) console.error("ns-reisadvies-disruptions-card define failed:", e);
     }
   }
+  if (!customElements.get("ns-reisadvies-dienstkaartje-editor")) {
+    try { customElements.define("ns-reisadvies-dienstkaartje-editor", NSReisadviesDienstkaartjeEditor); } catch (e) {
+      if (!(e instanceof DOMException)) console.error("ns-reisadvies-dienstkaartje-editor define failed:", e);
+    }
+  }
+  if (!customElements.get("ns-reisadvies-dienstkaartje-card")) {
+    try { customElements.define("ns-reisadvies-dienstkaartje-card", NSReisadviesDienstkaartjeCard); } catch (e) {
+      if (!(e instanceof DOMException)) console.error("ns-reisadvies-dienstkaartje-card define failed:", e);
+    }
+  }
   if (!customElements.get("ns-reisadvies-search-card")) {
     try { customElements.define("ns-reisadvies-search-card", NSReisadviesSearchCard); } catch (e) {
       if (!(e instanceof DOMException)) console.error("ns-reisadvies-search-card define failed:", e);
@@ -4411,6 +4979,16 @@ window.customCards.push({
   documentationURL: "https://github.com/Meppies/ha-ns-reisadvies",
 });
 
+if (DIENSTKAARTJE_AVAILABLE) {
+  window.customCards.push({
+    type: "ns-reisadvies-dienstkaartje-card",
+    name: "NS Reisadvies — Dienstkaartje",
+    description: "The shifts of the railway staff you follow on dienstkaartje.nl",
+    preview: false,
+    documentationURL: "https://github.com/Meppies/ha-ns-reisadvies",
+  });
+}
+
 window.customCards.push({
   type: "ns-reisadvies-disruptions-card",
   name: "NS Reisadvies — disruptions",
@@ -4428,7 +5006,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.26.0 ",
+  "%c NS-REISADVIES-CARD %c v2.27.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

@@ -64,6 +64,9 @@ slots, train composition, and an opt-in live train map.
   optionally one to travel via, a time, a train-type filter, and the
   answer in the same timeline as the ordinary card. No route needed,
   nothing stored.
+- **Dienstkaartje** (opt-in): railway staff who publish their own
+  shift on [dienstkaartje.nl](https://dienstkaartje.nl) appear under
+  the train they are working, on a card of their own and as sensors.
 - **Disruptions**: what NS says is wrong with the railway — unplanned
   disruptions, engineering works and calamity announcements — as a
   card that shows the affected stretch on a map, and as sensors: one
@@ -203,6 +206,8 @@ Re-open *Configure* on the integration tile to tweak:
 | `live_map_refresh_seconds`   | 10      | Polling cadence while the live map modal is open (5–60 s).                                   |
 | `track_favourites_on_map`    | off     | Publishes a GPS `device_tracker` per pinned favourite for the map and zone automations.      |
 | `favourite_track_seconds`    | 30      | Position cadence for pinned favourites while their train runs (15–120 s).                    |
+| `dienstkaartje`              | off     | Follows railway staff who publish their own shift on dienstkaartje.nl.                       |
+| `dienstkaartje_users`        | —       | The usernames to follow, separated by commas; at most ten. `name:role` adds your own label.  |
 
 ### Favourites on the map
 
@@ -486,6 +491,96 @@ automation:
           title: "{{ state_attr('sensor.ns_werk_disruptions', 'title') }}"
           message: "{{ state_attr('sensor.ns_werk_disruptions', 'summary') }}"
 ```
+
+## Dienstkaartje — the people working the train
+
+> **Not switched on yet.** The code ships with this release and does
+> not run: the option is absent from the integration settings, an
+> option set by hand is ignored, the card is not in the card picker
+> (and says so if one is already on a dashboard), and the button on a
+> journey stays hidden. Nothing here contacts dienstkaartje.nl.
+> It is somebody's hobby server with no published terms, so its author
+> has been asked whether this use is welcome first. When the answer
+> comes, two mirrored constants flip: `DIENSTKAARTJE_AVAILABLE` in
+> `const.py` and the same name at the top of the card's JavaScript.
+
+[dienstkaartje.nl](https://dienstkaartje.nl) is a project by Dutchbeard
+where railway staff publish the shift they are working themselves:
+which trains, between which stations, at what times. Nothing there is
+scraped from a roster — every profile belongs to the person it is
+about, and three switches on it decide what a stranger sees. This
+integration reads exactly that and no more:
+
+- a profile that is not public, or has a password, is not read at all;
+- with **train numbers** hidden, no train is shown and nobody can be
+  matched to a train;
+- with **times** hidden, a shift is shown without times rather than
+  guessed at.
+
+Switch on **Follow railway staff (Dienstkaartje)** in the integration
+options and list the usernames to follow, separated by commas. Only
+those names are ever looked up on a refresh — one request each — and
+the whole feature is off until you do.
+
+The site knows a username, a picture and a shift; it publishes no
+roles, so neither does this integration guess at one. If you want to
+see who is the driver and who the conductor, write your own label
+after a colon:
+
+```text
+machinist_jan:machinist, lies:conducteur, kees
+```
+
+That label is yours: it is shown as written, in the chip and on the
+card. The picture beside the name is theirs — the avatar from their
+Dienstkaartje profile — with a small badge for the role you gave
+them; without a picture the role's own icon takes its place, and
+without a label either it is a neutral badge. People found by the
+button rather than followed have no label, since nobody wrote one for
+them.
+
+```yaml
+type: custom:ns-reisadvies-dienstkaartje-card
+title: Dienstkaartje
+only_on_shift: false   # true hides whoever is not working today
+```
+
+The card lists each person you follow with their shift and the trains
+in it, each with a small map button: that opens the ordinary live
+train map for that train — the whole run from NS, snapped to the
+ProRail network, with the train's real position on it. Dienstkaartje
+is asked for nothing beyond the train number; it would hand over the
+route of a leg as a few hundred coordinate pairs, and there is no
+reason to take it. Alongside the card:
+
+- **In the route and search cards**, the people you follow appear as a
+  chip under the train they are on.
+- **The button beside the heart** asks the other question: who, of
+  everyone with a shift right now, is on *this* train. That one is not
+  part of a refresh — it walks the site's "on a shift" list and asks
+  after each person — so it runs only when pressed, and the answer is
+  shared for five minutes.
+- **One sensor per person followed**, `sensor.ns_dienstkaartje_<name>`,
+  with the train being worked as the state (`idle` between trains,
+  `off_duty` without a shift) and the shift in the attributes.
+
+```yaml
+automation:
+  - alias: "Dad is on his way home"
+    triggers:
+      - trigger: state
+        entity_id: sensor.ns_dienstkaartje_machinist_jan
+        to: "1537"
+    actions:
+      - action: notify.mobile_app_telefoon
+        data:
+          message: "Jan is driving IC 1537."
+```
+
+Being a good guest is part of the design: the answers are cached (two
+minutes per person, five for the sweep), the follow list is capped at
+ten, and an HTTP 429 stops every request to the site for fifteen
+minutes rather than being retried.
 
 ## Services
 

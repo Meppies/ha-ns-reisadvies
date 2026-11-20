@@ -141,7 +141,9 @@
           "first_weekday": "First day of the week",
           "track_favourites_on_map": "Show favourites on the map",
           "favourite_track_seconds": "Favourite position interval (seconds)",
-          "disruptions": "Follow disruptions"
+          "disruptions": "Follow disruptions",
+          "dienstkaartje": "Follow railway staff (Dienstkaartje)",
+          "dienstkaartje_users": "Dienstkaartje usernames"
         },
         "data_description": {
           "api_key": "Your NS API subscription key. Replace if it has been rotated.",
@@ -153,7 +155,9 @@
           "first_weekday": "Which weekday should appear at the top of the day-picker on the per-route filter form. Display only — does not change anything else.",
           "track_favourites_on_map": "Publishes a device tracker for every pinned favourite, so the train you are travelling on appears on the Home Assistant map and can trigger zone automations. The position is only fetched while a favourite is actually en route.",
           "favourite_track_seconds": "How often the position of a pinned favourite is refreshed while it is en route. Shorter means a zone is less likely to be missed by a fast train. Range: 15 to 120 seconds.",
-          "disruptions": "Fetches NS's current disruptions and engineering works on every refresh — one national request shared by all routes. Gives each route a sensor counting the disruptions that touch it, adds one for the country as a whole, and feeds the disruptions card."
+          "disruptions": "Fetches NS's current disruptions and engineering works on every refresh — one national request shared by all routes. Gives each route a sensor counting the disruptions that touch it, adds one for the country as a whole, and feeds the disruptions card.",
+          "dienstkaartje": "Shows which train the people you follow are working, from dienstkaartje.nl — a project by Dutchbeard where railway staff publish their own shift. Off by default. Only the usernames below are ever looked up, and only what each person chooses to publish is shown: no train numbers where they hide them, no times where they hide those.",
+          "dienstkaartje_users": "Usernames on dienstkaartje.nl, separated by commas; at most ten. A name may carry your own label after a colon — machinist_jan:machinist — because the site publishes no roles itself. Each name costs one request to their server per refresh."
         }
       }
     },
@@ -241,6 +245,9 @@
       },
       "national_disruptions": {
         "name": "Disruptions nationwide"
+      },
+      "staff_shift": {
+        "name": "Dienstkaartje shift"
       }
     }
   }

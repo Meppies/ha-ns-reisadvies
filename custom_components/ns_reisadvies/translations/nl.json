@@ -141,7 +141,9 @@
           "first_weekday": "Eerste dag van de week",
           "track_favourites_on_map": "Favorieten op de kaart tonen",
           "favourite_track_seconds": "Interval favorietpositie (seconden)",
-          "disruptions": "Storingen bijhouden"
+          "disruptions": "Storingen bijhouden",
+          "dienstkaartje": "Spoormedewerkers volgen (Dienstkaartje)",
+          "dienstkaartje_users": "Dienstkaartje-gebruikersnamen"
         },
         "data_description": {
           "api_key": "Je NS API-sleutel. Vervang deze als hij geroteerd is.",
@@ -153,7 +155,9 @@
           "first_weekday": "Welke weekdag bovenaan de dagen-keuzelijst van het filter-formulier verschijnt. Alleen weergave — verandert verder niets.",
           "track_favourites_on_map": "Maakt voor elke vastgezette favoriet een device tracker aan, zodat de trein waarin je zit op de kaart van Home Assistant verschijnt en zone-automatiseringen kan activeren. De positie wordt alleen opgehaald zolang een favoriet daadwerkelijk onderweg is.",
           "favourite_track_seconds": "Hoe vaak de positie van een vastgezette favoriet wordt ververst terwijl de trein rijdt. Korter betekent dat een snelle trein een zone minder snel mist. Bereik: 15 tot 120 seconden.",
-          "disruptions": "Haalt bij elke verversing de actuele storingen en werkzaamheden bij NS op — één landelijk verzoek dat alle routes delen. Geeft elke route een sensor met het aantal storingen dat dat traject raakt, plus één sensor voor het hele land, en vult de storingenkaart."
+          "disruptions": "Haalt bij elke verversing de actuele storingen en werkzaamheden bij NS op — één landelijk verzoek dat alle routes delen. Geeft elke route een sensor met het aantal storingen dat dat traject raakt, plus één sensor voor het hele land, en vult de storingenkaart.",
+          "dienstkaartje": "Laat zien welke trein de mensen die je volgt rijden, via dienstkaartje.nl — een project van Dutchbeard waar spoormedewerkers hun eigen dienst publiceren. Standaard uit. Alleen de gebruikersnamen hieronder worden opgevraagd, en alleen wat iemand zelf publiceert wordt getoond: geen ritnummers als die verborgen zijn, geen tijden als die verborgen zijn.",
+          "dienstkaartje_users": "Gebruikersnamen op dienstkaartje.nl, gescheiden door komma's; maximaal tien. Achter een dubbele punt mag je eigen label: machinist_jan:machinist — de site publiceert zelf geen functies. Elke naam kost één verzoek aan hun server per verversing."
         }
       }
     },
@@ -241,6 +245,9 @@
       },
       "national_disruptions": {
         "name": "Storingen in het land"
+      },
+      "staff_shift": {
+        "name": "Dienstkaartje dienst"
       }
     }
   }

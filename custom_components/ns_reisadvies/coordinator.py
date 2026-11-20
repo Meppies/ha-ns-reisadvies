@@ -12,6 +12,7 @@ from datetime import (
     timezone,
 )
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import aiohttp
 import async_timeout
@@ -33,6 +34,13 @@ from ._filter import (
     parse_iso,
     train_types_in,
 )
+from ._dienstkaartje import (
+    annotate_trips,
+    clean_username,
+    parse_follow_list,
+    parse_list,
+    parse_profile,
+)
 from ._disruptions import (
     affecting,
     disruption_language,
@@ -45,6 +53,13 @@ from .const import (
     ARCGIS_BACKOFF_MINUTES,
     ARCGIS_FAILURES_BEFORE_BACKOFF,
     ARCGIS_TREINEN_URL,
+    DIENSTKAARTJE_API_URL,
+    DIENSTKAARTJE_BACKOFF_MINUTES,
+    DIENSTKAARTJE_CACHE_SECONDS,
+    DIENSTKAARTJE_MAX_FOLLOWED,
+    DIENSTKAARTJE_SWEEP_CACHE_SECONDS,
+    DIENSTKAARTJE_SWEEP_MAX_PAGES,
+    DIENSTKAARTJE_SWEEP_MAX_PEOPLE,
     DISRUPTIONS_API_URL,
     DISRUPTIONS_CACHE_SECONDS,
     FAV_RUN_LOOKAROUND_HOURS,
@@ -209,6 +224,8 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         track_favourites: bool = False,
         favourite_track_seconds: int = DEFAULT_FAV_TRACK_SECONDS,
         disruptions: bool = True,
+        dienstkaartje: bool = False,
+        dienstkaartje_users: list[str] | str | None = None,
         filter_days: list[int] | None = None,
         filter_time: str | None = None,
         filter_window_minutes: int = 0,
@@ -239,6 +256,20 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         self.watch_disruptions = bool(disruptions)
         self.disruptions: list[dict[str, Any]] = []
         self.route_disruptions: list[dict[str, Any]] = []
+        # v2.27.0: Dienstkaartje. Off unless the user switches it on,
+        # and then only for the people they name: nothing is fetched
+        # about anyone else, and a profile is read exactly as its owner
+        # publishes it.
+        self.watch_dienstkaartje = bool(dienstkaartje)
+        # Each entry is a username and, where the user wrote one after
+        # a colon, their own label for what that person does.
+        self.dienstkaartje_follow = parse_follow_list(dienstkaartje_users)[
+            :DIENSTKAARTJE_MAX_FOLLOWED
+        ]
+        self.dienstkaartje_users = [
+            entry["username"] for entry in self.dienstkaartje_follow
+        ]
+        self.dienstkaartje: list[dict[str, Any]] = []
         self.favourite_track_seconds = max(
             FAV_TRACK_SECONDS_MIN,
             min(FAV_TRACK_SECONDS_MAX, int(favourite_track_seconds or DEFAULT_FAV_TRACK_SECONDS)),
@@ -1230,6 +1261,18 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                     self.disruptions = []
                     self.route_disruptions = []
 
+                # v2.27.0: the people the user follows on Dienstkaartje,
+                # and which of this route's trains they are on. Only the
+                # named ones are asked after; nobody else is looked up
+                # unless the user presses the button on a card.
+                if self.watch_dienstkaartje and self.dienstkaartje_users:
+                    self.dienstkaartje = (
+                        await self.async_fetch_dienstkaartje_followed()
+                    )
+                    annotate_trips(all_trips, self.dienstkaartje)
+                else:
+                    self.dienstkaartje = []
+
                 self._note_available()
                 return all_trips
 
@@ -1407,6 +1450,167 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         cache[lang] = {"at": time.monotonic(), "items": items}
         return items
 
+    # ---- Dienstkaartje (railway staff publishing their own shift) ----
+
+    def _dienstkaartje_resting(self) -> bool:
+        """Whether the site asked to be left alone for a while.
+
+        A 429 is the one thing a hobby server can say about load, so it
+        is taken at its word: nothing is asked of it until the backoff
+        has run out, and the cards show what was last known instead.
+        """
+        until = self._shared().get("_dk_backoff_until")
+        if not isinstance(until, (int, float)):
+            return False
+        return time.monotonic() < float(until)
+
+    def _dienstkaartje_rest(self) -> None:
+        self._shared()["_dk_backoff_until"] = (
+            time.monotonic() + DIENSTKAARTJE_BACKOFF_MINUTES * 60
+        )
+        _LOGGER.warning(
+            "Dienstkaartje asked us to slow down (HTTP 429); leaving it alone "
+            "for %d minutes", DIENSTKAARTJE_BACKOFF_MINUTES,
+        )
+
+    async def _dienstkaartje_get(
+        self, url: str, params: dict[str, str] | None = None,
+    ) -> Any | None:
+        """One GET, with the manners this API deserves."""
+        if self._dienstkaartje_resting():
+            return None
+        try:
+            async with async_timeout.timeout(20):
+                async with self._session.get(
+                    url,
+                    params=params or None,
+                    headers={"Accept": "application/json"},
+                ) as resp:
+                    if resp.status == 429:
+                        self._dienstkaartje_rest()
+                        return None
+                    if resp.status in (401, 403):
+                        # A private or password-protected profile. Not
+                        # an error: the owner said no.
+                        _LOGGER.debug("Dienstkaartje %s is not public", url)
+                        return None
+                    if resp.status == 404:
+                        _LOGGER.debug("Dienstkaartje %s does not exist", url)
+                        return None
+                    if resp.status != 200:
+                        _LOGGER.debug("Dienstkaartje %s -> HTTP %s", url, resp.status)
+                        return None
+                    return await resp.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Dienstkaartje %s failed: %s", url, err)
+            return None
+
+    async def async_fetch_dienstkaartje(
+        self, username: str, *, date: str | None = None,
+    ) -> dict[str, Any] | None:
+        """One person's shift, shared between routes and cards.
+
+        Train numbers only. The site will also hand over the route of
+        each leg — a few hundred coordinate pairs — and there is no
+        reason to take it: NS's journey and vehicle feeds and the
+        ProRail network already draw trains here, and a number is all
+        it takes to ask them.
+        """
+        name = clean_username(username)
+        if not name:
+            return None
+        key = f"{name.casefold()}|{date or ''}"
+        bucket = self._shared()
+        cache = bucket.get("_dienstkaartje")
+        if not isinstance(cache, dict):
+            cache = {}
+            bucket["_dienstkaartje"] = cache
+        entry = cache.get(key)
+        if isinstance(entry, dict):
+            age = time.monotonic() - float(entry.get("at") or 0)
+            if age < DIENSTKAARTJE_CACHE_SECONDS:
+                known: dict[str, Any] | None = entry.get("profile")
+                return known
+
+        params: dict[str, str] = {}
+        if date:
+            params["date"] = date
+        payload = await self._dienstkaartje_get(
+            f"{DIENSTKAARTJE_API_URL}/{quote(name, safe='')}", params,
+        )
+        profile = parse_profile(payload) if payload is not None else None
+        if payload is None and isinstance(entry, dict):
+            # Nothing came back (resting, or a hiccup): keep what was
+            # last known rather than blanking the card.
+            stale: dict[str, Any] | None = entry.get("profile")
+            return stale
+        cache[key] = {"at": time.monotonic(), "profile": profile}
+        return profile
+
+    async def async_fetch_dienstkaartje_followed(self) -> list[dict[str, Any]]:
+        """The people the user follows, as far as they publish anything."""
+        if not self.watch_dienstkaartje or not self.dienstkaartje_follow:
+            return []
+        followed = self.dienstkaartje_follow[:DIENSTKAARTJE_MAX_FOLLOWED]
+        profiles = await asyncio.gather(*(
+            self.async_fetch_dienstkaartje(entry["username"]) for entry in followed
+        ))
+        out: list[dict[str, Any]] = []
+        for entry, profile in zip(followed, profiles):
+            if not profile:
+                continue
+            # The role is the user's label, not the site's, so it is
+            # attached here rather than read out of the answer. The
+            # cached profile is shared, so this makes a copy.
+            out.append({**profile, "role": entry.get("role")})
+        return out
+
+    async def async_sweep_dienstkaartje(self) -> list[dict[str, Any]]:
+        """Everyone on a shift right now, for the on-demand check.
+
+        This is the expensive one — a page of the list, then a request
+        per person — so it only runs when the user presses the button
+        on a card, the answer is shared for five minutes, and it stops
+        after a few pages however many people are out there.
+        """
+        if not self.watch_dienstkaartje:
+            return []
+        bucket = self._shared()
+        entry = bucket.get("_dienstkaartje_sweep")
+        if isinstance(entry, dict):
+            age = time.monotonic() - float(entry.get("at") or 0)
+            if age < DIENSTKAARTJE_SWEEP_CACHE_SECONDS:
+                fresh: list[dict[str, Any]] = entry.get("profiles") or []
+                return fresh
+
+        people: list[dict[str, Any]] = []
+        cursor: str | None = None
+        for _ in range(DIENSTKAARTJE_SWEEP_MAX_PAGES):
+            params = {"cursor": cursor} if cursor else None
+            payload = await self._dienstkaartje_get(DIENSTKAARTJE_API_URL, params)
+            if payload is None:
+                break
+            page, cursor = parse_list(payload)
+            people.extend(page)
+            if not cursor or len(people) >= DIENSTKAARTJE_SWEEP_MAX_PEOPLE:
+                break
+
+        names = [person["username"] for person in people][
+            :DIENSTKAARTJE_SWEEP_MAX_PEOPLE
+        ]
+        profiles = [
+            profile
+            for profile in await asyncio.gather(*(
+                self.async_fetch_dienstkaartje(name) for name in names
+            ))
+            if profile
+        ]
+        if profiles or not isinstance(entry, dict):
+            bucket["_dienstkaartje_sweep"] = {
+                "at": time.monotonic(), "profiles": profiles,
+            }
+        return profiles
+
     async def async_search_trips(
         self,
         from_station: str,
@@ -1474,6 +1678,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         # comes first so nothing is fetched for a trip about to be
         # dropped.
         await self._annotate_compositions(trips, headers, reset=False)
+        # And the people the user follows, on the same terms.
+        if self.watch_dienstkaartje and self.dienstkaartje_users:
+            annotate_trips(trips, await self.async_fetch_dienstkaartje_followed())
         return trips, None
 
     def _shared(self) -> dict[str, Any]:

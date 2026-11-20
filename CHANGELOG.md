@@ -4,6 +4,84 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.27.0] — 2026-11-20
+
+### Added — the people working the train, from Dienstkaartje (not switched on yet)
+
+**This ships dormant.** dienstkaartje.nl is somebody's hobby server
+with no published terms, so its author has been asked whether this use
+is welcome before any traffic goes their way. Until that answer
+arrives the option is not offered in the integration settings, an
+option set by hand is ignored, the card is kept out of the card
+picker and says as much if one is already on a dashboard, and the
+"who is working this train?" button stays hidden. Nothing in the
+integration contacts dienstkaartje.nl. Two mirrored lines turn it on:
+`DIENSTKAARTJE_AVAILABLE` in `const.py` and the same constant at the
+top of the card.
+
+
+[dienstkaartje.nl](https://dienstkaartje.nl) is a project by
+Dutchbeard where railway staff publish the shift they are working
+themselves. With **Follow railway staff (Dienstkaartje)** switched on
+in the integration options and a few usernames listed, the people you
+follow appear as a chip under the train they are on, in the route card
+and the search card alike.
+
+A card of their own — *Add card → Custom: NS Reisadvies —
+Dienstkaartje* — lists each person's shift, the trains in it, and
+draws the whole shift on the map. Each person also gets a sensor,
+`sensor.ns_dienstkaartje_<name>`, whose state is the train being
+worked right now (`idle` between trains, `off_duty` without a shift),
+so an automation can say "tell me when Jan starts" or "when Jan is on
+IC 1537".
+
+Beside the heart on each journey there is now a second button, for the
+other question: who, of everyone with a shift at this moment, is on
+*this* train. That one is never part of a refresh — it walks the
+site's list and asks after each person — so it runs only when pressed.
+
+Dienstkaartje publishes no roles — its API knows a username, a
+picture and a shift — so you can write your own label after a colon in
+the follow list, `machinist_jan:machinist`. The label is optional and
+is shown as you wrote it. The picture stays theirs: their Dienstkaartje
+avatar with a small badge for the role you gave them, the role's own
+icon where they have no avatar, and a neutral badge where there is
+neither. Nothing is inferred from the site.
+
+### Nothing is read that its owner did not publish
+
+Every profile on Dienstkaartje belongs to the person it is about, and
+three switches on it decide what a stranger sees. The integration
+obeys them rather than working around them: a profile that is private
+or password-protected is not read at all, hidden train numbers mean no
+train is shown and nobody can be matched to one, and hidden times mean
+a shift without times rather than a guess. The API hands those fields
+over anyway — its own website drops them while drawing the page — so
+they are dropped here on arrival, before any sensor attribute or card
+can carry them.
+
+The feature is off until you switch it on, only the usernames you list
+are ever looked up, and the card carries no usernames of its own, so
+adding it to a dashboard cannot widen what is asked after.
+
+### Fixed — a carriage picture that will not load no longer looks broken
+
+The carriage images come from NS's own image server and the avatars
+from Dienstkaartje's. Either can be unreachable — no route to it on
+that network, an ad blocker, their server down — and the browser's
+broken-image icon with the alt text beside it reads as a fault in the
+card. An image that fails to load is now removed, and what is left
+still says what it needs to: the train type, the name. A missing
+picture of a person leaves the icon for their role.
+
+### And being a good guest about it
+
+It is somebody's hobby server. One answer per person is reused for two
+minutes and the on-demand sweep for five, the follow list is capped at
+ten names, the sweep stops after a few pages, and an HTTP 429 — the
+one thing a server can say about load — stops every request to the
+site for fifteen minutes instead of being retried.
+
 ## [2.26.0] — 2026-11-20
 
 ### Added — disruptions in your own language

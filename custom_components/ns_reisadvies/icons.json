@@ -15,6 +15,9 @@
       },
       "national_disruptions": {
         "default": "mdi:alert-circle-outline"
+      },
+      "staff_shift": {
+        "default": "mdi:badge-account-horizontal-outline"
       }
     },
     "device_tracker": {

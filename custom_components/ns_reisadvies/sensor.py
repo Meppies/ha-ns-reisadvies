@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -38,7 +39,7 @@ from homeassistant.helpers import entity_platform
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import slugify
+from homeassistant.util import dt as dt_util, slugify
 
 from .const import (
     CONF_FROM_STATION,
@@ -48,10 +49,14 @@ from .const import (
     SUBENTRY_TYPE_ROUTE,
 )
 from ._departure import next_departure, summary_line
+from ._dienstkaartje import current_leg, trains_of
 from .coordinator import NSUpdateCoordinator
 from .types import NSConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+# Dienstkaartje publishes Dutch wall-clock times without a zone.
+_DUTCH_CLOCK = ZoneInfo("Europe/Amsterdam")
 
 # Quality-scale rule ``parallel-updates``: every entity already has its
 # own coordinator that does the actual fetching, so the platform itself
@@ -140,6 +145,17 @@ async def async_setup_entry(
                 first_coord, hub_id=entry.entry_id,
             )]
         )
+
+    # v2.27.0: one sensor per person followed on Dienstkaartje. These
+    # belong to the hub as well — a colleague is not a property of a
+    # route — and exist only while the option is on and they are named.
+    if first_coord is not None and first_coord.watch_dienstkaartje:
+        followed = [
+            NSReisadviesStaffSensor(first_coord, hub_id=entry.entry_id, username=name)
+            for name in first_coord.dienstkaartje_users
+        ]
+        if followed:
+            async_add_entities(followed)
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -527,6 +543,99 @@ class NSReisadviesNationalDisruptionSensor(
             attributes[kind.lower()] = sum(
                 1 for item in items if item["type"] == kind
             )
+        return attributes
+
+
+class NSReisadviesStaffSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
+    """Which train someone followed on Dienstkaartje is working.
+
+    The state is the train number they are on at this moment, ``idle``
+    while they are on a shift but between trains, and ``off_duty``
+    when there is no shift — so an automation can say "when dad's
+    train is 1537" or simply "when dad starts work".
+
+    Everything here comes from that person's own profile and goes no
+    further than it does: with their train numbers hidden the sensor
+    says nothing about trains, and with their times hidden it carries
+    no times.
+    """
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_translation_key = "staff_shift"
+
+    def __init__(
+        self, coordinator: NSUpdateCoordinator, *, hub_id: str, username: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._username = username
+        slug = slugify(username)
+        self._attr_unique_id = f"{hub_id}_dienstkaartje_{slug}"
+        self._attr_name = f"Dienstkaartje {username}"
+        self.entity_id = f"sensor.ns_dienstkaartje_{slug}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{hub_id}_hub")},
+            name="NS Reisadvies",
+            manufacturer="NS",
+        )
+
+    @property
+    def _profile(self) -> dict[str, Any] | None:
+        for profile in self.coordinator.dienstkaartje:
+            if profile["username"].casefold() == self._username.casefold():
+                return profile
+        return None
+
+    @property
+    def available(self) -> bool:
+        """Available whenever the hub is: a quiet day is not a fault."""
+        return bool(self.coordinator.last_update_success)
+
+    @property
+    def native_value(self) -> str:
+        profile = self._profile
+        if not profile or not profile.get("on_shift"):
+            return "off_duty"
+        # Dienstkaartje writes Dutch wall clock without a zone, so the
+        # comparison is made in that zone whatever Home Assistant is
+        # set to: an installation in Berlin or London must not think
+        # the shift is an hour out.
+        now = dt_util.utcnow().astimezone(_DUTCH_CLOCK).strftime("%Y-%m-%d %H:%M:%S")
+        leg = current_leg(profile, now) if profile.get("shows_train_numbers") else None
+        if leg and leg.get("service_number"):
+            return str(leg["service_number"])
+        # On a shift, but between trains — or working a shift whose
+        # train numbers its owner keeps to themselves.
+        return "idle"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        profile = self._profile
+        if not profile:
+            return {"username": self._username, "on_shift": False}
+        shows_times = bool(profile.get("shows_times"))
+        attributes: dict[str, Any] = {
+            "username": profile["username"],
+            "avatar": profile.get("avatar"),
+            # The user's own label from the follow list, if they wrote
+            # one: Dienstkaartje itself knows no such thing.
+            "role": profile.get("role"),
+            "on_shift": bool(profile.get("on_shift")),
+            "shift_start": profile.get("shift_start") if shows_times else None,
+            "shift_end": profile.get("shift_end") if shows_times else None,
+            "shows_train_numbers": bool(profile.get("shows_train_numbers")),
+            "trains": sorted(trains_of(profile)),
+            "legs": [
+                {
+                    "train": leg.get("service_number"),
+                    "from": leg.get("departure_station"),
+                    "to": leg.get("arrival_station"),
+                    "departure": leg.get("departure_time") if shows_times else None,
+                    "arrival": leg.get("arrival_time") if shows_times else None,
+                }
+                for leg in profile.get("legs") or []
+            ] if profile.get("shows_train_numbers") else [],
+        }
         return attributes
 
 

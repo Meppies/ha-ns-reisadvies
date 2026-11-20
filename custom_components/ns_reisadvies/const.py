@@ -43,6 +43,18 @@ CONF_LIVE_MAP_REFRESH_SECONDS = "live_map_refresh_seconds"
 # this integration that polls an external feed in the background.
 CONF_TRACK_FAVOURITES = "track_favourites_on_map"
 CONF_DISRUPTIONS = "disruptions"
+# Dienstkaartje (v2.27.0): off until the user asks for it, and then
+# only for the people they name.
+#
+# And, for now, not even then: dienstkaartje.nl is somebody's hobby
+# server with no published terms, and we have asked its author whether
+# this use is welcome before sending any traffic their way. Until that
+# answer arrives the switch is not offered in the options at all and
+# the option is ignored if it is already set — the code is here, it
+# just does not run. One flag to flip when the answer comes.
+DIENSTKAARTJE_AVAILABLE = False
+CONF_DIENSTKAARTJE = "dienstkaartje"
+CONF_DIENSTKAARTJE_USERS = "dienstkaartje_users"
 CONF_FAV_TRACK_SECONDS = "favourite_track_seconds"
 
 # Hub-wide UI preference (v2.15.2): which weekday should appear first
@@ -94,6 +106,8 @@ DEFAULT_TRACK_FAVOURITES = False  # background polling — opt in
 # One extra request per refresh, shared by every route, in exchange for
 # knowing when the line you travel is in trouble: on by default.
 DEFAULT_DISRUPTIONS = True
+DEFAULT_DIENSTKAARTJE = False
+DEFAULT_DIENSTKAARTJE_USERS = ""
 DEFAULT_FAV_TRACK_SECONDS = 30  # a 120 km/h train covers ~1 km in 30 s
 FAV_TRACK_SECONDS_MIN = 15
 FAV_TRACK_SECONDS_MAX = 120
@@ -135,6 +149,21 @@ FAV_RUN_LOOKAROUND_HOURS = 4
 # Two minutes is well inside the five-minute default scan interval and
 # keeps several routes on one request.
 DISRUPTIONS_CACHE_SECONDS = 120
+
+# Dienstkaartje (v2.27.0). Someone else's hobby server, so: one answer
+# per person is reused for two minutes, the on-demand sweep of everyone
+# on a shift is reused for five, and a 429 buys the whole site a rest
+# rather than a retry.
+DIENSTKAARTJE_CACHE_SECONDS = 120
+DIENSTKAARTJE_SWEEP_CACHE_SECONDS = 300
+DIENSTKAARTJE_BACKOFF_MINUTES = 15
+# A sweep walks pages of ten and stops, however many people are on a
+# shift: the point is the train the user is on, not a census.
+DIENSTKAARTJE_SWEEP_MAX_PAGES = 6
+DIENSTKAARTJE_SWEEP_MAX_PEOPLE = 60
+# How many people may be followed at once. Each one costs a request
+# per refresh, so the limit is about being a good guest.
+DIENSTKAARTJE_MAX_FOLLOWED = 10
 DEFAULT_FILTER_WINDOW_MINUTES = 0  # default: no fuzz around the target
 DEFAULT_FIRST_WEEKDAY = "0"  # Monday — NL/EU default; users in US locales can override
 
@@ -146,6 +175,9 @@ DISRUPTIONS_API_URL = (
     "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/disruptions"
 )
 STATIONS_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/stations"
+# Dienstkaartje (v2.27.0) — not an NS endpoint: a hobby project where
+# railway staff publish the shift they are working themselves.
+DIENSTKAARTJE_API_URL = "https://data.dienstkaartje.nl/api/v1/dienstkaartje"
 # Per-train info (composition + current station, no GPS):
 VIRTUAL_TRAIN_API_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/api/v1/trein"
 # Live GPS feed used by the NS app's map view. Filterable by `route`

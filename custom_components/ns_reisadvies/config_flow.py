@@ -50,7 +50,12 @@ from .const import (
     CONF_LIVE_TRAIN_MAP,
     CONF_LIVE_MAP_REFRESH_SECONDS,
     CONF_TRACK_FAVOURITES,
+    CONF_DIENSTKAARTJE,
+    CONF_DIENSTKAARTJE_USERS,
     CONF_DISRUPTIONS,
+    DEFAULT_DIENSTKAARTJE,
+    DEFAULT_DIENSTKAARTJE_USERS,
+    DIENSTKAARTJE_AVAILABLE,
     DEFAULT_DISRUPTIONS,
     CONF_FAV_TRACK_SECONDS,
     CONF_FILTER_DAYS,
@@ -373,6 +378,7 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_FROM_STATION): _station_selector(),
             vol.Required(CONF_TO_STATION): _station_selector(),
         })
+
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
 
@@ -714,7 +720,7 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
         api_val = api_key_default if api_key_default is not None else self._read(
             CONF_API_KEY, "",
         )
-        return vol.Schema({
+        schema = vol.Schema({
             vol.Required(CONF_API_KEY, default=str(api_val)): _API_KEY_SELECTOR,
             vol.Required(
                 CONF_SCAN_INTERVAL,
@@ -760,6 +766,7 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
                 CONF_DISRUPTIONS,
                 default=bool(self._read(CONF_DISRUPTIONS, DEFAULT_DISRUPTIONS)),
             ): bool,
+
             # First day of week (v2.15.2). Display-only — controls the
             # rotation of the day picker on the per-route filter form.
             vol.Required(
@@ -777,3 +784,28 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
                 ),
             ),
         })
+
+        # Dienstkaartje (v2.27.0). Off by default, and useless until
+        # someone is named: the integration asks after the people in
+        # that list and nobody else. Not offered at all for now —
+        # dienstkaartje.nl is somebody's hobby server, and we have
+        # asked its author whether this use is welcome before sending
+        # traffic their way. See DIENSTKAARTJE_AVAILABLE.
+        if DIENSTKAARTJE_AVAILABLE:
+            schema = schema.extend({
+                vol.Required(
+                    CONF_DIENSTKAARTJE,
+                    default=bool(
+                        self._read(CONF_DIENSTKAARTJE, DEFAULT_DIENSTKAARTJE)
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_DIENSTKAARTJE_USERS,
+                    default=str(
+                        self._read(
+                            CONF_DIENSTKAARTJE_USERS, DEFAULT_DIENSTKAARTJE_USERS,
+                        ) or ""
+                    ),
+                ): str,
+            })
+        return schema
