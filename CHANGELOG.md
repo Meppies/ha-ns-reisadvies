@@ -4,6 +4,40 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.25.1] — 2026-11-20
+
+### Fixed — the disruption map drew lines that followed no railway
+
+*Where* on a disruptions card drew a straight line from each station
+NS names to the next, so a stretch along a curving line cut across the
+countryside. Worse, a disruption that hits two separate lines arrives
+as two sections — "Zwolle - Emmen and Almelo - Hardenberg" — and those
+were strung together into one line, which then ran straight from Emmen
+to Almelo across half of Drenthe.
+
+Each stretch is now snapped onto the same ProRail network the live
+train map already uses, and the sections are kept apart and drawn
+apart. Where the rail network is not available — the live map switched
+off, so nothing cached it — the map falls back to the straight line it
+drew before. A station two stretches share gets one marker, and both
+ends of each stretch get the larger dot.
+
+### Fixed — the search card's fields lost focus as soon as you tapped them
+
+Tapping a station field unselected it again straight away, so nothing
+could be typed. The card rebuilt its whole form from the `hass`
+setter, and Home Assistant calls that on every state change anywhere
+in the system — several times a second on a busy install. Each call
+replaced the input the user had just selected, focus, text and all.
+It showed up here and not in testing because a test instance has a
+handful of entities and a real one has hundreds.
+
+The form is built once now and redrawn only when something it shows
+actually changes: a chip, a swap, a search. When it is redrawn, the
+field that had focus gets it back with the cursor where it was. The
+station list no longer needs a redraw either — the suggestions are
+built from the list in memory as you type.
+
 ## [2.25.0] — 2026-11-20
 
 ### Added — disruptions, on a card, on a map and as sensors

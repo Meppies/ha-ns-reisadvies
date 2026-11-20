@@ -414,9 +414,11 @@ country, calamities only".
 
 Each entry shows the situation in NS's own words, the period, how much
 longer the journey takes and what to do instead. *Where* draws the
-affected stretch on a map, straight through the stations NS names —
-that says which stretch is in trouble, not which rails a train is on.
-A calamity has no stretch and therefore no map button.
+affected stretch on a map, following the rails between the stations NS
+names. One disruption can name two separate stretches — "Zwolle -
+Emmen and Almelo - Hardenberg" — and those are drawn as two lines
+rather than one line joining them across country. A calamity has no
+stretch and therefore no map button.
 
 | Key         | Description                                                       |
 |-------------|-------------------------------------------------------------------|

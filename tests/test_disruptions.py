@@ -87,6 +87,46 @@ DISRUPTION = {
     }],
 }
 
+# A disruption that hits two separate lines. NS publishes one section
+# per stretch, and the two stretches do not join up: drawing them as one
+# run puts a line straight across country between Emmen and Almelo.
+# Coordinates are the real ones from /v2/stations.
+def _station(name, lat, lng, uic, code):
+    return {"uicCode": uic, "stationCode": code, "name": name,
+            "coordinate": {"lat": lat, "lng": lng}}
+
+
+TWO_SECTIONS = {
+    "id": "6069100",
+    "isActive": True,
+    "title": "Zwolle - Emmen en Almelo - Hardenberg.",
+    "type": "MAINTENANCE",
+    "timespans": [{"situation": {"label": "Er rijden bussen."}}],
+    "publicationSections": [
+        {"section": {"stations": [
+            _station("Zwolle", 52.50472, 6.09194, "8400747", "ZL"),
+            _station("Dalfsen", 52.49833, 6.25861, "8400167", "DL"),
+            _station("Ommen", 52.50945, 6.41583, "8400487", "OMN"),
+            _station("Mariënberg", 52.50945, 6.57528, "8400428", "MRB"),
+            _station("Hardenberg", 52.57278, 6.62861, "8400293", "HDB"),
+            _station("Gramsbergen", 52.60917, 6.67583, "8400259", "GBG"),
+            _station("Coevorden", 52.66361, 6.73556, "8400153", "CO"),
+            _station("Dalen", 52.69417, 6.75806, "8400161", "DLN"),
+            _station("Nieuw Amsterdam", 52.71861, 6.84861, "8400454", "NA"),
+            _station("Emmen Zuid", 52.74887, 6.87478, "8400407", "EMNZ"),
+            _station("Emmen", 52.79, 6.89944, "8400208", "EMN"),
+        ]}},
+        {"section": {"stations": [
+            _station("Almelo", 52.35806, 6.65389, "8400051", "AML"),
+            _station("Vriezenveen", 52.40203, 6.60041, "8400664", "VZ"),
+            _station("Vroomshoop", 52.45719, 6.56967, "8400666", "VHP"),
+            _station("Daarlerveen", 52.44077, 6.57599, "8400164", "DA"),
+            _station("Mariënberg", 52.50945, 6.57528, "8400428", "MRB"),
+            _station("Hardenberg", 52.57278, 6.62861, "8400293", "HDB"),
+        ]}},
+    ],
+}
+
 CALAMITY = {
     "id": "5ac72127",
     "isActive": True,
@@ -129,12 +169,41 @@ def test_parse_keeps_each_station_once_with_its_coordinates() -> None:
     assert "8400071" in item["station_keys"] and "AH" in item["station_keys"]
 
 
+def test_parse_keeps_one_stretch_as_one_run() -> None:
+    item = parse_disruptions([DISRUPTION])[0]
+    assert [[s["name"] for s in run] for run in item["sections"]] == [
+        ["Arnhem Centraal", "Doetinchem", "Ergens"],
+    ]
+
+
+def test_parse_keeps_two_stretches_apart() -> None:
+    """One disruption, two lines: two runs, so the map draws two lines.
+
+    Joined into one list, the map would draw Emmen - Almelo straight
+    across country, which is the artefact this guards against.
+    """
+    item = parse_disruptions([TWO_SECTIONS])[0]
+    runs = item["sections"]
+    assert len(runs) == 2
+    assert [runs[0][0]["name"], runs[0][-1]["name"]] == ["Zwolle", "Emmen"]
+    assert [runs[1][0]["name"], runs[1][-1]["name"]] == ["Almelo", "Hardenberg"]
+    assert all(s["lat"] is not None for run in runs for s in run)
+
+    # The flat list behind matching and the attributes holds each
+    # station once, even where two stretches share one.
+    names = [s["name"] for s in item["stations"]]
+    assert len(names) == len(set(names)) == 15
+    assert names.count("Mariënberg") == 1
+    assert "8400428" in item["station_keys"] and "MRB" in item["station_keys"]
+
+
 def test_parse_reads_an_announcement() -> None:
     """A calamity has no stretch: a title, a description and a link."""
     item = parse_disruptions([CALAMITY])[0]
     assert item["type"] == "CALAMITY"
     assert item["summary"] == "Tussen Meppel en Leeuwarden rijden bussen."
     assert item["stations"] == [] and item["station_keys"] == []
+    assert item["sections"] == []
     assert item["url"].endswith("/gevolgen")
     assert item["impact"] is None and item["cause"] is None
 
@@ -156,7 +225,8 @@ def test_parse_ignores_what_is_not_a_disruption() -> None:
            "timespans": "nope", "publicationSections": ["nope", {"section": "nope"},
                                                         {"section": {"stations": ["x"]}}]}
     item = parse_disruptions([odd])[0]
-    assert item["stations"] == [] and item["summary"] == "T"
+    assert item["stations"] == [] and item["sections"] == []
+    assert item["summary"] == "T"
 
 
 # --------------------------------------------------------------------

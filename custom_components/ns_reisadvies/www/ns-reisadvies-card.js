@@ -3389,10 +3389,12 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
   }
 
   _buildShell() {
-    if (this.content) {
-      this._renderForm();
-      return;
-    }
+    // Built once. Home Assistant sets `hass` on every state change in
+    // the whole system — several times a second on a busy install —
+    // and rebuilding the form there would throw away the field the
+    // user is typing in, focus and all. The form is redrawn only when
+    // something it shows actually changes.
+    if (this.content) return;
     const card = document.createElement("ha-card");
     card.header = this._config.title;
     this.form = document.createElement("div");
@@ -3413,7 +3415,6 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
     try {
       const answer = await this._hass.callWS({ type: "ns_reisadvies/stations" });
       this._stations = (answer && answer.stations) || [];
-      this._renderForm();
     } catch (err) {
       console.warn("[ns-reisadvies] station list unavailable", err);
     }
@@ -3469,6 +3470,11 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
     const typeChip = (code, label) => `
       <button class="ns-chip ${q.types.includes(code) ? "on" : ""}"
               data-type="${code}" type="button">${label}</button>`;
+
+    // A redraw replaces the fields, so remember where the cursor was.
+    const focused = this.form.querySelector("input:focus");
+    const focusedField = focused ? focused.getAttribute("data-field") : null;
+    const caret = focused ? focused.selectionStart : null;
 
     this.form.innerHTML = `
       <style>
@@ -3558,6 +3564,16 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
       <div class="ns-problem">${this._problem ? t(this._problem, this._hass) : ""}</div>
     `;
     this._wireForm();
+
+    if (focusedField) {
+      const again = this.form.querySelector(`input[data-field="${focusedField}"]`);
+      if (again) {
+        again.focus();
+        if (caret != null) {
+          try { again.setSelectionRange(caret, caret); } catch (err) { /* not a text field */ }
+        }
+      }
+    }
   }
 
   _stationField(field, label, value) {
@@ -4104,12 +4120,21 @@ class NSReisadviesDisruptionsCard extends NSReisadviesCard {
     });
   }
 
-  // The affected stretch on a map: the stations NS names, joined in
-  // the order it gives them. Deliberately a straight line through the
-  // stations rather than snapped to the track — this says which
-  // stretch is in trouble, not which rails a train is on.
+  // The affected stretch on a map, following the track.
+  //
+  // Two things make it look right. A disruption that hits two lines —
+  // "Zwolle - Emmen; Almelo - Hardenberg" — arrives as two sections,
+  // and they are drawn as two stretches rather than one line that
+  // jumps across country between them. And each stretch is snapped
+  // onto the rail graph the live train map already builds, so it
+  // follows the rails instead of cutting straight through the fields.
   async openDisruptionMap(item) {
-    const stops = (item.stations || []).filter(s => s.lat != null && s.lng != null);
+    const runs = (Array.isArray(item.sections) && item.sections.length
+      ? item.sections
+      : [item.stations || []])
+      .map(run => (run || []).filter(s => s.lat != null && s.lng != null))
+      .filter(run => run.length);
+    const stops = runs.flat();
     if (!stops.length) return;
     this.closeLiveMap();
 
@@ -4153,10 +4178,48 @@ class NSReisadviesDisruptionsCard extends NSReisadviesCard {
     this._activeMap.baseLayer = built.baseLayer;
     this._startTileTokenRefresh(this._activeMap);
 
-    const points = stops.map(s => [s.lat, s.lng]);
-    L.polyline(points, { color: "#d32f2f", weight: 5, opacity: 0.9 }).addTo(map);
-    stops.forEach((stop, index) => {
-      const endpoint = index === 0 || index === stops.length - 1;
+    // Snap each stretch onto the rails when the network is available;
+    // without it (the live map switched off, so no cached rail data)
+    // fall back to a straight line between the stations.
+    const railResult = NSReisadviesCard._railResult || await this._ensureRailReady();
+    if (!this._activeMap || this._activeMap.modalEl !== modal) return;
+    const drawn = [];
+    runs.forEach(run => {
+      const chords = run.map(s => [s.lat, s.lng]);
+      let segments = null;
+      if (railResult && run.length > 1) {
+        try {
+          segments = this._railSnapStopsWith(run, railResult.graph);
+        } catch (err) {
+          console.warn("[ns-reisadvies] disruption snap failed", err);
+        }
+      }
+      (segments && segments.length ? segments : [chords]).forEach(seg => {
+        if (seg.length > 1) drawn.push(seg);
+      });
+    });
+    if (drawn.length) {
+      L.polyline(drawn, { color: "#d32f2f", weight: 5, opacity: 0.9 }).addTo(map);
+    }
+    // The ends of each stretch get the bigger dot, not just the ends
+    // of the list: with two stretches, both have two ends. And a
+    // station both stretches name gets one marker, not two on top of
+    // each other.
+    const key = (stop) => `${stop.lat},${stop.lng}`;
+    const ends = new Set();
+    runs.forEach(run => {
+      ends.add(key(run[0]));
+      ends.add(key(run[run.length - 1]));
+    });
+    const seen = new Set();
+    const marked = stops.filter(stop => {
+      if (seen.has(key(stop))) return false;
+      seen.add(key(stop));
+      return true;
+    });
+    const points = marked.map(s => [s.lat, s.lng]);
+    marked.forEach((stop) => {
+      const endpoint = ends.has(key(stop));
       const marker = L.marker([stop.lat, stop.lng], {
         icon: L.divIcon({
           className: "ns-leaflet-stop-wrap",
@@ -4360,7 +4423,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.25.0 ",
+  "%c NS-REISADVIES-CARD %c v2.25.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

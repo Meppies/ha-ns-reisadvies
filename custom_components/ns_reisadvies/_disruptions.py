@@ -51,16 +51,24 @@ def _label(entry: Any, key: str = "label") -> str | None:
     return None
 
 
-def _stations(entry: dict[str, Any]) -> list[dict[str, Any]]:
-    """Every station on the affected stretch, with its coordinates."""
-    out: list[dict[str, Any]] = []
-    seen: set[str] = set()
+def _sections(entry: dict[str, Any]) -> list[list[dict[str, Any]]]:
+    """The affected stretches, each as its own run of stations.
+
+    NS publishes a disruption that hits two lines — "Zwolle - Emmen;
+    Almelo - Hardenberg" — as two sections. Flattening them into one
+    list makes the map draw a line from the end of one stretch to the
+    start of the other, straight across country, so they are kept
+    apart and drawn apart.
+    """
+    out: list[list[dict[str, Any]]] = []
     for section in entry.get("publicationSections") or []:
         if not isinstance(section, dict):
             continue
         inner = section.get("section")
         if not isinstance(inner, dict):
             continue
+        run: list[dict[str, Any]] = []
+        seen: set[str] = set()
         for station in inner.get("stations") or []:
             if not isinstance(station, dict):
                 continue
@@ -76,13 +84,29 @@ def _stations(entry: dict[str, Any]) -> list[dict[str, Any]]:
                 lng = float(where["lng"])
             except (KeyError, TypeError, ValueError):
                 lat = lng = None  # type: ignore[assignment]
-            out.append({
+            run.append({
                 "name": str(station.get("name") or "").strip(),
                 "uicCode": uic,
                 "stationCode": code,
                 "lat": lat,
                 "lng": lng,
             })
+        if run:
+            out.append(run)
+    return out
+
+
+def _flatten(sections: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """One list of stations for matching a route and for attributes."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for run in sections:
+        for station in run:
+            key = station["uicCode"] or station["stationCode"] or station["name"]
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(station)
     return out
 
 
@@ -99,7 +123,8 @@ def parse_disruptions(payload: Any) -> list[dict[str, Any]]:
         if kind not in DISRUPTION_TYPES:
             continue
         span = _first(entry.get("timespans"))
-        stations = _stations(entry)
+        sections = _sections(entry)
+        stations = _flatten(sections)
         advices = [
             " ".join(str(line).split())
             for line in (span.get("advices") or [])
@@ -139,6 +164,7 @@ def parse_disruptions(payload: Any) -> list[dict[str, Any]]:
             "advices": advices,
             "url": entry.get("url") or None,
             "stations": stations,
+            "sections": sections,
             # Both spellings, because a route is matched on whichever
             # the planner happens to carry.
             "station_keys": sorted(
