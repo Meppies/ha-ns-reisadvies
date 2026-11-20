@@ -1310,6 +1310,70 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         )
         return {"type": "FeatureCollection", "features": features}
 
+    async def async_search_trips(
+        self,
+        from_station: str,
+        to_station: str,
+        *,
+        via: str | None = None,
+        when: str | None = None,
+        arrival: bool = False,
+        train_types: list[str] | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """One-off journey search, for the search card.
+
+        Deliberately separate from the route refresh: it touches none
+        of the coordinator's own state, keeps no favourites and updates
+        no sensor. A traveller looking something up on a platform gets
+        an answer and nothing else changes.
+
+        Returns the trips and, when something went wrong, a short
+        reason to put in front of the user.
+        """
+        if not self.api_key:
+            return [], "no_api_key"
+        if not from_station or not to_station:
+            return [], "missing_station"
+
+        params: dict[str, str] = {
+            "fromStation": from_station,
+            "toStation": to_station,
+        }
+        if via:
+            params["viaStation"] = via
+        if when:
+            params["dateTime"] = when
+        if arrival:
+            params["searchForArrival"] = "true"
+
+        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        try:
+            async with async_timeout.timeout(20):
+                async with self._session.get(
+                    API_URL, headers=headers, params=params,
+                ) as response:
+                    if response.status in (401, 403):
+                        return [], "rejected"
+                    if response.status == 400:
+                        return [], "unknown_station"
+                    if response.status != 200:
+                        _LOGGER.debug(
+                            "Search %s -> %s returned HTTP %s",
+                            from_station, to_station, response.status,
+                        )
+                        return [], "unavailable"
+                    data = await response.json()
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Search %s -> %s failed: %s", from_station, to_station, err)
+            return [], "unavailable"
+
+        trips = [t for t in (data or {}).get("trips") or [] if isinstance(t, dict)]
+        if train_types:
+            trips = apply_train_type_filter(trips, train_types)
+            if not trips:
+                return [], "no_match"
+        return trips, None
+
     def _shared(self) -> dict[str, Any]:
         """The bucket every route coordinator in this install shares.
 

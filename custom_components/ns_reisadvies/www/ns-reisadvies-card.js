@@ -48,6 +48,27 @@ const I18N = {
     badge_in_n_days: "Trips in {n} days",
     badge_for_date: "Trips for {date}",
     weekdays: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"],
+    search_from: "From",
+    search_to: "To",
+    search_via: "Via (optional)",
+    search_swap: "Swap",
+    search_go: "Search",
+    search_searching: "Searching…",
+    search_leave_now: "Leave now",
+    search_leave_at: "Leave at",
+    search_arrive_by: "Arrive by",
+    search_recent: "Recent",
+    search_clear_recent: "Clear",
+    search_train_types: "Train types",
+    search_any_train: "All trains",
+    search_hint: "Fill in two stations and search.",
+    search_pick_stations: "Pick a departure and an arrival station.",
+    search_no_api_key: "No API key configured.",
+    search_rejected: "NS refused the key.",
+    search_unknown_station: "NS does not know one of these stations.",
+    search_unavailable: "NS is not answering right now.",
+    search_no_match: "No trips match those train types.",
+    search_no_trips: "No trips found for this search.",
   },
   nl: {
     select_sensor: "Selecteer een sensor.",
@@ -93,6 +114,27 @@ const I18N = {
     badge_in_n_days: "Reizen over {n} dagen",
     badge_for_date: "Reizen voor {date}",
     weekdays: ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"],
+    search_from: "Van",
+    search_to: "Naar",
+    search_via: "Via (optioneel)",
+    search_swap: "Omdraaien",
+    search_go: "Zoeken",
+    search_searching: "Bezig met zoeken…",
+    search_leave_now: "Nu vertrekken",
+    search_leave_at: "Vertrek om",
+    search_arrive_by: "Aankomst om",
+    search_recent: "Recent",
+    search_clear_recent: "Wissen",
+    search_train_types: "Treinsoorten",
+    search_any_train: "Alle treinen",
+    search_hint: "Vul twee stations in en zoek.",
+    search_pick_stations: "Kies een vertrek- en een aankomststation.",
+    search_no_api_key: "Geen API-sleutel ingesteld.",
+    search_rejected: "NS weigert de sleutel.",
+    search_unknown_station: "NS kent een van deze stations niet.",
+    search_unavailable: "NS antwoordt op dit moment niet.",
+    search_no_match: "Geen ritten met die treinsoorten.",
+    search_no_trips: "Geen ritten gevonden voor deze zoekopdracht.",
   },
 };
 
@@ -265,6 +307,23 @@ class NSReisadviesCard extends HTMLElement {
     }
     this._lastStateObj = newState;
     this.updateContent();
+  }
+
+  // v2.24.0: where the trips come from, and whether pinning applies.
+  // The search card renders with the same code but feeds it the
+  // answer to a one-off lookup instead of a route's sensor, and has
+  // nothing to pin them to.
+  _sourceState() {
+    if (!this._hass || !this._config || !this._config.entity) return null;
+    return this._hass.states[this._config.entity];
+  }
+
+  _hasSource() {
+    return !!(this._config && this._config.entity);
+  }
+
+  _favouritesAllowed() {
+    return !!(this._config && this._config.entity);
   }
 
   // --- expiry / cleanup ----------------------------------------------------
@@ -531,12 +590,12 @@ class NSReisadviesCard extends HTMLElement {
     const card = this.querySelector("ha-card");
     if (card) card.header = this._config.title;
 
-    if (!this._config.entity) {
+    if (!this._hasSource()) {
       this.content.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--primary-text-color);"><b>NS Reisadvies</b><br><br>${t("select_sensor", this._hass)}</div>`;
       return;
     }
 
-    const stateObj = this._hass.states[this._config.entity];
+    const stateObj = this._sourceState();
     if (!stateObj?.attributes?.trips) {
       this.content.innerHTML = `<div style="padding: 20px; text-align: center;">${t("loading", this._hass)}</div>`;
       return;
@@ -846,7 +905,7 @@ class NSReisadviesCard extends HTMLElement {
 
       html += `<div class="trip-wrapper">
         <div class="trip-header-bar">
-          <div class="fav-heart ${isFav ? "heart-red" : "heart-grey"}" data-idx="${tIdx}" data-ctx="${ctx || ""}" data-fav="${isFav}">
+          <div class="fav-heart ${isFav ? "heart-red" : "heart-grey"}" data-idx="${tIdx}" data-ctx="${ctx || ""}" data-fav="${isFav}" style="${this._favouritesAllowed() ? "" : "display:none"}">
             <ha-icon icon="${isFav ? "mdi:heart" : "mdi:heart-outline"}"></ha-icon>
           </div>
         </div>`;
@@ -1297,8 +1356,8 @@ class NSReisadviesCard extends HTMLElement {
   // that train, it is used as-is; otherwise the leg is found again by
   // identity and the corrected indices are returned.
   _resolveLeg(tripIdx, legIdx, expect) {
-    if (!this._hass || !this._config || !this._config.entity) return null;
-    const stateObj = this._hass.states[this._config.entity];
+    if (!this._hass || !this._config) return null;
+    const stateObj = this._sourceState();
     const trips = (stateObj && stateObj.attributes && stateObj.attributes.trips) || [];
     const wanted = expect || {};
     const matches = (leg) => {
@@ -2180,7 +2239,7 @@ class NSReisadviesCard extends HTMLElement {
     if (!this._hass || !this._config) return;
     const r = await this._ensureRailReady();
     if (!r) return;
-    const stateObj = this._hass.states[this._config.entity];
+    const stateObj = this._sourceState();
     const trips = (stateObj && stateObj.attributes && stateObj.attributes.trips) || [];
     const cache = NSReisadviesCard._routeCache = NSReisadviesCard._routeCache || new Map();
     for (const t of trips) {
@@ -3025,7 +3084,7 @@ class NSReisadviesCard extends HTMLElement {
     // the stale filter against a fresh ``Date.now()``.
     if (this._staleTickHandle == null) {
       this._staleTickHandle = setInterval(() => {
-        if (this._lastStateObj && this._config && this._config.entity) {
+        if (this._lastStateObj && this._config) {
           this.updateContent();
         }
       }, 30 * 1000);
@@ -3233,6 +3292,365 @@ class NSReisadviesEditor extends HTMLElement {
   }
 }
 
+// v2.24.0: a card for looking something up on the spot.
+//
+// Everything below the form is the ordinary card: the same timeline,
+// the same stops, the same live-map button. Only the source differs —
+// instead of a route's sensor it renders the answer to a one-off
+// search, which is why it extends the card rather than copying it.
+//
+// Nothing is stored on the server: no route, no favourite, no sensor.
+// The recent searches live in this browser alone.
+class NSReisadviesSearchCard extends NSReisadviesCard {
+  static getStubConfig() {
+    return { title: "Reisadvies zoeken", max_rows: 6 };
+  }
+
+  setConfig(config) {
+    const given = config || {};
+    super.setConfig({
+      title: "NS Reisadvies",
+      max_rows: 6,
+      scale: 100,
+      fav_slots: 0,
+      fav_hours: 0,
+      ...given,
+      // A search has no route behind it, so there is no entity and
+      // nothing to pin a favourite to.
+      entity: "",
+    });
+    this._query = {
+      from: given.from || "",
+      to: given.to || "",
+      via: given.via || "",
+      when: "",
+      mode: "now",
+      types: Array.isArray(given.train_types) ? given.train_types.slice() : [],
+    };
+    this._result = null;
+    this._problem = null;
+    this._busy = false;
+    this._stations = [];
+  }
+
+  getCardSize() { return 6; }
+
+  // The ordinary card reads a sensor; this one reads its own answer.
+  _sourceState() { return this._result; }
+  _hasSource() { return !!this._result; }
+  _favouritesAllowed() { return false; }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (this._activeMap) this._syncMapTheme();
+    this._buildShell();
+    if (first) {
+      this._loadStations();
+      this._restoreRecent();
+      if (this._query.from && this._query.to && this._config.auto_search) {
+        this._runSearch();
+      }
+    }
+  }
+
+  _buildShell() {
+    if (this.content) {
+      this._renderForm();
+      return;
+    }
+    const card = document.createElement("ha-card");
+    card.header = this._config.title;
+    this.form = document.createElement("div");
+    this.form.className = "ns-search";
+    this.content = document.createElement("div");
+    this.content.style.padding = "0";
+    card.appendChild(this.form);
+    card.appendChild(this.content);
+    this.appendChild(card);
+    this._renderForm();
+    this.content.innerHTML =
+      `<div class="ns-search-hint">${t("search_hint", this._hass)}</div>`;
+  }
+
+  async _loadStations() {
+    // The list ships with the integration, so this is one small call
+    // and then instant typing.
+    try {
+      const answer = await this._hass.callWS({ type: "ns_reisadvies/stations" });
+      this._stations = (answer && answer.stations) || [];
+      this._renderForm();
+    } catch (err) {
+      console.warn("[ns-reisadvies] station list unavailable", err);
+    }
+  }
+
+  _recentKey() { return "ns_reisadvies_recent_searches"; }
+
+  _restoreRecent() {
+    try {
+      const raw = window.localStorage.getItem(this._recentKey());
+      this._recent = raw ? JSON.parse(raw) : [];
+    } catch (err) {
+      this._recent = [];
+    }
+    if (!Array.isArray(this._recent)) this._recent = [];
+    this._renderForm();
+  }
+
+  _rememberRecent(query) {
+    const entry = {
+      from: query.from, to: query.to, via: query.via || "",
+      types: (query.types || []).slice(),
+    };
+    const same = (a, b) => a.from === b.from && a.to === b.to && a.via === b.via;
+    this._recent = [entry].concat(
+      (this._recent || []).filter(other => !same(other, entry)),
+    ).slice(0, 5);
+    try {
+      window.localStorage.setItem(this._recentKey(), JSON.stringify(this._recent));
+    } catch (err) {
+      // A browser that refuses storage still searches fine.
+    }
+  }
+
+  _clearRecent() {
+    this._recent = [];
+    try {
+      window.localStorage.removeItem(this._recentKey());
+    } catch (err) { /* nothing to clean up */ }
+    this._renderForm();
+  }
+
+  _renderForm() {
+    if (!this.form || !this._hass) return;
+    const q = this._query;
+    const esc = (value) => String(value || "")
+      .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const options = (this._stations || [])
+      .map(name => `<option value="${esc(name)}"></option>`).join("");
+    const recent = (this._recent || []).map((entry, index) => `
+      <button class="ns-chip" data-recent="${index}" type="button">
+        ${esc(entry.from)} → ${esc(entry.to)}${entry.via ? " ·" : ""}
+      </button>`).join("");
+    const typeChip = (code, label) => `
+      <button class="ns-chip ${q.types.includes(code) ? "on" : ""}"
+              data-type="${code}" type="button">${label}</button>`;
+
+    this.form.innerHTML = `
+      <style>
+        .ns-search { padding: 12px 16px 4px 16px; display: flex; flex-direction: column; gap: 8px; }
+        .ns-search .row { display: flex; gap: 8px; align-items: center; }
+        .ns-search input[type="text"], .ns-search input[type="datetime-local"] {
+          flex: 1; min-width: 0; padding: 10px 12px; font-size: 1em; font-family: inherit;
+          color: var(--primary-text-color); background: var(--card-background-color);
+          border: 1px solid var(--divider-color); border-radius: 10px; }
+        .ns-search input:focus { outline: 2px solid var(--primary-color); outline-offset: -1px; }
+        .ns-search .ns-swap { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
+          border: 1px solid var(--divider-color); background: var(--card-background-color);
+          color: var(--primary-text-color); cursor: pointer; display: flex;
+          align-items: center; justify-content: center; }
+        .ns-search .ns-chip { padding: 6px 10px; font-size: 0.85em; font-family: inherit;
+          border-radius: 999px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color); color: var(--secondary-text-color);
+          cursor: pointer; white-space: nowrap; }
+        .ns-search .ns-chip.on { background: #FFC917; color: #003082; border-color: #FFC917;
+          font-weight: 700; }
+        .ns-search .chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+        .ns-search .chips .label { font-size: 0.8em; color: var(--secondary-text-color);
+          text-transform: uppercase; letter-spacing: 0.04em; margin-right: 2px; }
+        .ns-search .ns-go { flex: 1; padding: 11px 16px; font-size: 1em; font-weight: 700;
+          font-family: inherit; border: none; border-radius: 10px; cursor: pointer;
+          background: #003082; color: #fff; }
+        .ns-search .ns-go[disabled] { opacity: 0.6; cursor: default; }
+        .ns-search .ns-problem { color: #ff5252; font-size: 0.9em; min-height: 1.2em; }
+        .ns-search-hint { padding: 18px 16px 22px 16px; text-align: center;
+          color: var(--secondary-text-color); }
+      </style>
+      <datalist id="ns-stations-${this._uid()}">${options}</datalist>
+      ${recent ? `<div class="chips"><span class="label">${t("search_recent", this._hass)}</span>${recent}
+        <button class="ns-chip" data-clear="1" type="button">${t("search_clear_recent", this._hass)}</button></div>` : ""}
+      <div class="row">
+        <input type="text" data-field="from" list="ns-stations-${this._uid()}"
+               placeholder="${t("search_from", this._hass)}" value="${esc(q.from)}" autocomplete="off">
+        <button class="ns-swap" data-swap="1" type="button" title="${t("search_swap", this._hass)}">
+          <ha-icon icon="mdi:swap-vertical"></ha-icon></button>
+        <input type="text" data-field="to" list="ns-stations-${this._uid()}"
+               placeholder="${t("search_to", this._hass)}" value="${esc(q.to)}" autocomplete="off">
+      </div>
+      <div class="row">
+        <input type="text" data-field="via" list="ns-stations-${this._uid()}"
+               placeholder="${t("search_via", this._hass)}" value="${esc(q.via)}" autocomplete="off">
+      </div>
+      <div class="chips">
+        <button class="ns-chip ${q.mode === "now" ? "on" : ""}" data-mode="now" type="button">${t("search_leave_now", this._hass)}</button>
+        <button class="ns-chip ${q.mode === "leave" ? "on" : ""}" data-mode="leave" type="button">${t("search_leave_at", this._hass)}</button>
+        <button class="ns-chip ${q.mode === "arrive" ? "on" : ""}" data-mode="arrive" type="button">${t("search_arrive_by", this._hass)}</button>
+      </div>
+      ${q.mode === "now" ? "" : `<div class="row">
+        <input type="datetime-local" data-field="when" value="${esc(q.when || this._defaultWhen())}">
+      </div>`}
+      <div class="chips">
+        <span class="label">${t("search_train_types", this._hass)}</span>
+        ${typeChip("IC", "Intercity")}
+        ${typeChip("ICD", "IC direct")}
+        ${typeChip("SPR", "Sprinter")}
+        ${typeChip("ST", "Stoptrein")}
+        ${q.types.length ? `<button class="ns-chip" data-type="" type="button">${t("search_any_train", this._hass)}</button>` : ""}
+      </div>
+      <div class="row">
+        <button class="ns-go" data-go="1" type="button" ${this._busy ? "disabled" : ""}>
+          ${this._busy ? t("search_searching", this._hass) : t("search_go", this._hass)}
+        </button>
+      </div>
+      <div class="ns-problem">${this._problem ? t(this._problem, this._hass) : ""}</div>
+    `;
+    this._wireForm();
+  }
+
+  _uid() {
+    if (!this._uidValue) {
+      this._uidValue = Math.random().toString(36).slice(2, 8);
+    }
+    return this._uidValue;
+  }
+
+  _defaultWhen() {
+    // The datetime input wants local wall-clock without a zone.
+    const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+    return now.toISOString().slice(0, 16);
+  }
+
+  _wireForm() {
+    this.form.querySelectorAll("input[data-field]").forEach(input => {
+      const field = input.getAttribute("data-field");
+      input.addEventListener("change", () => { this._query[field] = input.value.trim(); });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          this._query[field] = input.value.trim();
+          this._runSearch();
+        }
+      });
+    });
+    const click = (selector, handler) => {
+      this.form.querySelectorAll(selector).forEach(el => {
+        el.addEventListener("click", (event) => { event.preventDefault(); handler(el); });
+      });
+    };
+    click("[data-swap]", () => {
+      this._readInputs();
+      const from = this._query.from;
+      this._query.from = this._query.to;
+      this._query.to = from;
+      this._renderForm();
+    });
+    click("[data-mode]", (el) => {
+      this._readInputs();
+      this._query.mode = el.getAttribute("data-mode");
+      this._renderForm();
+    });
+    click("[data-type]", (el) => {
+      this._readInputs();
+      const code = el.getAttribute("data-type");
+      if (!code) {
+        this._query.types = [];
+      } else if (this._query.types.includes(code)) {
+        this._query.types = this._query.types.filter(other => other !== code);
+      } else {
+        this._query.types = this._query.types.concat([code]);
+      }
+      this._renderForm();
+    });
+    click("[data-recent]", (el) => {
+      const entry = (this._recent || [])[Number(el.getAttribute("data-recent"))];
+      if (!entry) return;
+      this._query.from = entry.from;
+      this._query.to = entry.to;
+      this._query.via = entry.via || "";
+      this._query.types = (entry.types || []).slice();
+      this._renderForm();
+      this._runSearch();
+    });
+    click("[data-clear]", () => this._clearRecent());
+    click("[data-go]", () => { this._readInputs(); this._runSearch(); });
+  }
+
+  _readInputs() {
+    this.form.querySelectorAll("input[data-field]").forEach(input => {
+      this._query[input.getAttribute("data-field")] = input.value.trim();
+    });
+  }
+
+  async _runSearch() {
+    if (this._busy || !this._hass) return;
+    const q = this._query;
+    if (!q.from || !q.to) {
+      this._problem = "search_pick_stations";
+      this._renderForm();
+      return;
+    }
+    this._busy = true;
+    this._problem = null;
+    this._renderForm();
+    this.content.innerHTML =
+      `<div class="ns-search-hint">${t("search_searching", this._hass)}</div>`;
+
+    let answer = null;
+    try {
+      answer = await this._hass.callWS({
+        type: "ns_reisadvies/search",
+        from_station: q.from,
+        to_station: q.to,
+        via: q.via || null,
+        when: q.mode === "now" ? null : this._isoWhen(q.when),
+        arrival: q.mode === "arrive",
+        train_types: q.types,
+      });
+    } catch (err) {
+      console.warn("[ns-reisadvies] search failed", err);
+      this._problem = "search_unavailable";
+    }
+    this._busy = false;
+
+    const trips = (answer && answer.trips) || [];
+    if (answer && answer.problem) this._problem = `search_${answer.problem}`;
+    if (!this._problem && !trips.length) this._problem = "search_no_trips";
+
+    if (trips.length) {
+      this._rememberRecent(q);
+      this._result = {
+        state: "search",
+        attributes: {
+          trips,
+          tracked_trips: [],
+          live_train_map_enabled: true,
+          live_map_refresh_seconds: 10,
+          from_station: q.from,
+          to_station: q.to,
+          target_day_offset: 0,
+          target_date: null,
+          filter_days: [],
+          filter_date: null,
+        },
+      };
+      this._lastStateObj = this._result;
+      this.updateContent();
+    } else {
+      this._result = null;
+      this.content.innerHTML =
+        `<div class="ns-search-hint">${t(this._problem, this._hass)}</div>`;
+    }
+    this._renderForm();
+  }
+
+  _isoWhen(value) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isFinite(parsed.getTime()) ? parsed.toISOString() : null;
+  }
+}
+
 // Registration — HA 2026.5.0+ runs Lovelace resource modules during a
 // View Transition. Calling customElements.define inside a transition
 // can silently no-op (the registry change is rolled back when the
@@ -3250,6 +3668,11 @@ const _NSRegister = () => {
   if (!customElements.get("ns-reisadvies-card")) {
     try { customElements.define("ns-reisadvies-card", NSReisadviesCard); } catch (e) {
       if (!(e instanceof DOMException)) console.error("ns-reisadvies-card define failed:", e);
+    }
+  }
+  if (!customElements.get("ns-reisadvies-search-card")) {
+    try { customElements.define("ns-reisadvies-search-card", NSReisadviesSearchCard); } catch (e) {
+      if (!(e instanceof DOMException)) console.error("ns-reisadvies-search-card define failed:", e);
     }
   }
 };
@@ -3278,8 +3701,16 @@ window.customCards.push({
   documentationURL: "https://github.com/Meppies/ha-ns-reisadvies",
 });
 
+window.customCards.push({
+  type: "ns-reisadvies-search-card",
+  name: "NS Reisadvies — search",
+  description: "Look up a journey on the spot, without configuring a route",
+  preview: false,
+  documentationURL: "https://github.com/Meppies/ha-ns-reisadvies",
+});
+
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.23.1 ",
+  "%c NS-REISADVIES-CARD %c v2.24.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

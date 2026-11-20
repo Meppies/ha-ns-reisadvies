@@ -4,6 +4,36 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.0] — 2026-11-20
+
+### Added — a card for looking a journey up on the spot
+
+The integration answered one question well: the routes you set up in
+advance. Standing on a platform wondering how to get somewhere else is
+a different question, and it meant opening the NS app.
+
+*Add card → Custom: NS Reisadvies — search* adds a card that needs no
+entity and no route. Type two stations and the answer appears in the
+same timeline as the ordinary card — same stops, same platforms, same
+delays, same live-map button — because it is the same card underneath.
+It renders a one-off lookup instead of a route's sensor, which is why
+the search card extends the card rather than copying it.
+
+Alongside the two stations it takes a station to travel via, a choice
+between leaving now, leaving at a time or arriving by one, and a
+filter on train types. A swap button turns the journey around for the
+way back, and the last five searches sit above the form as buttons.
+
+Station names complete from the list that ships with the integration
+— 689 of them — so typing stays instant and costs NS nothing. Two
+websocket commands do the rest: `ns_reisadvies/stations` hands the
+card that list, and `ns_reisadvies/search` performs the lookup. The
+lookup touches none of the coordinator's state: no route is created,
+no favourite is pinned, no sensor changes, and the recent searches
+live in that one browser. When something goes wrong the card says
+which — a key NS refuses, a station NS does not know, a filter that
+leaves nothing — rather than showing an empty list.
+
 ## [2.23.1] — 2026-11-19
 
 ### Fixed — the station a train is standing in counts as reached

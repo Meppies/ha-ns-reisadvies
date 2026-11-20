@@ -445,6 +445,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         websocket_api.async_register_command(hass, _ws_track_train_poll)
         websocket_api.async_register_command(hass, _ws_track_train_stop)
         websocket_api.async_register_command(hass, _ws_train_progress)
+        websocket_api.async_register_command(hass, _ws_stations)
+        websocket_api.async_register_command(hass, _ws_search)
         hass.data[DOMAIN]["_ws_registered"] = True
 
     # Schedule the rail-cache refresh once per HA boot. Runs ~5s after
@@ -894,6 +896,58 @@ async def _ws_train_progress(
             ],
         },
     )
+
+
+@websocket_api.websocket_command({vol.Required("type"): "ns_reisadvies/stations"})
+@callback
+def _ws_stations(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """The station names the search card offers while you type.
+
+    The list ships with the integration, so typing stays instant and
+    costs NS nothing. It is the same list the config flow uses.
+    """
+    from .stations import STATIONS  # noqa: WPS433 — local import to avoid cycle
+
+    connection.send_result(msg["id"], {"stations": list(STATIONS)})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "ns_reisadvies/search",
+        vol.Required("from_station"): str,
+        vol.Required("to_station"): str,
+        vol.Optional("via"): vol.Any(str, None),
+        vol.Optional("when"): vol.Any(str, None),
+        vol.Optional("arrival", default=False): bool,
+        vol.Optional("train_types", default=[]): [str],
+    }
+)
+@websocket_api.async_response
+async def _ws_search(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """Look up a journey that is not one of the configured routes.
+
+    Nothing is stored: no route, no favourite, no sensor. It answers
+    the question and forgets it, which is what someone standing on a
+    platform wants.
+    """
+    coord = _any_coordinator(hass)
+    if coord is None:
+        connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
+        return
+
+    trips, problem = await coord.async_search_trips(
+        msg["from_station"],
+        msg["to_station"],
+        via=msg.get("via") or None,
+        when=msg.get("when") or None,
+        arrival=bool(msg.get("arrival")),
+        train_types=list(msg.get("train_types") or []),
+    )
+    connection.send_result(msg["id"], {"trips": trips, "problem": problem})
 
 
 def _backfill_entity_subentries(hass: HomeAssistant, entry: ConfigEntry) -> None:

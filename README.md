@@ -60,6 +60,10 @@ slots, train composition, and an opt-in live train map.
   live map, so the card and the map read the same way.
 - **Companion Lovelace card** auto-registers as a Lovelace resource —
   no manual `resources:` editing.
+- **Search card** for looking a journey up on the spot: two stations,
+  optionally one to travel via, a time, a train-type filter, and the
+  answer in the same timeline as the ordinary card. No route needed,
+  nothing stored.
 - **Favourites on the map** (opt-in): with *Show favourites on the map*
   switched on, every route gets a GPS `device_tracker` that follows the
   favourite you are travelling on, so the train appears on Home
@@ -351,6 +355,44 @@ options (set via the visual editor or YAML):
 | `auto_min_<i>`            | "MM" for slot `i`.                                   |
 | `auto_days_<i>`           | Comma-separated weekdays, Sun=0..Sat=6.              |
 | `auto_name_<i>`           | Display name for slot `i`.                           |
+
+### Search card
+
+A second card for looking a journey up on the spot — on a platform,
+or when someone asks how to get somewhere. *Add card → Custom: NS
+Reisadvies — search*. It needs no entity and no route: type two
+stations, press search, and the answer is rendered in the same
+timeline as the ordinary card, with the same stops and the same
+live-map button.
+
+The station names complete from the list that ships with the
+integration, so typing stays instant and costs NS nothing. A search
+stores nothing on the server — no route, no favourite, no sensor —
+and the last five searches are remembered in that browser alone, as
+buttons above the form.
+
+| Key            | Description                                                    |
+|----------------|----------------------------------------------------------------|
+| `title`        | Card title.                                                    |
+| `from`         | Pre-filled departure station.                                   |
+| `to`           | Pre-filled arrival station.                                     |
+| `via`          | Pre-filled station to travel via.                               |
+| `train_types`  | Pre-selected train types, e.g. `["IC", "SPR"]`.                 |
+| `auto_search`  | Search straight away when `from` and `to` are set.              |
+| `max_rows`     | Number of trips to show (1–15).                                 |
+| `scale`        | Font scale percentage (50–150).                                 |
+
+```yaml
+type: custom:ns-reisadvies-search-card
+title: Waar wil je heen?
+from: Duivendrecht
+auto_search: false
+```
+
+Next to the two stations it takes a station to travel via, a choice
+between leaving now, leaving at a time or arriving by one, and a
+filter on train types. The swap button turns the journey around for
+the way back.
 
 ## Services
 
