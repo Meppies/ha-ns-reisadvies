@@ -143,6 +143,9 @@ class NSFavouriteTracker(CoordinatorEntity[NSUpdateCoordinator], TrackerEntity):
         self._attr_unique_id = f"{route_uid}_favourite"
         self._attr_name = f"NS favourite {route_label}"
         self._attr_suggested_object_id = f"ns_favourite_{route_slug}"
+        # As with the sensors: Home Assistant derives the id from the
+        # name unless the integration sets entity_id itself.
+        self.entity_id = f"device_tracker.ns_favourite_{route_slug}"
 
     async def async_added_to_hass(self) -> None:
         """Follow position refreshes as well as coordinator updates."""

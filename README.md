@@ -64,6 +64,11 @@ slots, train composition, and an opt-in live train map.
   optionally one to travel via, a time, a train-type filter, and the
   answer in the same timeline as the ordinary card. No route needed,
   nothing stored.
+- **Disruptions**: what NS says is wrong with the railway — unplanned
+  disruptions, engineering works and calamity announcements — as a
+  card that shows the affected stretch on a map, and as sensors: one
+  per route counting what touches that journey, and one for the
+  country as a whole.
 - **Favourites on the map** (opt-in): with *Show favourites on the map*
   switched on, every route gets a GPS `device_tracker` that follows the
   favourite you are travelling on, so the train appears on Home
@@ -397,6 +402,72 @@ Next to the two stations it takes a station to travel via, a choice
 between leaving now, leaving at a time or arriving by one, and a
 filter on train types. The swap button turns the journey around for
 the way back.
+
+### Disruptions card
+
+*Add card → Custom: NS Reisadvies — disruptions*. It lists what NS is
+publishing: an unplanned **disruption**, planned **engineering work**,
+or a **calamity** — an announcement rather than a stretch of line.
+Which kinds a card shows is chosen when you add it, so a dashboard can
+carry one card for "my routes, anything" beside one for "the whole
+country, calamities only".
+
+Each entry shows the situation in NS's own words, the period, how much
+longer the journey takes and what to do instead. *Where* draws the
+affected stretch on a map, straight through the stations NS names —
+that says which stretch is in trouble, not which rails a train is on.
+A calamity has no stretch and therefore no map button.
+
+| Key         | Description                                                       |
+|-------------|-------------------------------------------------------------------|
+| `title`     | Card title.                                                       |
+| `types`     | Any of `DISRUPTION`, `MAINTENANCE`, `CALAMITY`.                   |
+| `scope`     | `all`, `routes` (only what touches your routes) or `stations`.    |
+| `stations`  | Station names, when `scope` is `stations`.                        |
+| `max_rows`  | How many to list.                                                 |
+
+```yaml
+type: custom:ns-reisadvies-disruptions-card
+title: Storingen op mijn route
+types: [DISRUPTION, CALAMITY]
+scope: routes
+```
+
+### Disruption sensors
+
+With **Follow disruptions** on (the default), every route gets a
+sensor counting the disruptions that touch it, and the installation
+gets one for the country:
+
+```
+sensor.ns_werk_disruptions        # 0, 1, 2 …
+sensor.ns_disruptions             # all of them, nationwide
+```
+
+A disruption counts for a route when one of the stations on the
+stretch NS names is a station that route's journeys call at or pass
+through — not just the two ends, because the trouble is usually in
+between. A calamity has no stations of its own and counts for every
+route, which is what NS publishes them for.
+
+Attributes: `titles`, `types`, `ids`, `summary`, `title`, `type`,
+`cause`, `expected_until`, `advices`, `stations`, `worst_impact` and
+the full `disruptions` list. The national sensor adds a count per kind
+(`disruption`, `maintenance`, `calamity`).
+
+```yaml
+automation:
+  - alias: "Tell me when my line is in trouble"
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.ns_werk_disruptions
+        above: 0
+    actions:
+      - action: notify.mobile_app_telefoon
+        data:
+          title: "{{ state_attr('sensor.ns_werk_disruptions', 'title') }}"
+          message: "{{ state_attr('sensor.ns_werk_disruptions', 'summary') }}"
+```
 
 ## Services
 

@@ -9,6 +9,12 @@
       },
       "next_train": {
         "default": "mdi:train"
+      },
+      "disruptions": {
+        "default": "mdi:alert-octagon-outline"
+      },
+      "national_disruptions": {
+        "default": "mdi:alert-circle-outline"
       }
     },
     "device_tracker": {

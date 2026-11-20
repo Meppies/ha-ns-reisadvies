@@ -76,7 +76,10 @@ def _resp(status, json_payload=None, text_payload=""):
 
 def _coord(hass, **kw):
     defaults = {"api_key": "k", "from_station": "A", "to_station": "B",
-                "scan_interval_minutes": 5, "fav_hours": 6, "fetch_composition": False}
+                "scan_interval_minutes": 5, "fav_hours": 6, "fetch_composition": False,
+                # These tests feed the session a fixed list of responses;
+                # the disruption fetch would consume one of them.
+                "disruptions": False}
     defaults.update(kw)
     c = NSUpdateCoordinator(hass, **defaults)
     c._store = MagicMock()

@@ -31,6 +31,9 @@ def _coord(hass: HomeAssistant, **kw) -> NSUpdateCoordinator:
         "scan_interval_minutes": 5,
         "fav_hours": 6,
         "fetch_composition": False,
+        # These tests watch the trips request; the disruption
+        # fetch would otherwise be the last call on the session.
+        "disruptions": False,
     }
     defaults.update(kw)
     coord = NSUpdateCoordinator(hass, **defaults)

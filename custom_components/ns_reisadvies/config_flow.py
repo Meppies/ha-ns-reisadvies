@@ -50,6 +50,8 @@ from .const import (
     CONF_LIVE_TRAIN_MAP,
     CONF_LIVE_MAP_REFRESH_SECONDS,
     CONF_TRACK_FAVOURITES,
+    CONF_DISRUPTIONS,
+    DEFAULT_DISRUPTIONS,
     CONF_FAV_TRACK_SECONDS,
     CONF_FILTER_DAYS,
     CONF_FILTER_TIME,
@@ -346,6 +348,7 @@ class NSReisadviesConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_LIVE_MAP_REFRESH_SECONDS: DEFAULT_LIVE_MAP_REFRESH_SECONDS,
                         CONF_TRACK_FAVOURITES: DEFAULT_TRACK_FAVOURITES,
                         CONF_FAV_TRACK_SECONDS: DEFAULT_FAV_TRACK_SECONDS,
+                        CONF_DISRUPTIONS: DEFAULT_DISRUPTIONS,
                     }
                     # First route comes along as a subentry
                     return self.async_create_entry(
@@ -750,6 +753,13 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
             ): vol.All(
                 int, vol.Range(min=FAV_TRACK_SECONDS_MIN, max=FAV_TRACK_SECONDS_MAX),
             ),
+            # Disruptions (v2.25.0). One national request per refresh,
+            # shared by every route, behind the sensors that say when
+            # the line you travel is in trouble.
+            vol.Required(
+                CONF_DISRUPTIONS,
+                default=bool(self._read(CONF_DISRUPTIONS, DEFAULT_DISRUPTIONS)),
+            ): bool,
             # First day of week (v2.15.2). Display-only — controls the
             # rotation of the day picker on the per-route filter form.
             vol.Required(

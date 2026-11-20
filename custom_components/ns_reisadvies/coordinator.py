@@ -33,12 +33,15 @@ from ._filter import (
     parse_iso,
     train_types_in,
 )
+from ._disruptions import affecting, parse_disruptions, station_keys_of
 from ._live import parse_journey, run_window, vehicle_index
 from .const import (
     API_URL,
     ARCGIS_BACKOFF_MINUTES,
     ARCGIS_FAILURES_BEFORE_BACKOFF,
     ARCGIS_TREINEN_URL,
+    DISRUPTIONS_API_URL,
+    DISRUPTIONS_CACHE_SECONDS,
     FAV_RUN_LOOKAROUND_HOURS,
     JOURNEY_CACHE_SECONDS,
     VEHICLE_CACHE_SECONDS,
@@ -200,6 +203,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         fetch_composition: bool = False,
         track_favourites: bool = False,
         favourite_track_seconds: int = DEFAULT_FAV_TRACK_SECONDS,
+        disruptions: bool = True,
         filter_days: list[int] | None = None,
         filter_time: str | None = None,
         filter_window_minutes: int = 0,
@@ -224,6 +228,12 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         # part of this — with the option off nothing is polled, no
         # entities are created and the interval is never scheduled.
         self.track_favourites = bool(track_favourites)
+        # v2.25.0: NS's disruptions, nationally and for this route.
+        # Filled on every refresh so the sensors follow the same
+        # cadence as the trips they belong to.
+        self.watch_disruptions = bool(disruptions)
+        self.disruptions: list[dict[str, Any]] = []
+        self.route_disruptions: list[dict[str, Any]] = []
         self.favourite_track_seconds = max(
             FAV_TRACK_SECONDS_MIN,
             min(FAV_TRACK_SECONDS_MAX, int(favourite_track_seconds or DEFAULT_FAV_TRACK_SECONDS)),
@@ -1188,6 +1198,20 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                 if self.fetch_composition:
                     await self._annotate_compositions(all_trips, headers)
 
+                # v2.25.0: what NS says is wrong with the line this
+                # route travels. National news (a calamity) always
+                # counts; a stretch of railway counts when one of its
+                # stations is on this journey, the ones passed through
+                # along the way included.
+                if self.watch_disruptions:
+                    self.disruptions = await self.async_fetch_disruptions()
+                    self.route_disruptions = affecting(
+                        self.disruptions, station_keys_of(all_trips),
+                    )
+                else:
+                    self.disruptions = []
+                    self.route_disruptions = []
+
                 self._note_available()
                 return all_trips
 
@@ -1309,6 +1333,42 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             "ProRail rail network downloaded: %d features", len(features),
         )
         return {"type": "FeatureCollection", "features": features}
+
+    async def async_fetch_disruptions(self) -> list[dict[str, Any]]:
+        """Every disruption NS is publishing right now.
+
+        One national request serves every route and every open card,
+        so it is fetched once per ``DISRUPTIONS_CACHE_SECONDS`` and
+        shared, the same way the vehicle feed is.
+        """
+        if not self.api_key:
+            return []
+        bucket = self._shared()
+        entry = bucket.get("_disruptions")
+        if isinstance(entry, dict):
+            age = time.monotonic() - float(entry.get("at") or 0)
+            if age < DISRUPTIONS_CACHE_SECONDS:
+                fresh: list[dict[str, Any]] = entry.get("items") or []
+                return fresh
+
+        headers = {"Ocp-Apim-Subscription-Key": self.api_key}
+        items: list[dict[str, Any]] = []
+        try:
+            async with async_timeout.timeout(20):
+                async with self._session.get(
+                    DISRUPTIONS_API_URL,
+                    headers=headers,
+                    params={"isActive": "true"},
+                ) as resp:
+                    if resp.status == 200:
+                        items = parse_disruptions(await resp.json())
+                    else:
+                        _LOGGER.debug("Disruptions -> HTTP %s", resp.status)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            _LOGGER.debug("Disruptions failed: %s", err)
+
+        bucket["_disruptions"] = {"at": time.monotonic(), "items": items}
+        return items
 
     async def async_search_trips(
         self,

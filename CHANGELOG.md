@@ -4,6 +4,76 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.25.0] — 2026-11-20
+
+### Added — disruptions, on a card, on a map and as sensors
+
+NS publishes three kinds of trouble through one feed: an unplanned
+**DISRUPTION**, planned **MAINTENANCE**, and a **CALAMITY**, which is
+an announcement rather than a stretch of line and carries no stations
+at all. All three now arrive in Home Assistant.
+
+*Add card → Custom: NS Reisadvies — disruptions* lists them, with the
+situation in NS's own words, the period, the extra travel time and the
+advice behind a tap. Which kinds a card shows, and how much of the
+country counts — everything, only what touches your routes, or
+stations you name — is chosen when the card is added, so one dashboard
+can carry a narrow card beside a broad one. *Where* draws the affected
+stretch on a map, straight through the stations NS names: that says
+which stretch is in trouble, not which rails a train is on.
+
+Two kinds of sensor come with it, with **Follow disruptions** on (the
+default). Every route gets `sensor.ns_<route>_disruptions`, counting
+what touches that journey; the installation gets `sensor.ns_disruptions`
+for the country. A disruption counts for a route when one of the
+stations on the stretch NS names is a station that route calls at or
+passes through — not just the two ends, because the trouble is usually
+in between. Titles, cause, expected end, advice and the affected
+stations are attributes, so a notification can say what is wrong
+rather than that something is.
+
+It costs one national request per refresh, shared by every route and
+every open card through the same cache the vehicle feed uses, and the
+whole thing can be switched off in the hub options.
+
+### Fixed — a station can actually be typed into the search card
+
+The search card completed station names through the browser's own
+`<datalist>`. In Home Assistant's frontend that popup opened and shut
+again while typing, which made picking a station impossible.
+
+The card now draws the list itself. Typing narrows it — the stations
+whose name starts with what you typed first, then the ones that merely
+contain it, with the typed part in bold — and it sits directly under
+the field. The chevron beside the field opens the list without typing.
+Arrow keys walk it, Enter takes the highlighted station, a second
+Enter searches, Escape closes it, and a tap works on a phone because
+the choice is made on `mousedown`, before the field loses focus.
+
+### Fixed — entity ids no longer follow Home Assistant's language
+
+v2.20.0 claimed to pin the entity ids of the delay and next-train
+sensors with `_attr_suggested_object_id`. Home Assistant does not read
+that attribute: it derives the id from the device name and the
+*translated* entity name. On an English instance the result happened
+to look right, which is how the claim survived; on a Dutch one the
+sensors were `sensor.<route>_vertraging` and
+`sensor.<route>_volgende_trein` all along, and the trips sensor lost
+its `ns_` prefix.
+
+The integration now sets `entity_id` outright, which is the supported
+way to propose one, for the trips, delay, next-train and disruption
+sensors and for the favourite tracker. Verified on a Dutch Home
+Assistant: the ids come out as `sensor.ns_<route>`,
+`sensor.ns_<route>_delay`, `sensor.ns_<route>_next_train` and
+`sensor.ns_<route>_disruptions` while the names stay Dutch.
+
+Entities that already exist keep the id they were given — Home
+Assistant's registry decides that, and renaming would break
+automations pointing at them. A Dutch instance set up before this
+release therefore keeps its `_vertraging` ids until those entities are
+deleted and recreated.
+
 ## [2.24.1] — 2026-11-20
 
 ### Fixed — the search card has an editor of its own

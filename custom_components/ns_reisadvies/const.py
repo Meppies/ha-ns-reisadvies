@@ -42,6 +42,7 @@ CONF_LIVE_MAP_REFRESH_SECONDS = "live_map_refresh_seconds"
 # and can drive zone triggers. Off by default: it is the only thing in
 # this integration that polls an external feed in the background.
 CONF_TRACK_FAVOURITES = "track_favourites_on_map"
+CONF_DISRUPTIONS = "disruptions"
 CONF_FAV_TRACK_SECONDS = "favourite_track_seconds"
 
 # Hub-wide UI preference (v2.15.2): which weekday should appear first
@@ -90,6 +91,9 @@ DEFAULT_LIVE_MAP_REFRESH_SECONDS = 10  # poll cadence while modal is open
 
 # Favourite tracking (v2.18.0).
 DEFAULT_TRACK_FAVOURITES = False  # background polling — opt in
+# One extra request per refresh, shared by every route, in exchange for
+# knowing when the line you travel is in trouble: on by default.
+DEFAULT_DISRUPTIONS = True
 DEFAULT_FAV_TRACK_SECONDS = 30  # a 120 km/h train covers ~1 km in 30 s
 FAV_TRACK_SECONDS_MIN = 15
 FAV_TRACK_SECONDS_MAX = 120
@@ -125,6 +129,12 @@ ARCGIS_BACKOFF_MINUTES = 30
 # all: a favourite pinned for tomorrow morning must not keep the feed
 # busy overnight.
 FAV_RUN_LOOKAROUND_HOURS = 4
+
+# Disruptions (v2.25.0). One national request covers every route, so
+# it is fetched once per refresh and shared, like the vehicle feed.
+# Two minutes is well inside the five-minute default scan interval and
+# keeps several routes on one request.
+DISRUPTIONS_CACHE_SECONDS = 120
 DEFAULT_FILTER_WINDOW_MINUTES = 0  # default: no fuzz around the target
 DEFAULT_FIRST_WEEKDAY = "0"  # Monday — NL/EU default; users in US locales can override
 
@@ -132,6 +142,9 @@ DEFAULT_FIRST_WEEKDAY = "0"  # Monday — NL/EU default; users in US locales can
 API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips"
 TRIP_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/trips/trip"
 JOURNEY_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/journey"
+DISRUPTIONS_API_URL = (
+    "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v3/disruptions"
+)
 STATIONS_API_URL = "https://gateway.apiportal.ns.nl/reisinformatie-api/api/v2/stations"
 # Per-train info (composition + current station, no GPS):
 VIRTUAL_TRAIN_API_URL = "https://gateway.apiportal.ns.nl/virtual-train-api/api/v1/trein"

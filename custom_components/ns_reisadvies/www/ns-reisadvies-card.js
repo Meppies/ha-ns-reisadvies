@@ -69,6 +69,21 @@ const I18N = {
     search_unavailable: "NS is not answering right now.",
     search_no_match: "No trips match those train types.",
     search_no_trips: "No trips found for this search.",
+    disruptions_none: "No disruptions right now.",
+    disruptions_unavailable: "Cannot reach NS for disruptions.",
+    disruptions_kind_DISRUPTION: "Disruption",
+    disruptions_kind_MAINTENANCE: "Engineering work",
+    disruptions_kind_CALAMITY: "Announcement",
+    disruptions_show_map: "Where",
+    disruptions_advice: "Advice",
+    disruptions_less: "Less",
+    disruptions_at_ns: "At NS",
+    disruptions_kinds: "Which kinds to show",
+    disruptions_scope: "Where to look",
+    disruptions_scope_all: "The whole country",
+    disruptions_scope_routes: "Only my routes",
+    disruptions_scope_stations: "Stations I pick",
+    disruptions_stations_hint: "Station names, separated by commas.",
   },
   nl: {
     select_sensor: "Selecteer een sensor.",
@@ -135,6 +150,21 @@ const I18N = {
     search_unavailable: "NS antwoordt op dit moment niet.",
     search_no_match: "Geen ritten met die treinsoorten.",
     search_no_trips: "Geen ritten gevonden voor deze zoekopdracht.",
+    disruptions_none: "Op dit moment geen storingen.",
+    disruptions_unavailable: "Kan de storingen niet bij NS ophalen.",
+    disruptions_kind_DISRUPTION: "Storing",
+    disruptions_kind_MAINTENANCE: "Werkzaamheden",
+    disruptions_kind_CALAMITY: "Melding",
+    disruptions_show_map: "Waar",
+    disruptions_advice: "Advies",
+    disruptions_less: "Minder",
+    disruptions_at_ns: "Bij NS",
+    disruptions_kinds: "Welke soorten tonen",
+    disruptions_scope: "Waar kijken",
+    disruptions_scope_all: "Heel Nederland",
+    disruptions_scope_routes: "Alleen mijn routes",
+    disruptions_scope_stations: "Stations die ik kies",
+    disruptions_stations_hint: "Stationsnamen, gescheiden door komma's.",
   },
 };
 
@@ -3432,8 +3462,6 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
     const esc = (value) => String(value || "")
       .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
       .replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const options = (this._stations || [])
-      .map(name => `<option value="${esc(name)}"></option>`).join("");
     const recent = (this._recent || []).map((entry, index) => `
       <button class="ns-chip" data-recent="${index}" type="button">
         ${esc(entry.from)} → ${esc(entry.to)}${entry.via ? " ·" : ""}
@@ -3451,6 +3479,29 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
           color: var(--primary-text-color); background: var(--card-background-color);
           border: 1px solid var(--divider-color); border-radius: 10px; }
         .ns-search input:focus { outline: 2px solid var(--primary-color); outline-offset: -1px; }
+        /* v2.25.0: the browser's own datalist popup opened and shut
+           again while typing, which made a station impossible to pick.
+           This is a list the card draws itself: it narrows as you
+           type, and the chevron opens it without typing at all. */
+        .ns-search .ns-station { position: relative; flex: 1; min-width: 0; display: flex; }
+        .ns-search .ns-station input { flex: 1; min-width: 0; padding-right: 34px; }
+        .ns-search .ns-caret { position: absolute; right: 2px; top: 2px; bottom: 2px;
+          width: 30px; border: none; background: none; cursor: pointer;
+          color: var(--secondary-text-color); display: flex; align-items: center;
+          justify-content: center; }
+        .ns-search .ns-caret ha-icon { --mdc-icon-size: 20px; }
+        .ns-search .ns-suggest { position: absolute; z-index: 9; top: calc(100% + 4px);
+          left: 0; right: 0; margin: 0; padding: 4px 0; list-style: none;
+          max-height: 232px; overflow-y: auto; border-radius: 10px;
+          border: 1px solid var(--divider-color);
+          background: var(--card-background-color);
+          box-shadow: 0 6px 18px rgba(0,0,0,0.25); display: none; }
+        .ns-search .ns-suggest.open { display: block; }
+        .ns-search .ns-suggest li { padding: 9px 12px; cursor: pointer;
+          color: var(--primary-text-color); font-size: 0.95em; }
+        .ns-search .ns-suggest li.on, .ns-search .ns-suggest li:hover {
+          background: rgba(255, 201, 23, 0.25); }
+        .ns-search .ns-suggest li b { color: #003082; }
         .ns-search .ns-swap { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 50%;
           border: 1px solid var(--divider-color); background: var(--card-background-color);
           color: var(--primary-text-color); cursor: pointer; display: flex;
@@ -3472,20 +3523,16 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
         .ns-search-hint { padding: 18px 16px 22px 16px; text-align: center;
           color: var(--secondary-text-color); }
       </style>
-      <datalist id="ns-stations-${this._uid()}">${options}</datalist>
       ${recent ? `<div class="chips"><span class="label">${t("search_recent", this._hass)}</span>${recent}
         <button class="ns-chip" data-clear="1" type="button">${t("search_clear_recent", this._hass)}</button></div>` : ""}
       <div class="row">
-        <input type="text" data-field="from" list="ns-stations-${this._uid()}"
-               placeholder="${t("search_from", this._hass)}" value="${esc(q.from)}" autocomplete="off">
+        ${this._stationField("from", t("search_from", this._hass), q.from)}
         <button class="ns-swap" data-swap="1" type="button" title="${t("search_swap", this._hass)}">
           <ha-icon icon="mdi:swap-vertical"></ha-icon></button>
-        <input type="text" data-field="to" list="ns-stations-${this._uid()}"
-               placeholder="${t("search_to", this._hass)}" value="${esc(q.to)}" autocomplete="off">
+        ${this._stationField("to", t("search_to", this._hass), q.to)}
       </div>
       <div class="row">
-        <input type="text" data-field="via" list="ns-stations-${this._uid()}"
-               placeholder="${t("search_via", this._hass)}" value="${esc(q.via)}" autocomplete="off">
+        ${this._stationField("via", t("search_via", this._hass), q.via)}
       </div>
       <div class="chips">
         <button class="ns-chip ${q.mode === "now" ? "on" : ""}" data-mode="now" type="button">${t("search_leave_now", this._hass)}</button>
@@ -3513,6 +3560,99 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
     this._wireForm();
   }
 
+  _stationField(field, label, value) {
+    const esc = (text) => String(text == null ? "" : text)
+      .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return `
+      <div class="ns-station">
+        <input type="text" data-field="${field}" placeholder="${esc(label)}"
+               value="${esc(value)}" autocomplete="off" autocapitalize="words"
+               spellcheck="false" enterkeyhint="search">
+        <button class="ns-caret" data-caret="${field}" type="button"
+                tabindex="-1" aria-label="${esc(label)}">
+          <ha-icon icon="mdi:menu-down"></ha-icon></button>
+        <ul class="ns-suggest" data-list="${field}"></ul>
+      </div>`;
+  }
+
+  // The stations whose name starts with what has been typed come
+  // first, then the ones that merely contain it, so "ams" offers
+  // Amsterdam before Bussum-Zuid-Amstel-and-so-on.
+  _matchStations(typed) {
+    const all = this._stations || [];
+    const needle = String(typed || "").trim().toLowerCase();
+    if (!needle) return all.slice(0, 60);
+    const starts = [];
+    const holds = [];
+    for (const name of all) {
+      const low = name.toLowerCase();
+      if (low.startsWith(needle)) starts.push(name);
+      else if (low.includes(needle)) holds.push(name);
+      if (starts.length >= 40) break;
+    }
+    return starts.concat(holds).slice(0, 40);
+  }
+
+  _closeSuggestions(except) {
+    if (!this.form) return;
+    this.form.querySelectorAll(".ns-suggest").forEach(list => {
+      if (list !== except) list.classList.remove("open");
+    });
+  }
+
+  _showSuggestions(field, typed) {
+    const list = this.form.querySelector(`.ns-suggest[data-list="${field}"]`);
+    if (!list) return;
+    const matches = this._matchStations(typed);
+    if (!matches.length) {
+      list.classList.remove("open");
+      list.innerHTML = "";
+      return;
+    }
+    const needle = String(typed || "").trim().toLowerCase();
+    list.innerHTML = matches.map((name, index) => {
+      const at = needle ? name.toLowerCase().indexOf(needle) : -1;
+      const shown = at < 0 ? name : (
+        name.slice(0, at) + "<b>" + name.slice(at, at + needle.length) + "</b>"
+        + name.slice(at + needle.length)
+      );
+      return `<li data-name="${name.replace(/"/g, "&quot;")}" data-index="${index}">${shown}</li>`;
+    }).join("");
+    list.classList.remove("hidden");
+    list.classList.add("open");
+    this._closeSuggestions(list);
+    list.querySelectorAll("li").forEach(item => {
+      // mousedown, not click: blur would close the list first.
+      item.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        this._pickStation(field, item.getAttribute("data-name"));
+      });
+    });
+  }
+
+  _pickStation(field, name) {
+    this._query[field] = name;
+    const input = this.form.querySelector(`input[data-field="${field}"]`);
+    if (input) input.value = name;
+    this._closeSuggestions();
+    const list = this.form.querySelector(`.ns-suggest[data-list="${field}"]`);
+    if (list) list.classList.remove("open");
+  }
+
+  _highlight(list, delta) {
+    const items = [...list.querySelectorAll("li")];
+    if (!items.length) return null;
+    let index = items.findIndex(item => item.classList.contains("on"));
+    index = index < 0 ? (delta > 0 ? 0 : items.length - 1) : index + delta;
+    if (index < 0) index = items.length - 1;
+    if (index >= items.length) index = 0;
+    items.forEach(item => item.classList.remove("on"));
+    items[index].classList.add("on");
+    items[index].scrollIntoView({ block: "nearest" });
+    return items[index];
+  }
+
   _uid() {
     if (!this._uidValue) {
       this._uidValue = Math.random().toString(36).slice(2, 8);
@@ -3529,12 +3669,69 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
   _wireForm() {
     this.form.querySelectorAll("input[data-field]").forEach(input => {
       const field = input.getAttribute("data-field");
+      const stationField = ["from", "to", "via"].includes(field);
       input.addEventListener("change", () => { this._query[field] = input.value.trim(); });
+      input.addEventListener("input", () => {
+        this._query[field] = input.value.trim();
+        if (stationField) this._showSuggestions(field, input.value);
+      });
+      if (stationField) {
+        input.addEventListener("focus", () => {
+          if (input.value.trim()) this._showSuggestions(field, input.value);
+        });
+        input.addEventListener("blur", () => {
+          // A tap on the list fires mousedown first, so by the time
+          // blur lands the choice has already been made. Only this
+          // field's own list is closed: leaving one field to open
+          // another's list must not shut the one just opened.
+          setTimeout(() => {
+            const own = this.form
+              && this.form.querySelector(`.ns-suggest[data-list="${field}"]`);
+            if (own) own.classList.remove("open");
+          }, 120);
+        });
+      }
       input.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          this._query[field] = input.value.trim();
-          this._runSearch();
+        const list = stationField
+          ? this.form.querySelector(`.ns-suggest[data-list="${field}"]`)
+          : null;
+        const open = list && list.classList.contains("open");
+        if (open && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+          event.preventDefault();
+          this._highlight(list, event.key === "ArrowDown" ? 1 : -1);
+          return;
         }
+        if (open && event.key === "Escape") {
+          event.preventDefault();
+          this._closeSuggestions();
+          return;
+        }
+        if (event.key !== "Enter") return;
+        const chosen = open ? list.querySelector("li.on") : null;
+        if (chosen) {
+          // Enter on a highlighted station fills it in; the next
+          // Enter searches.
+          event.preventDefault();
+          this._pickStation(field, chosen.getAttribute("data-name"));
+          return;
+        }
+        this._query[field] = input.value.trim();
+        this._closeSuggestions();
+        this._runSearch();
+      });
+    });
+    this.form.querySelectorAll("[data-caret]").forEach(button => {
+      button.addEventListener("mousedown", (event) => {
+        event.preventDefault();
+        const field = button.getAttribute("data-caret");
+        const list = this.form.querySelector(`.ns-suggest[data-list="${field}"]`);
+        const input = this.form.querySelector(`input[data-field="${field}"]`);
+        if (list && list.classList.contains("open")) {
+          this._closeSuggestions();
+          return;
+        }
+        this._showSuggestions(field, input ? input.value : "");
+        if (input) input.focus();
       });
     });
     const click = (selector, handler) => {
@@ -3723,6 +3920,364 @@ class NSReisadviesSearchEditor extends HTMLElement {
   }
 }
 
+// v2.25.0: what NS says is wrong with the railway.
+//
+// Three kinds come out of one feed: an unplanned DISRUPTION, planned
+// MAINTENANCE, and a CALAMITY — an announcement rather than a stretch
+// of line, which is why it has no map button. Which kinds a card shows
+// is chosen when the card is added.
+//
+// It extends the ordinary card for one reason: the map. Drawing the
+// affected stretch needs the tile token, the Leaflet loading and the
+// modal that the live train map already brings.
+class NSReisadviesDisruptionsCard extends NSReisadviesCard {
+  static getConfigElement() {
+    return document.createElement("ns-reisadvies-disruptions-editor");
+  }
+
+  static getStubConfig() {
+    return { title: "Storingen", types: ["DISRUPTION", "CALAMITY"], scope: "all" };
+  }
+
+  setConfig(config) {
+    const given = config || {};
+    super.setConfig({
+      title: "NS Storingen",
+      max_rows: 10,
+      scale: 100,
+      fav_slots: 0,
+      fav_hours: 0,
+      ...given,
+      entity: "",
+    });
+    this._types = Array.isArray(given.types) && given.types.length
+      ? given.types.slice()
+      : ["DISRUPTION", "CALAMITY"];
+    this._scope = given.scope || "all";
+    this._stationFilter = Array.isArray(given.stations) ? given.stations.slice() : [];
+    this._items = null;
+    this._open = new Set();
+    this._failed = false;
+  }
+
+  getCardSize() { return 4; }
+  _favouritesAllowed() { return false; }
+
+  set hass(hass) {
+    const first = !this._hass;
+    this._hass = hass;
+    if (this._activeMap) this._syncMapTheme();
+    if (!this.content) {
+      const card = document.createElement("ha-card");
+      card.header = this._config.title;
+      this.content = document.createElement("div");
+      this.content.style.padding = "0";
+      card.appendChild(this.content);
+      this.appendChild(card);
+      this.content.innerHTML =
+        `<div class="ns-dis-empty">${t("loading", this._hass)}</div>`;
+    }
+    if (first) {
+      this._load();
+      // A disruption lasts hours; checking every two minutes is plenty
+      // and the answer is cached in the integration anyway.
+      this._disTick = setInterval(() => this._load(), 120 * 1000);
+    }
+  }
+
+  disconnectedCallback() {
+    if (super.disconnectedCallback) super.disconnectedCallback();
+    if (this._disTick) clearInterval(this._disTick);
+    this._disTick = null;
+  }
+
+  async _load() {
+    if (!this._hass) return;
+    try {
+      const answer = await this._hass.callWS({
+        type: "ns_reisadvies/disruptions",
+        types: this._types,
+        scope: this._scope,
+        stations: this._stationFilter,
+      });
+      this._items = (answer && answer.disruptions) || [];
+      this._failed = false;
+    } catch (err) {
+      console.warn("[ns-reisadvies] disruptions unavailable", err);
+      this._failed = true;
+    }
+    this._render();
+  }
+
+  _render() {
+    if (!this.content || !this._hass) return;
+    const esc = (value) => String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const style = `
+      <style>
+        .ns-dis { padding: 4px 16px 16px 16px; }
+        .ns-dis-empty { padding: 20px 16px; text-align: center;
+          color: var(--secondary-text-color); }
+        .ns-dis-item { border-bottom: 1px solid var(--divider-color); padding: 12px 0; }
+        .ns-dis-item:last-child { border-bottom: none; }
+        .ns-dis-head { display: flex; gap: 8px; align-items: flex-start; }
+        .ns-dis-kind { flex: 0 0 auto; font-size: 0.7em; font-weight: 700;
+          text-transform: uppercase; letter-spacing: 0.04em; padding: 3px 8px;
+          border-radius: 999px; color: #fff; white-space: nowrap; margin-top: 2px; }
+        .ns-dis-kind.DISRUPTION { background: #d32f2f; }
+        .ns-dis-kind.MAINTENANCE { background: #FFC917; color: #003082; }
+        .ns-dis-kind.CALAMITY { background: #003082; }
+        .ns-dis-title { font-weight: 700; color: var(--primary-text-color); flex: 1; }
+        .ns-dis-summary { color: var(--primary-text-color); margin-top: 6px;
+          font-size: 0.95em; }
+        .ns-dis-meta { color: var(--secondary-text-color); font-size: 0.85em;
+          margin-top: 4px; }
+        .ns-dis-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+        .ns-dis-btn { font-family: inherit; font-size: 0.85em; padding: 5px 10px;
+          border-radius: 999px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color); color: var(--secondary-text-color);
+          cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+        .ns-dis-btn ha-icon { --mdc-icon-size: 16px; color: #FF6B00; }
+        .ns-dis-advice { margin: 8px 0 0 0; padding-left: 18px;
+          color: var(--primary-text-color); font-size: 0.9em; }
+        .ns-dis-advice li { margin-bottom: 3px; }
+      </style>`;
+
+    if (this._failed) {
+      this.content.innerHTML =
+        `${style}<div class="ns-dis-empty">${t("disruptions_unavailable", this._hass)}</div>`;
+      return;
+    }
+    if (this._items === null) {
+      this.content.innerHTML =
+        `${style}<div class="ns-dis-empty">${t("loading", this._hass)}</div>`;
+      return;
+    }
+    if (!this._items.length) {
+      this.content.innerHTML =
+        `${style}<div class="ns-dis-empty">${t("disruptions_none", this._hass)}</div>`;
+      return;
+    }
+
+    const rows = this._items.slice(0, this._config.max_rows || 10).map((item, index) => {
+      const open = this._open.has(item.id);
+      const mappable = (item.stations || []).some(s => s.lat != null && s.lng != null);
+      const meta = [item.period, item.expected_until, item.extra_travel_time]
+        .filter(Boolean).map(esc).join(" · ");
+      const advice = open && (item.advices || []).length
+        ? `<ul class="ns-dis-advice">${item.advices.map(a => `<li>${esc(a)}</li>`).join("")}</ul>`
+        : "";
+      return `
+        <div class="ns-dis-item">
+          <div class="ns-dis-head">
+            <span class="ns-dis-kind ${esc(item.type)}">${t(`disruptions_kind_${item.type}`, this._hass)}</span>
+            <span class="ns-dis-title">${esc(item.title)}</span>
+          </div>
+          <div class="ns-dis-summary">${esc(item.summary)}</div>
+          ${meta ? `<div class="ns-dis-meta">${meta}</div>` : ""}
+          ${advice}
+          <div class="ns-dis-actions">
+            ${mappable ? `<button class="ns-dis-btn" data-map="${index}" type="button">
+              <ha-icon icon="mdi:map-marker-path"></ha-icon>${t("disruptions_show_map", this._hass)}</button>` : ""}
+            ${(item.advices || []).length ? `<button class="ns-dis-btn" data-open="${esc(item.id)}" type="button">
+              ${open ? t("disruptions_less", this._hass) : t("disruptions_advice", this._hass)}</button>` : ""}
+            ${item.url ? `<a class="ns-dis-btn" href="${esc(item.url)}" target="_blank" rel="noopener">
+              ${t("disruptions_at_ns", this._hass)}</a>` : ""}
+          </div>
+        </div>`;
+    }).join("");
+
+    this.content.innerHTML = `${style}<div class="ns-dis">${rows}</div>`;
+    this.content.querySelectorAll("[data-open]").forEach(button => {
+      button.addEventListener("click", () => {
+        const id = button.getAttribute("data-open");
+        if (this._open.has(id)) this._open.delete(id); else this._open.add(id);
+        this._render();
+      });
+    });
+    this.content.querySelectorAll("[data-map]").forEach(button => {
+      button.addEventListener("click", () => {
+        const item = this._items[Number(button.getAttribute("data-map"))];
+        if (item) this.openDisruptionMap(item);
+      });
+    });
+  }
+
+  // The affected stretch on a map: the stations NS names, joined in
+  // the order it gives them. Deliberately a straight line through the
+  // stations rather than snapped to the track — this says which
+  // stretch is in trouble, not which rails a train is on.
+  async openDisruptionMap(item) {
+    const stops = (item.stations || []).filter(s => s.lat != null && s.lng != null);
+    if (!stops.length) return;
+    this.closeLiveMap();
+
+    const modal = document.createElement("div");
+    modal.className = "ns-map-modal";
+    modal.innerHTML = `
+      <div class="ns-map-card">
+        <div class="ns-map-header">
+          <div class="ns-map-title">
+            <ha-icon icon="mdi:alert-octagon-outline"></ha-icon>
+            <span>${item.title}</span>
+          </div>
+          <span class="ns-map-close" role="button" title="Close"><ha-icon icon="mdi:close"></ha-icon></span>
+        </div>
+        <div class="ns-map-body">
+          <div class="ns-map-loading">${t("live_map_loading", this._hass)}</div>
+        </div>
+      </div>`;
+    const hostRoot = this._mapHostRoot();
+    this._ensureModalStyles(hostRoot);
+    hostRoot.appendChild(modal);
+    this._activeMap = { modalEl: modal };
+
+    const closeFn = () => this.closeLiveMap();
+    modal.querySelector(".ns-map-close").addEventListener("click", closeFn);
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) closeFn();
+    });
+    this._activeMap.escHandler = (event) => {
+      if (event.key === "Escape") closeFn();
+    };
+    document.addEventListener("keydown", this._activeMap.escHandler);
+
+    const body = modal.querySelector(".ns-map-body");
+    const built = await this._buildMapSurface(body);
+    if (!built || !this._activeMap || this._activeMap.modalEl !== modal) return;
+    const L = built.leaflet;
+    const map = built.map;
+    this._activeMap.lmap = map;
+    this._activeMap.haTiles = built.haTiles;
+    this._activeMap.baseLayer = built.baseLayer;
+    this._startTileTokenRefresh(this._activeMap);
+
+    const points = stops.map(s => [s.lat, s.lng]);
+    L.polyline(points, { color: "#d32f2f", weight: 5, opacity: 0.9 }).addTo(map);
+    stops.forEach((stop, index) => {
+      const endpoint = index === 0 || index === stops.length - 1;
+      const marker = L.marker([stop.lat, stop.lng], {
+        icon: L.divIcon({
+          className: "ns-leaflet-stop-wrap",
+          html: `<div class="ns-leaflet-stop${endpoint ? " endpoint" : ""}"></div>`,
+          iconSize: endpoint ? [18, 18] : [14, 14],
+          iconAnchor: endpoint ? [9, 9] : [7, 7],
+        }),
+        title: stop.name,
+      }).addTo(map);
+      marker.bindTooltip(stop.name, { direction: "top", offset: [0, -8] });
+    });
+    map.fitBounds(points, { padding: [40, 40], maxZoom: 13 });
+    setTimeout(() => map.invalidateSize(), 200);
+  }
+}
+
+
+// Only what a disruptions card has to decide: which kinds to show and
+// how much of the country counts.
+class NSReisadviesDisruptionsEditor extends HTMLElement {
+  setConfig(config) { if (config) this._config = config; }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._rendered && this._config) {
+      this._rendered = true;
+      this.render();
+    }
+  }
+
+  render() {
+    if (!this._hass || !this._config) return;
+    const cfg = this._config;
+    const types = Array.isArray(cfg.types) && cfg.types.length
+      ? cfg.types
+      : ["DISRUPTION", "CALAMITY"];
+    const scope = cfg.scope || "all";
+    const chip = (code) => `
+      <button class="chip ${types.includes(code) ? "on" : ""}" data-type="${code}"
+              type="button">${t(`disruptions_kind_${code}`, this._hass)}</button>`;
+    const scopeChip = (value, label) => `
+      <button class="chip ${scope === value ? "on" : ""}" data-scope="${value}"
+              type="button">${label}</button>`;
+
+    this.innerHTML = `
+      <style>
+        .ns-ed { padding: 10px; }
+        .ns-ed h3 { margin: 18px 0 8px 0; font-size: 1.05em; }
+        .ns-ed .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+        .ns-ed .chip { padding: 6px 10px; font-size: 0.85em; font-family: inherit;
+          border-radius: 999px; border: 1px solid var(--divider-color);
+          background: var(--card-background-color); color: var(--secondary-text-color);
+          cursor: pointer; }
+        .ns-ed .chip.on { background: #FFC917; color: #003082; border-color: #FFC917;
+          font-weight: 700; }
+        .ns-ed .hint { color: var(--secondary-text-color); font-size: 0.85em;
+          margin-bottom: 10px; }
+        .ns-ed .field { width: 100%; box-sizing: border-box; padding: 10px;
+          background: var(--card-background-color); color: inherit;
+          border: 1px solid var(--divider-color); border-radius: 6px; }
+      </style>
+      <div class="ns-ed">
+        <ha-textfield label="${t("editor_title", this._hass)}" id="title"
+                      style="width:100%; margin-bottom:16px;"></ha-textfield>
+        <h3>${t("disruptions_kinds", this._hass)}</h3>
+        <div class="chips">
+          ${chip("DISRUPTION")}${chip("MAINTENANCE")}${chip("CALAMITY")}
+        </div>
+        <h3>${t("disruptions_scope", this._hass)}</h3>
+        <div class="chips">
+          ${scopeChip("all", t("disruptions_scope_all", this._hass))}
+          ${scopeChip("routes", t("disruptions_scope_routes", this._hass))}
+          ${scopeChip("stations", t("disruptions_scope_stations", this._hass))}
+        </div>
+        ${scope === "stations" ? `
+          <div class="hint">${t("disruptions_stations_hint", this._hass)}</div>
+          <input class="field" type="text" id="stations"
+                 value="${(cfg.stations || []).join(", ")}">` : ""}
+      </div>`;
+
+    const titleField = this.querySelector("#title");
+    if (titleField) {
+      titleField.value = cfg.title || "NS Storingen";
+      titleField.addEventListener("change", (ev) => this._fire({ title: ev.target.value }));
+    }
+    this.querySelectorAll(".chip[data-type]").forEach(button => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        const code = button.getAttribute("data-type");
+        const next = types.includes(code)
+          ? types.filter(other => other !== code)
+          : types.concat([code]);
+        // Showing nothing at all is never what anyone meant.
+        this._fire({ types: next.length ? next : [code] });
+        this.render();
+      });
+    });
+    this.querySelectorAll(".chip[data-scope]").forEach(button => {
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        this._fire({ scope: button.getAttribute("data-scope") });
+        this.render();
+      });
+    });
+    const stations = this.querySelector("#stations");
+    if (stations) {
+      stations.addEventListener("change", (ev) => {
+        this._fire({
+          stations: ev.target.value.split(",").map(s => s.trim()).filter(Boolean),
+        });
+      });
+    }
+  }
+
+  _fire(obj) {
+    const newConfig = { ...this._config, ...obj };
+    this._config = newConfig;
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: newConfig } }));
+  }
+}
+
 // Registration — HA 2026.5.0+ runs Lovelace resource modules during a
 // View Transition. Calling customElements.define inside a transition
 // can silently no-op (the registry change is rolled back when the
@@ -3745,6 +4300,16 @@ const _NSRegister = () => {
   if (!customElements.get("ns-reisadvies-search-editor")) {
     try { customElements.define("ns-reisadvies-search-editor", NSReisadviesSearchEditor); } catch (e) {
       if (!(e instanceof DOMException)) console.error("ns-reisadvies-search-editor define failed:", e);
+    }
+  }
+  if (!customElements.get("ns-reisadvies-disruptions-editor")) {
+    try { customElements.define("ns-reisadvies-disruptions-editor", NSReisadviesDisruptionsEditor); } catch (e) {
+      if (!(e instanceof DOMException)) console.error("ns-reisadvies-disruptions-editor define failed:", e);
+    }
+  }
+  if (!customElements.get("ns-reisadvies-disruptions-card")) {
+    try { customElements.define("ns-reisadvies-disruptions-card", NSReisadviesDisruptionsCard); } catch (e) {
+      if (!(e instanceof DOMException)) console.error("ns-reisadvies-disruptions-card define failed:", e);
     }
   }
   if (!customElements.get("ns-reisadvies-search-card")) {
@@ -3779,6 +4344,14 @@ window.customCards.push({
 });
 
 window.customCards.push({
+  type: "ns-reisadvies-disruptions-card",
+  name: "NS Reisadvies — disruptions",
+  description: "NS disruptions, engineering works and calamities, with the affected stretch on a map",
+  preview: false,
+  documentationURL: "https://github.com/Meppies/ha-ns-reisadvies",
+});
+
+window.customCards.push({
   type: "ns-reisadvies-search-card",
   name: "NS Reisadvies — search",
   description: "Look up a journey on the spot, without configuring a route",
@@ -3787,7 +4360,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.24.1 ",
+  "%c NS-REISADVIES-CARD %c v2.25.0 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );

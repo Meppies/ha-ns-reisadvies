@@ -140,7 +140,8 @@
           "live_map_refresh_seconds": "Live kaart-verversinginterval (seconden)",
           "first_weekday": "Eerste dag van de week",
           "track_favourites_on_map": "Favorieten op de kaart tonen",
-          "favourite_track_seconds": "Interval favorietpositie (seconden)"
+          "favourite_track_seconds": "Interval favorietpositie (seconden)",
+          "disruptions": "Storingen bijhouden"
         },
         "data_description": {
           "api_key": "Je NS API-sleutel. Vervang deze als hij geroteerd is.",
@@ -151,7 +152,8 @@
           "live_map_refresh_seconds": "Hoe vaak de GPS-positie van de trein wordt ververst terwijl het live kaartje openstaat. Sneller = vloeiender beweging, iets meer netwerkverkeer. Bereik: 5 tot 60 seconden.",
           "first_weekday": "Welke weekdag bovenaan de dagen-keuzelijst van het filter-formulier verschijnt. Alleen weergave — verandert verder niets.",
           "track_favourites_on_map": "Maakt voor elke vastgezette favoriet een device tracker aan, zodat de trein waarin je zit op de kaart van Home Assistant verschijnt en zone-automatiseringen kan activeren. De positie wordt alleen opgehaald zolang een favoriet daadwerkelijk onderweg is.",
-          "favourite_track_seconds": "Hoe vaak de positie van een vastgezette favoriet wordt ververst terwijl de trein rijdt. Korter betekent dat een snelle trein een zone minder snel mist. Bereik: 15 tot 120 seconden."
+          "favourite_track_seconds": "Hoe vaak de positie van een vastgezette favoriet wordt ververst terwijl de trein rijdt. Korter betekent dat een snelle trein een zone minder snel mist. Bereik: 15 tot 120 seconden.",
+          "disruptions": "Haalt bij elke verversing de actuele storingen en werkzaamheden bij NS op — één landelijk verzoek dat alle routes delen. Geeft elke route een sensor met het aantal storingen dat dat traject raakt, plus één sensor voor het hele land, en vult de storingenkaart."
         }
       }
     },
@@ -233,6 +235,12 @@
       },
       "next_train": {
         "name": "Volgende trein"
+      },
+      "disruptions": {
+        "name": "Storingen"
+      },
+      "national_disruptions": {
+        "name": "Storingen in het land"
       }
     }
   }

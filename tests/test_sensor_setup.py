@@ -43,7 +43,10 @@ async def test_sensor_setup_skips_non_route_subentries():
         )
         result = await async_setup_entry(hass, entry, add_entities)
     assert result is True
-    add_entities.assert_not_called()  # No route subentries -> no add
+    # No route subentries, so no route sensors — only the hub's own
+    # national disruption sensor, which belongs to no route.
+    assert add_entities.call_count == 1
+    assert "config_subentry_id" not in add_entities.call_args.kwargs
 
 
 async def test_sensor_setup_skips_subentry_without_coord():
@@ -61,7 +64,8 @@ async def test_sensor_setup_skips_subentry_without_coord():
         )
         result = await async_setup_entry(hass, entry, add_entities)
     assert result is True
-    add_entities.assert_not_called()
+    assert add_entities.call_count == 1  # the national sensor only
+    assert "config_subentry_id" not in add_entities.call_args.kwargs
 
 
 async def test_sensor_setup_happy_path_creates_sensor():
@@ -80,9 +84,12 @@ async def test_sensor_setup_happy_path_creates_sensor():
         )
         result = await async_setup_entry(hass, entry, add_entities)
     assert result is True
-    add_entities.assert_called_once()
-    args, kwargs = add_entities.call_args
+    # The route's four sensors, then the hub's national one.
+    assert add_entities.call_count == 2
+    args, kwargs = add_entities.call_args_list[0]
     assert kwargs.get("config_subentry_id") == "sub1"
+    assert len(args[0]) == 4
+    assert "config_subentry_id" not in add_entities.call_args_list[1].kwargs
 
 
 async def test_sensor_setup_with_route_name_uses_name_slug():
@@ -103,7 +110,9 @@ async def test_sensor_setup_with_route_name_uses_name_slug():
     entry.subentries = {"sub1": sub}
     captured: dict = {}
     def add(sensors, **kwargs):
-        captured["sensors"] = list(sensors)
+        # The route's own call; the national sensor comes without one.
+        if kwargs.get("config_subentry_id"):
+            captured["sensors"] = list(sensors)
     add_entities = MagicMock(side_effect=add)
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(
@@ -141,4 +150,5 @@ async def test_sensor_setup_falls_back_on_typeerror():
         )
         result = await async_setup_entry(hass, entry, add_entities)
     assert result is True
-    assert call_count["n"] == 2  # First call raised, fallback succeeded
+    # Route call raised, fallback succeeded, then the national sensor.
+    assert call_count["n"] == 3

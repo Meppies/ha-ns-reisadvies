@@ -115,6 +115,13 @@ async def async_setup_entry(
                 ),
             ]
         )
+        # v2.25.0: what NS says is wrong with the line this route uses.
+        if coord.watch_disruptions:
+            by_subentry[subentry_id].append(
+                NSReisadviesRouteDisruptionSensor(
+                    coord, route_unique_id=unique_id, route_object_id=suggested,
+                )
+            )
 
     for subentry_id, sensors in by_subentry.items():
         try:
@@ -122,6 +129,17 @@ async def async_setup_entry(
         except TypeError:
             # HA < 2024.11 does not accept config_subentry_id on async_add_entities.
             async_add_entities(sensors)
+
+    # One national disruption sensor for the whole installation. It
+    # belongs to the hub, so it is added without a subentry, and any
+    # coordinator will do: they all read the same shared feed.
+    first_coord = next(iter(runtime.coordinators.values()), None)
+    if first_coord is not None and first_coord.watch_disruptions:
+        async_add_entities(
+            [NSReisadviesNationalDisruptionSensor(
+                first_coord, hub_id=entry.entry_id,
+            )]
+        )
 
     platform = entity_platform.async_get_current_platform()
     platform.async_register_entity_service(
@@ -183,7 +201,15 @@ class NSReisadviesSensor(CoordinatorEntity[NSUpdateCoordinator], SensorEntity):
         super().__init__(coordinator)
         self._attr_unique_id = unique_id
         if suggested_object_id:
+            # v2.25.0: set the entity_id outright. Home Assistant does
+            # not read ``_attr_suggested_object_id`` — it derives the
+            # id from the device name and the *translated* entity name,
+            # which is how a Dutch instance ended up with
+            # sensor.<route>_vertraging. Setting entity_id is the
+            # supported way for an integration to propose one, and the
+            # registry still wins for an entity that already exists.
             self._attr_suggested_object_id = suggested_object_id
+            self.entity_id = f"sensor.{suggested_object_id}"
         # DeviceInfo per route. The device name doubles as the entity
         # friendly name (because _attr_name = None + has_entity_name).
         device_name = (
@@ -371,9 +397,9 @@ class _NSDepartureSensorBase(CoordinatorEntity[NSUpdateCoordinator], SensorEntit
         self._attr_unique_id = f"{route_unique_id}_{self._unique_id_suffix}"
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, route_unique_id)})
         if route_object_id:
-            self._attr_suggested_object_id = (
-                f"{route_object_id}_{self._unique_id_suffix}"
-            )
+            object_id = f"{route_object_id}_{self._unique_id_suffix}"
+            self._attr_suggested_object_id = object_id
+            self.entity_id = f"sensor.{object_id}"
 
     @property
     def _departure(self) -> dict[str, Any] | None:
@@ -386,6 +412,122 @@ class _NSDepartureSensorBase(CoordinatorEntity[NSUpdateCoordinator], SensorEntit
         if info is None:
             return {}
         return {key: value for key, value in info.items() if key != "delay"}
+
+
+def _disruption_attributes(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """What an automation needs to say something useful out loud.
+
+    The titles and the first summary are what a notification reads
+    from; the ids are there so an automation can tell a new disruption
+    from one it has already announced.
+    """
+    first = items[0] if items else None
+    return {
+        "titles": [item["title"] for item in items],
+        "types": sorted({item["type"] for item in items}),
+        "ids": [item["id"] for item in items],
+        "summary": first["summary"] if first else None,
+        "title": first["title"] if first else None,
+        "type": first["type"] if first else None,
+        "cause": first.get("cause") if first else None,
+        "expected_until": first.get("expected_until") if first else None,
+        "advices": first.get("advices") if first else [],
+        "stations": (
+            [station["name"] for station in first.get("stations") or []]
+            if first else []
+        ),
+        "worst_impact": max(
+            (int(item["impact"]) for item in items
+             if isinstance(item.get("impact"), (int, float))),
+            default=None,
+        ),
+        "disruptions": items,
+    }
+
+
+class NSReisadviesRouteDisruptionSensor(
+    CoordinatorEntity[NSUpdateCoordinator], SensorEntity,
+):
+    """How many NS disruptions touch this route right now.
+
+    A disruption counts when one of the stations on the stretch NS
+    names is a station this route's journeys call at or pass through —
+    not just the two ends, because the trouble is usually in between.
+    A calamity, which NS publishes without a stretch, always counts.
+    """
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_translation_key = "disruptions"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(
+        self,
+        coordinator: NSUpdateCoordinator,
+        *,
+        route_unique_id: str,
+        route_object_id: str | None = None,
+    ) -> None:
+        """Sit on the route's device, beside its trips sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{route_unique_id}_disruptions"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, route_unique_id)})
+        if route_object_id:
+            self._attr_suggested_object_id = f"{route_object_id}_disruptions"
+            self.entity_id = f"sensor.{route_object_id}_disruptions"
+
+    @property
+    def native_value(self) -> int:
+        """The number of disruptions on this route."""
+        return len(self.coordinator.route_disruptions)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Titles, cause, advice and the affected stations."""
+        return _disruption_attributes(self.coordinator.route_disruptions)
+
+
+class NSReisadviesNationalDisruptionSensor(
+    CoordinatorEntity[NSUpdateCoordinator], SensorEntity,
+):
+    """Every disruption NS is publishing, wherever it is.
+
+    One per installation rather than one per route, for a dashboard
+    badge or a notification about the country as a whole.
+    """
+
+    _attr_should_poll = False
+    _attr_has_entity_name = True
+    _attr_translation_key = "national_disruptions"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_object_id = "ns_disruptions"
+
+    def __init__(self, coordinator: NSUpdateCoordinator, *, hub_id: str) -> None:
+        """Belong to the hub, not to any one route."""
+        super().__init__(coordinator)
+        self.entity_id = "sensor.ns_disruptions"
+        self._attr_unique_id = f"{hub_id}_national_disruptions"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, f"{hub_id}_hub")},
+            name="NS Reisadvies",
+            manufacturer="NS",
+        )
+
+    @property
+    def native_value(self) -> int:
+        """The number of active disruptions in the country."""
+        return len(self.coordinator.disruptions)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The same detail as the route sensor, nationally."""
+        items = self.coordinator.disruptions
+        attributes = _disruption_attributes(items)
+        for kind in ("DISRUPTION", "MAINTENANCE", "CALAMITY"):
+            attributes[kind.lower()] = sum(
+                1 for item in items if item["type"] == kind
+            )
+        return attributes
 
 
 class NSReisadviesDelaySensor(_NSDepartureSensorBase):

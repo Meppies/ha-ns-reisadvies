@@ -35,6 +35,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_call_later, async_track_time_interval
 from homeassistant.loader import async_get_integration
 
+from ._disruptions import affecting, of_types, station_keys_of
 from ._live import position_along
 from .const import (
     DOMAIN,
@@ -43,6 +44,8 @@ from .const import (
     CONF_API_KEY,
     CONF_FROM_STATION,
     CONF_TO_STATION,
+    CONF_DISRUPTIONS,
+    DEFAULT_DISRUPTIONS,
     CONF_SCAN_INTERVAL,
     CONF_FAV_HOURS,
     CONF_FETCH_COMPOSITION,
@@ -382,6 +385,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
     ))
     runtime.track_favourites_enabled = track_favourites
     runtime.favourite_track_seconds = favourite_track_seconds
+    watch_disruptions = bool(_option(entry, CONF_DISRUPTIONS, DEFAULT_DISRUPTIONS))
 
     # Coordinator per subentry. Stored on runtime.coordinators so the
     # sensor platform can pick them up via entry.runtime_data.
@@ -404,6 +408,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
             fetch_composition=fetch_composition,
             track_favourites=track_favourites,
             favourite_track_seconds=favourite_track_seconds,
+            disruptions=watch_disruptions,
             filter_days=subentry.data.get(CONF_FILTER_DAYS),
             filter_time=subentry.data.get(CONF_FILTER_TIME),
             filter_window_minutes=int(
@@ -447,6 +452,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         websocket_api.async_register_command(hass, _ws_train_progress)
         websocket_api.async_register_command(hass, _ws_stations)
         websocket_api.async_register_command(hass, _ws_search)
+        websocket_api.async_register_command(hass, _ws_disruptions)
         hass.data[DOMAIN]["_ws_registered"] = True
 
     # Schedule the rail-cache refresh once per HA boot. Runs ~5s after
@@ -948,6 +954,56 @@ async def _ws_search(
         train_types=list(msg.get("train_types") or []),
     )
     connection.send_result(msg["id"], {"trips": trips, "problem": problem})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): "ns_reisadvies/disruptions",
+        vol.Optional("types", default=[]): [str],
+        vol.Optional("scope", default="all"): vol.In(["all", "routes", "stations"]),
+        vol.Optional("stations", default=[]): [str],
+    }
+)
+@websocket_api.async_response
+async def _ws_disruptions(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+) -> None:
+    """What NS says is wrong with the railway, for the card.
+
+    ``scope`` decides how much of the country counts: everything,
+    only what touches the routes this installation follows, or only
+    the stations the card was given. A calamity has no stretch of its
+    own and is national news, so it is never narrowed away.
+    """
+    coord = _any_coordinator(hass)
+    if coord is None:
+        connection.send_error(msg["id"], "no_hub", "NS Reisadvies hub not loaded")
+        return
+
+    items = of_types(await coord.async_fetch_disruptions(), list(msg.get("types") or []))
+    scope = msg.get("scope") or "all"
+    if scope == "routes":
+        keys: set[str] = set()
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            runtime = getattr(entry, "runtime_data", None)
+            for route in getattr(runtime, "coordinators", {}).values():
+                keys |= station_keys_of(route.data)
+        items = affecting(items, keys)
+    elif scope == "stations":
+        wanted = {str(name).strip().casefold() for name in msg.get("stations") or []}
+        wanted.discard("")
+        if wanted:
+            items = [
+                item for item in items
+                if item["type"] == "CALAMITY"
+                or any(
+                    station["name"].casefold() in wanted
+                    or str(station["stationCode"]).casefold() in wanted
+                    for station in item["stations"]
+                )
+            ]
+
+    connection.send_result(msg["id"], {"disruptions": items})
 
 
 def _backfill_entity_subentries(hass: HomeAssistant, entry: ConfigEntry) -> None:

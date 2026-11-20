@@ -28,7 +28,9 @@ from custom_components.ns_reisadvies.const import (
 )
 from custom_components.ns_reisadvies.sensor import (
     NSReisadviesDelaySensor,
+    NSReisadviesNationalDisruptionSensor,
     NSReisadviesNextTrainSensor,
+    NSReisadviesRouteDisruptionSensor,
     NSReisadviesSensor,
     async_setup_entry,
 )
@@ -80,16 +82,20 @@ def _route(**data):
     return sub
 
 
-async def test_setup_adds_three_sensors_per_route(hass: HomeAssistant) -> None:
+async def test_setup_adds_the_route_sensors(hass: HomeAssistant) -> None:
     added = await _setup(hass, {"a": _route(), "b": _route(**{CONF_ROUTE_NAME: "Werk"})})
-    assert len(added) == 2
-    for entities, kwargs in added:
+    # Two routes, plus the one national disruption sensor for the hub.
+    routes = [entry for entry in added if entry[1].get("config_subentry_id")]
+    assert len(routes) == 2
+    for entities, kwargs in routes:
         assert [type(e) for e in entities] == [
             NSReisadviesSensor, NSReisadviesDelaySensor, NSReisadviesNextTrainSensor,
+            NSReisadviesRouteDisruptionSensor,
         ]
         route_uid = entities[0].unique_id
         assert entities[1].unique_id == f"{route_uid}_delay"
         assert entities[2].unique_id == f"{route_uid}_next_train"
+        assert entities[3].unique_id == f"{route_uid}_disruptions"
         for entity in entities[1:]:
             assert entity.device_info["identifiers"] == {(DOMAIN, route_uid)}
         # Entity ids sit beside the trips sensor and are derived from the
@@ -98,7 +104,83 @@ async def test_setup_adds_three_sensors_per_route(hass: HomeAssistant) -> None:
         trips_object_id = entities[0]._attr_suggested_object_id
         assert entities[1]._attr_suggested_object_id == f"{trips_object_id}_delay"
         assert entities[2]._attr_suggested_object_id == f"{trips_object_id}_next_train"
+        assert entities[3]._attr_suggested_object_id == f"{trips_object_id}_disruptions"
         assert kwargs["config_subentry_id"] in {"a", "b"}
+
+
+async def test_setup_adds_one_national_disruption_sensor(
+    hass: HomeAssistant,
+) -> None:
+    """It belongs to the hub, so it comes without a subentry."""
+    added = await _setup(hass, {"a": _route(), "b": _route()})
+    national = [entry for entry in added if not entry[1].get("config_subentry_id")]
+    assert len(national) == 1
+    entities = national[0][0]
+    assert [type(e) for e in entities] == [NSReisadviesNationalDisruptionSensor]
+    assert entities[0]._attr_suggested_object_id == "ns_disruptions"
+
+
+async def test_setup_leaves_disruptions_out_when_switched_off(
+    hass: HomeAssistant,
+) -> None:
+    coords = {"a": _coord(hass, DELAYED)}
+    coords["a"].watch_disruptions = False
+    entry = MagicMock()
+    entry.runtime_data = MagicMock(coordinators=coords)
+    entry.subentries = {"a": _route()}
+    added: list = []
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            "custom_components.ns_reisadvies.sensor.entity_platform.async_get_current_platform",
+            lambda: MagicMock(),
+        )
+        assert await async_setup_entry(
+            hass, entry, lambda ents, **kw: added.append((list(ents), kw))
+        )
+    assert len(added) == 1
+    assert len(added[0][0]) == 3
+
+
+async def test_route_disruption_sensor_counts_and_explains(
+    hass: HomeAssistant,
+) -> None:
+    """The count is the state; the detail is what a notification reads."""
+    added = await _setup(hass, {"a": _route()})
+    sensor = added[0][0][3]
+    sensor.coordinator.route_disruptions = [{
+        "id": "6069064", "type": "DISRUPTION", "title": "Arnhem - Doetinchem.",
+        "summary": "Door een wisselstoring rijden er minder treinen.",
+        "cause": "wisselstoring", "expected_until": "tot 20:30 uur",
+        "impact": 3, "advices": ["Reis via Zutphen."],
+        "stations": [{"name": "Arnhem Centraal"}, {"name": "Doetinchem"}],
+    }]
+    assert sensor.native_value == 1
+    attributes = sensor.extra_state_attributes
+    assert attributes["titles"] == ["Arnhem - Doetinchem."]
+    assert attributes["types"] == ["DISRUPTION"]
+    assert attributes["cause"] == "wisselstoring"
+    assert attributes["worst_impact"] == 3
+    assert attributes["stations"] == ["Arnhem Centraal", "Doetinchem"]
+
+    sensor.coordinator.route_disruptions = []
+    assert sensor.native_value == 0
+    assert sensor.extra_state_attributes["summary"] is None
+
+
+async def test_national_sensor_counts_each_kind(hass: HomeAssistant) -> None:
+    added = await _setup(hass, {"a": _route()})
+    national = [e for e in added if not e[1].get("config_subentry_id")][0][0][0]
+    national.coordinator.disruptions = [
+        {"id": "1", "type": "DISRUPTION", "title": "A", "summary": "a", "impact": 2},
+        {"id": "2", "type": "MAINTENANCE", "title": "B", "summary": "b", "impact": 5},
+        {"id": "3", "type": "MAINTENANCE", "title": "C", "summary": "c"},
+    ]
+    assert national.native_value == 3
+    attributes = national.extra_state_attributes
+    assert attributes["disruption"] == 1
+    assert attributes["maintenance"] == 2
+    assert attributes["calamity"] == 0
+    assert attributes["worst_impact"] == 5
 
 
 async def test_delay_is_recorded_as_a_measurement(hass: HomeAssistant) -> None:
