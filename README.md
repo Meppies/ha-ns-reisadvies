@@ -371,16 +371,20 @@ stores nothing on the server — no route, no favourite, no sensor —
 and the last five searches are remembered in that browser alone, as
 buttons above the form.
 
+The visual editor sets the title, the number of trips and the font
+scale. The keys below it are YAML-only: the card is a search box, so
+the stations are typed there rather than configured.
+
 | Key            | Description                                                    |
 |----------------|----------------------------------------------------------------|
 | `title`        | Card title.                                                    |
-| `from`         | Pre-filled departure station.                                   |
-| `to`           | Pre-filled arrival station.                                     |
-| `via`          | Pre-filled station to travel via.                               |
-| `train_types`  | Pre-selected train types, e.g. `["IC", "SPR"]`.                 |
-| `auto_search`  | Search straight away when `from` and `to` are set.              |
 | `max_rows`     | Number of trips to show (1–15).                                 |
 | `scale`        | Font scale percentage (50–150).                                 |
+| `from`         | YAML only. Pre-filled departure station.                        |
+| `to`           | YAML only. Pre-filled arrival station.                          |
+| `via`          | YAML only. Pre-filled station to travel via.                    |
+| `train_types`  | YAML only. Pre-selected train types, e.g. `["IC", "SPR"]`.      |
+| `auto_search`  | YAML only. Search straight away when `from` and `to` are set.   |
 
 ```yaml
 type: custom:ns-reisadvies-search-card

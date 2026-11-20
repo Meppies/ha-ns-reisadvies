@@ -4,6 +4,22 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.1] — 2026-11-20
+
+### Fixed — the search card has an editor of its own
+
+Because the search card extends the ordinary card, it also inherited
+its editor: a route sensor to pick and favourite times to set, neither
+of which means anything for a one-off lookup. There is no route to
+read and nothing to pin a favourite to.
+
+Its editor now offers what the card actually uses, which is how the
+card looks: the title, how many trips to show and the font scale.
+Stations are not among them — the card is a search box and that is
+where you type. A dashboard that does want a journey filled in
+beforehand can still set `from`, `to`, `via`, `train_types` and
+`auto_search` in YAML.
+
 ## [2.24.0] — 2026-11-20
 
 ### Added — a card for looking a journey up on the spot

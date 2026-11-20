@@ -3302,6 +3302,10 @@ class NSReisadviesEditor extends HTMLElement {
 // Nothing is stored on the server: no route, no favourite, no sensor.
 // The recent searches live in this browser alone.
 class NSReisadviesSearchCard extends NSReisadviesCard {
+  static getConfigElement() {
+    return document.createElement("ns-reisadvies-search-editor");
+  }
+
   static getStubConfig() {
     return { title: "Reisadvies zoeken", max_rows: 6 };
   }
@@ -3443,7 +3447,7 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
         .ns-search { padding: 12px 16px 4px 16px; display: flex; flex-direction: column; gap: 8px; }
         .ns-search .row { display: flex; gap: 8px; align-items: center; }
         .ns-search input[type="text"], .ns-search input[type="datetime-local"] {
-          flex: 1; min-width: 0; padding: 10px 12px; font-size: 1em; font-family: inherit;
+          flex: 1; min-width: 0; box-sizing: border-box; padding: 10px 12px; font-size: 1em; font-family: inherit;
           color: var(--primary-text-color); background: var(--card-background-color);
           border: 1px solid var(--divider-color); border-radius: 10px; }
         .ns-search input:focus { outline: 2px solid var(--primary-color); outline-offset: -1px; }
@@ -3651,6 +3655,74 @@ class NSReisadviesSearchCard extends NSReisadviesCard {
   }
 }
 
+// The ordinary card's editor asks for a route sensor and favourite
+// times. Neither means anything here: a search has no route to pin a
+// favourite to and no sensor to read. Nor does this one offer
+// stations to fill in up front — the card is a search box, and that
+// is where you type. What is left is how the card looks. A dashboard
+// that does want a journey filled in beforehand can still set
+// `from`, `to`, `via`, `train_types` and `auto_search` in YAML.
+class NSReisadviesSearchEditor extends HTMLElement {
+  setConfig(config) { if (config) this._config = config; }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (!this._rendered && this._config) {
+      this._rendered = true;
+      this.render();
+    }
+  }
+
+  render() {
+    if (!this._hass || !this._config) return;
+    const cfg = this._config;
+    const rows = cfg.max_rows || 6;
+    const scale = cfg.scale || 100;
+    this.innerHTML = `
+      <style>
+        .ns-ed { padding: 10px; }
+        .ns-ed .slider-row { margin-bottom: 15px; }
+        .ns-ed .slider-label { display: block; margin-bottom: 5px; font-weight: 500; }
+        .ns-ed .val-span { font-weight: bold; float: right; color: #3b82f6; }
+        .ns-ed h3 { margin: 18px 0 10px 0; font-size: 1.05em; }
+      </style>
+      <div class="ns-ed">
+        <ha-textfield label="${t("editor_title", this._hass)}" id="title"
+                      style="width:100%; margin-bottom:20px;"></ha-textfield>
+        <div class="slider-row">
+          <label class="slider-label">${t("editor_number_of_trips", this._hass)}
+            <span class="val-span" id="val-rows">${rows}</span></label>
+          <input type="range" id="max_rows" min="1" max="15" value="${rows}" style="width:100%;">
+        </div>
+        <div class="slider-row">
+          <label class="slider-label">${t("editor_scale", this._hass)}
+            <span class="val-span" id="val-scale">${scale}%</span></label>
+          <input type="range" id="scale" min="50" max="150" value="${scale}" style="width:100%;">
+        </div>
+      </div>`;
+
+    const titleField = this.querySelector("#title");
+    if (titleField) {
+      titleField.value = cfg.title || "NS Reisadvies";
+      titleField.addEventListener("change", (ev) => this._fire({ title: ev.target.value }));
+    }
+    this.querySelector("#max_rows").addEventListener("input", (ev) => {
+      this.querySelector("#val-rows").innerText = ev.target.value;
+      this._fire({ max_rows: parseInt(ev.target.value, 10) });
+    });
+    this.querySelector("#scale").addEventListener("input", (ev) => {
+      this.querySelector("#val-scale").innerText = ev.target.value + "%";
+      this._fire({ scale: parseInt(ev.target.value, 10) });
+    });
+  }
+
+  _fire(obj) {
+    const newConfig = { ...this._config, ...obj };
+    this._config = newConfig;
+    this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: newConfig } }));
+  }
+}
+
 // Registration — HA 2026.5.0+ runs Lovelace resource modules during a
 // View Transition. Calling customElements.define inside a transition
 // can silently no-op (the registry change is rolled back when the
@@ -3668,6 +3740,11 @@ const _NSRegister = () => {
   if (!customElements.get("ns-reisadvies-card")) {
     try { customElements.define("ns-reisadvies-card", NSReisadviesCard); } catch (e) {
       if (!(e instanceof DOMException)) console.error("ns-reisadvies-card define failed:", e);
+    }
+  }
+  if (!customElements.get("ns-reisadvies-search-editor")) {
+    try { customElements.define("ns-reisadvies-search-editor", NSReisadviesSearchEditor); } catch (e) {
+      if (!(e instanceof DOMException)) console.error("ns-reisadvies-search-editor define failed:", e);
     }
   }
   if (!customElements.get("ns-reisadvies-search-card")) {
@@ -3710,7 +3787,7 @@ window.customCards.push({
 });
 
 console.info(
-  "%c NS-REISADVIES-CARD %c v2.24.0 ",
+  "%c NS-REISADVIES-CARD %c v2.24.1 ",
   "color: white; background: #003082; font-weight: 700;",
   "color: #003082; background: #FFC917; font-weight: 700;"
 );
