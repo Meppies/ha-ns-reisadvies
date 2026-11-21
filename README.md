@@ -206,6 +206,7 @@ Re-open *Configure* on the integration tile to tweak:
 | `live_map_refresh_seconds`   | 10      | Polling cadence while the live map modal is open (5–60 s).                                   |
 | `track_favourites_on_map`    | off     | Publishes a GPS `device_tracker` per pinned favourite for the map and zone automations.      |
 | `favourite_track_seconds`    | 30      | Position cadence for pinned favourites while their train runs (15–120 s).                    |
+| `live_sensors`               | on      | Live automation sensors (speed, next station, progress…) for each route's focus trip.        |
 | `dienstkaartje`              | off     | Follows railway staff who publish their own shift on dienstkaartje.nl.                       |
 | `dienstkaartje_users`        | —       | The usernames to follow, separated by commas; at most ten. `name:role` adds your own label.  |
 
@@ -346,6 +347,147 @@ sensor and follow its name, so a route called *Werk* gives
 `sensor.ns_werk`, `sensor.ns_werk_delay` and `sensor.ns_werk_next_train`
 whatever language Home Assistant runs in. The route's device page lists
 them. The example under [Examples](#examples) triggers on `status`.
+
+### Sensors and events for automations
+
+Each route also describes **one trip** in detail — its *focus*: the
+trip you pinned as a favourite when there is one still to come or
+under way, and otherwise simply the next departure. One trip, so an
+automation can ask one question and get one answer: "which platform",
+"is it cancelled", "where is it now".
+
+The ones most people want are **on** straight away; the rest are
+created **disabled** and can be switched on from the entity's
+settings with one click. A route called *Werk* gives:
+
+| Entity                                          | On  | What it says                                                        |
+|-------------------------------------------------|-----|---------------------------------------------------------------------|
+| `sensor.ns_werk_departure`                      | yes | Expected departure (timestamp), with the train and delay as attributes |
+| `sensor.ns_werk_arrival`                        | yes | Expected arrival at the end of the journey (timestamp)              |
+| `sensor.ns_werk_platform`                       | yes | Departure platform                                                  |
+| `sensor.ns_werk_arrival_platform`               | yes | Arrival platform where you get off — handy when someone picks you up |
+| `sensor.ns_werk_following_departure`            | yes | When the train after yours leaves, if you miss it (timestamp)      |
+| `sensor.ns_werk_last_departure`                 | yes | The last train of the day on this route (timestamp)                 |
+| `sensor.ns_werk_leave_at` *(with a travel time)*| yes | When to leave for the station (timestamp)                           |
+| `binary_sensor.ns_werk_time_to_leave` *(with a travel time)* | yes | On from that moment until the train leaves                |
+| `binary_sensor.ns_werk_transfer_at_risk`        | yes | A delay has left less than two minutes to change trains             |
+| `binary_sensor.ns_werk_shorter_train` *(with composition)* | yes | Fewer carriages than NS planned, at the stop where you board |
+| `binary_sensor.ns_werk_cancelled`               | yes | The train will not run                                              |
+| `binary_sensor.ns_werk_platform_changed`        | yes | The platform differs from the planned one                           |
+| `binary_sensor.ns_werk_route_disruption`        | yes | There is a disruption or engineering work on this journey           |
+| `sensor.ns_werk_next_station` *(live)*          | yes | Where the train stops next                                          |
+| `sensor.ns_werk_speed` *(live)*                 | yes | Speed in km/h                                                       |
+| `sensor.ns_werk_progress` *(live)*              | yes | How far along your own stretch the train is, 0–100 %                |
+| `binary_sensor.ns_werk_at_station` *(live)*     | yes | Standing at a station (which one is an attribute)                   |
+| `event.ns_werk_journey`                         | yes | What just happened — see below                                      |
+| `sensor.ns_werk_planned_departure`              | no  | Timetable departure (timestamp)                                     |
+| `sensor.ns_werk_minutes_to_departure`           | no  | A countdown in minutes, updated every minute                        |
+| `sensor.ns_werk_travel_time`                    | no  | Journey time in minutes                                             |
+| `sensor.ns_werk_transfers`                      | no  | Number of changes                                                   |
+| `sensor.ns_werk_train_type`                     | no  | Intercity, Sprinter, …                                              |
+| `sensor.ns_werk_crowd`                          | no  | Expected crowding: `low`, `medium`, `high`                          |
+| `sensor.ns_werk_carriages`                      | no  | Number of carriages (needs *Fetch train composition*)               |
+| `sensor.ns_werk_current_station` *(live)*       | no  | The station it is at, if any                                        |
+| `sensor.ns_werk_heading` *(live)*               | no  | Compass heading in degrees                                          |
+| `sensor.ns_werk_remaining_distance` *(live)*    | no  | Kilometres to your stop along the line                              |
+| `binary_sensor.ns_werk_delayed`                 | no  | Leaving later than planned                                          |
+| `binary_sensor.ns_werk_arrival_platform_changed`| no  | You arrive on another platform than planned                         |
+| `sensor.ns_werk_transfer_margin`                | no  | Minutes left to change trains (all transfers in an attribute)       |
+| `binary_sensor.ns_werk_moving` *(live)*         | no  | Faster than walking pace                                            |
+| `sensor.ns_werk_unplanned_disruptions`          | no  | Number of unplanned disruptions on the journey                      |
+| `sensor.ns_werk_engineering_works`              | no  | Number of engineering works on the journey                          |
+| `sensor.ns_werk_extra_travel_time`              | no  | NS's estimate of the extra time, such as `+30 min`                  |
+
+And one for the whole installation: `binary_sensor.ns_calamity`, on
+while NS has a calamity announcement out anywhere in the country.
+
+**Time to get to the station.** Each route can carry how many minutes
+it takes you to reach the departure station — on foot, by bike, bus or
+car; set it in the route's settings. With it, the route gets *leave
+at* and *time to leave*, both worked out from the **expected**
+departure, so when the train is four minutes late you get four
+minutes back. Leave it at 0 and those two entities are not created.
+
+**The last train of the day** is one planner request — "arrive by"
+four in the morning, because NS's day runs past midnight — made at
+most once an hour and only while that sensor is enabled. The route's
+train-type filter applies, so a route kept to intercities gets the
+last intercity.
+
+**Shorter train** compares the stock NS planned with the stock it runs
+at the stop where you board — trains are split and joined along their
+run — and needs *Fetch train composition* to be on.
+
+**Live** sensors come from NS's own vehicle feed and the train's run.
+They follow the focus train from half an hour before it leaves until
+a few minutes after it arrives, so you see it approach your platform
+as well. NS is asked at most once a minute, only inside that window,
+and only while at least one live entity is enabled — disable them all,
+or switch off *Live sensors* in the options, and nothing is asked.
+Outside the window they read *unknown*, which is the truth.
+
+**Events.** `event.ns_werk_journey` records each thing that happens
+to the focus trip or its line, and the same thing is fired on the
+event bus as `ns_reisadvies_event`. The `event_type` is one of
+`platform_changed`, `delay_changed`, `cancelled`, `departed`,
+`arrived`, `disruption_started` or `disruption_ended`, and the event
+carries the train, the stations and what changed (`platform` and
+`previous_platform`, `delay` and `previous_delay`, …). Old and new
+are only compared for the *same* trip, so the focus moving on to the
+next train is never reported as a change. `departed` and `arrived`
+come from where the train actually is when the live sensors are on,
+and from the clock when they are not; `arrived` needs a pinned
+favourite, because without one the focus has already moved on to the
+next departure by then. Nothing is fired for what happened while
+Home Assistant was not running.
+
+```yaml
+automation:
+  - alias: "My platform changed"
+    # An event entity's state is the time of its last event, so trigger
+    # on any change and look at the type: triggering on the attribute
+    # alone would miss a second platform change in a row.
+    triggers:
+      - trigger: state
+        entity_id: event.ns_werk_journey
+    conditions:
+      - condition: state
+        entity_id: event.ns_werk_journey
+        attribute: event_type
+        state: platform_changed
+    actions:
+      - action: notify.mobile_app_telefoon
+        data:
+          message: >-
+            {{ state_attr('event.ns_werk_journey', 'train') }} now leaves from
+            platform {{ state_attr('event.ns_werk_journey', 'platform') }}.
+
+  - alias: "Put the kettle on ten minutes before I get home"
+    triggers:
+      - trigger: numeric_state
+        entity_id: sensor.ns_werk_progress
+        above: 80
+    actions:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.waterkoker
+
+  - alias: "Tell me when my train has left without me"
+    triggers:
+      - trigger: event
+        event_type: ns_reisadvies_event
+        event_data:
+          type: departed
+          route: "Hilversum → Amersfoort Centraal"
+    conditions:
+      - condition: state
+        entity_id: person.jeroen
+        state: home
+    actions:
+      - action: notify.mobile_app_telefoon
+        data:
+          message: "{{ trigger.event.data.train }} has just left."
+```
 
 ## Lovelace card
 

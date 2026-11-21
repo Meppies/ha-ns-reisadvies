@@ -47,9 +47,12 @@ from .const import (
     CONF_TO_STATION,
     CONF_DIENSTKAARTJE,
     CONF_DIENSTKAARTJE_USERS,
+    CONF_LIVE_SENSORS,
+    CONF_MINUTES_TO_STATION,
     CONF_DISRUPTIONS,
     DEFAULT_DIENSTKAARTJE,
     DEFAULT_DIENSTKAARTJE_USERS,
+    DEFAULT_LIVE_SENSORS,
     DIENSTKAARTJE_AVAILABLE,
     DEFAULT_DISRUPTIONS,
     CONF_SCAN_INTERVAL,
@@ -125,7 +128,12 @@ def _option(entry: NSConfigEntry, key: str, default: Any) -> Any:
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = [Platform.SENSOR, Platform.DEVICE_TRACKER]
+PLATFORMS = [
+    Platform.SENSOR,
+    Platform.BINARY_SENSOR,
+    Platform.EVENT,
+    Platform.DEVICE_TRACKER,
+]
 CARD_URL = "/ns_reisadvies/ns-reisadvies-card.js"
 RAIL_FILE = "rail.geojson"
 RAIL_REFRESH_INTERVAL = timedelta(days=7)
@@ -392,6 +400,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
     runtime.track_favourites_enabled = track_favourites
     runtime.favourite_track_seconds = favourite_track_seconds
     watch_disruptions = bool(_option(entry, CONF_DISRUPTIONS, DEFAULT_DISRUPTIONS))
+    # v2.28.0: live automation sensors for each route's focus trip.
+    live_sensors = bool(_option(entry, CONF_LIVE_SENSORS, DEFAULT_LIVE_SENSORS))
     # v2.27.0: Dienstkaartje. Off unless asked for, and then only for
     # the people named in the options.
     watch_dienstkaartje = DIENSTKAARTJE_AVAILABLE and bool(
@@ -425,6 +435,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
             disruptions=watch_disruptions,
             dienstkaartje=watch_dienstkaartje,
             dienstkaartje_users=dienstkaartje_users,
+            live_sensors=live_sensors,
+            minutes_to_station=int(subentry.data.get(CONF_MINUTES_TO_STATION, 0) or 0),
             filter_days=subentry.data.get(CONF_FILTER_DAYS),
             filter_time=subentry.data.get(CONF_FILTER_TIME),
             filter_window_minutes=int(
@@ -447,6 +459,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: NSConfigEntry) -> bool:
         # while the periodic update retries on its own.
         await coordinator.async_refresh()
         coordinators[subentry_id] = coordinator
+        entry.async_on_unload(coordinator.async_stop_focus_tick)
 
     runtime.coordinators = coordinators
     entry.runtime_data = runtime

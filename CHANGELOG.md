@@ -4,6 +4,64 @@ All notable changes to this integration will be documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.28.0] — 2026-11-21
+
+### Added — sensors, binary sensors and events for automations
+
+Each route now describes one trip in detail — its *focus*: the trip
+you pinned as a favourite when it is still to come or under way, and
+otherwise the next departure. One trip, so an automation asks one
+question and gets one answer.
+
+From the planner: expected and planned departure and arrival as real
+timestamps, the platform, a countdown in minutes, travel time,
+transfers, train type, crowding and the number of carriages, plus
+binary sensors for *cancelled*, *platform changed* and *delayed*.
+
+From the train itself: the next station it stops at, the station it
+is at, speed, heading, how far along your own stretch it is in per
+cent, and the kilometres still to go, plus binary sensors for *at a
+station* and *moving*. These follow the focus train from half an hour
+before it leaves until a few minutes after it arrives, so it can be
+watched approaching the platform. NS is asked at most once a minute,
+only inside that window, and only while one of these entities is
+enabled; the new *Live sensors* option switches them off altogether.
+
+Around the trip: the arrival platform where you get off; when the
+train after yours leaves, should you miss it; and the last train of
+the day on the route, from one "arrive by four in the morning" planner
+request at most once an hour. With a time to get to the station set
+per route — on foot, by bike, bus or car — a *leave at* timestamp and
+a *time to leave* binary sensor, both from the expected departure so
+a delay gives the minutes back. *Transfer at risk* turns on when a
+delay leaves less than two minutes to change trains, or the next
+train is cancelled, with the station and the minutes left. *Shorter
+train* compares NS's planned and actual stock at the stop where you
+board — trains are split and joined along their run, so the stock is
+now kept per stop — and needs *Fetch train composition*.
+
+For the line: a binary sensor for *disruption on this route*, counts
+of unplanned disruptions and engineering works, NS's estimate of the
+extra travel time, and — for the whole installation — a binary sensor
+that is on while NS has a calamity announcement out.
+
+And an event entity per route, `event.<route>_journey`, which records
+`platform_changed`, `delay_changed`, `cancelled`, `departed`,
+`arrived`, `disruption_started` and `disruption_ended`, each with the
+details; the same events go out on the bus as `ns_reisadvies_event`.
+Old and new are only compared for the same trip, so the focus moving
+on to the next train never reads as a change, and nothing is
+announced for what happened while Home Assistant was not running.
+
+The sensors most people want are enabled; the rest are created
+disabled, one click away in the entity settings. The README has the
+full list and three example automations.
+
+A live fix that puts the train past your station minutes before it
+is due to leave is not believed: it belongs to another ride with the
+same number, or is stale, and treating it as the truth would announce
+a departure that has not happened.
+
 ## [2.27.0] — 2026-11-20
 
 ### Added — the people working the train, from Dienstkaartje (not switched on yet)

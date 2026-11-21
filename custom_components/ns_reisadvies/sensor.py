@@ -20,15 +20,25 @@ rewritten in async_migrate_entry to point at this id).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfTime
+from homeassistant.const import (
+    DEGREE,
+    PERCENTAGE,
+    UnitOfLength,
+    UnitOfSpeed,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import (
     ConfigEntryNotReady,
@@ -51,6 +61,7 @@ from .const import (
 from ._departure import next_departure, summary_line
 from ._dienstkaartje import current_leg, trains_of
 from .coordinator import NSUpdateCoordinator
+from .route_entity import NSFocusEntity
 from .types import NSConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
@@ -127,6 +138,25 @@ async def async_setup_entry(
                     coord, route_unique_id=unique_id, route_object_id=suggested,
                 )
             )
+            by_subentry[subentry_id].extend(
+                NSRouteDisruptionDetailSensor(
+                    coord, description,
+                    route_unique_id=unique_id, route_object_id=suggested,
+                )
+                for description in ROUTE_DISRUPTION_SENSORS
+            )
+        # v2.28.0: the focus trip — a pinned favourite, else the next
+        # departure — as one sensor per fact. The live ones only exist
+        # with the option on.
+        by_subentry[subentry_id].extend(
+            NSFocusSensor(
+                coord, description,
+                route_unique_id=unique_id, route_object_id=suggested,
+            )
+            for description in FOCUS_SENSORS
+            if (coord.watch_live or not description.live)
+            and (coord.minutes_to_station > 0 or not description.needs_travel_time)
+        )
 
     for subentry_id, sensors in by_subentry.items():
         try:
@@ -671,3 +701,308 @@ class NSReisadviesNextTrainSensor(_NSDepartureSensorBase):
     def native_value(self) -> str | None:
         """The summary line, in HA's language (Dutch or English)."""
         return summary_line(self._departure, self.hass.config.language)
+
+
+# ---------------------------------------------------------------------
+# v2.28.0: the focus trip, as sensors an automation can use directly
+# ---------------------------------------------------------------------
+
+@dataclass(frozen=True, kw_only=True)
+class NSFocusSensorDescription(SensorEntityDescription):
+    """One fact about the focus trip, and where to read it."""
+
+    value_fn: Callable[[dict[str, Any], dict[str, Any]], Any]
+    live: bool = False
+    # Which trip it reads: the focus, the one after it, or the last one
+    # of the day. The value_fn gets that trip's facts as its first
+    # argument either way.
+    source: str = "focus"
+    # Only exists with a time to get to the station set for the route.
+    needs_travel_time: bool = False
+
+
+def _disruptions_of(kind: str) -> Callable[[NSUpdateCoordinator], int]:
+    def count(coordinator: NSUpdateCoordinator) -> int:
+        return sum(1 for item in coordinator.route_disruptions if item.get("type") == kind)
+    return count
+
+
+FOCUS_SENSORS: tuple[NSFocusSensorDescription, ...] = (
+    # From the planner: change on every route refresh.
+    NSFocusSensorDescription(
+        key="departure",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda f, _l: f.get("departure"),
+    ),
+    NSFocusSensorDescription(
+        key="planned_departure",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        entity_registry_enabled_default=False,
+        value_fn=lambda f, _l: f.get("planned_departure"),
+    ),
+    NSFocusSensorDescription(
+        key="arrival",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=lambda f, _l: f.get("arrival"),
+    ),
+    NSFocusSensorDescription(
+        key="minutes_to_departure",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        # A countdown is a different number every minute; recording it
+        # would fill the database with nothing anyone looks back at.
+        entity_registry_enabled_default=False,
+        value_fn=lambda f, _l: f.get("minutes_to_departure"),
+    ),
+    NSFocusSensorDescription(
+        key="platform",
+        value_fn=lambda f, _l: f.get("platform"),
+    ),
+    NSFocusSensorDescription(
+        key="arrival_platform",
+        value_fn=lambda f, _l: f.get("arrival_platform"),
+    ),
+    NSFocusSensorDescription(
+        key="leave_at",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        needs_travel_time=True,
+        value_fn=lambda f, _l: f.get("leave_at"),
+    ),
+    NSFocusSensorDescription(
+        key="transfer_margin",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        entity_registry_enabled_default=False,
+        value_fn=lambda f, _l: f.get("transfer_margin"),
+    ),
+    NSFocusSensorDescription(
+        key="following_departure",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        source="following",
+        value_fn=lambda f, _l: f.get("departure"),
+    ),
+    NSFocusSensorDescription(
+        key="last_departure",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        source="last",
+        value_fn=lambda f, _l: f.get("departure"),
+    ),
+    NSFocusSensorDescription(
+        key="travel_time",
+        device_class=SensorDeviceClass.DURATION,
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        entity_registry_enabled_default=False,
+        value_fn=lambda f, _l: f.get("travel_time"),
+    ),
+    NSFocusSensorDescription(
+        key="transfers",
+        entity_registry_enabled_default=False,
+        value_fn=lambda f, _l: f.get("transfers"),
+    ),
+    NSFocusSensorDescription(
+        key="train_type",
+        entity_registry_enabled_default=False,
+        value_fn=lambda f, _l: f.get("train_type"),
+    ),
+    NSFocusSensorDescription(
+        key="crowd",
+        device_class=SensorDeviceClass.ENUM,
+        options=["low", "medium", "high"],
+        entity_registry_enabled_default=False,
+        value_fn=lambda f, _l: f.get("crowd") if f.get("crowd") in ("low", "medium", "high") else None,
+    ),
+    NSFocusSensorDescription(
+        key="carriages",
+        entity_registry_enabled_default=False,
+        value_fn=lambda f, _l: f.get("carriages"),
+    ),
+    # From the train itself: only while it runs near the traveller's
+    # own journey, and only asked for while one of these is enabled.
+    NSFocusSensorDescription(
+        key="next_station",
+        live=True,
+        value_fn=lambda _f, l: l.get("next_station"),
+    ),
+    NSFocusSensorDescription(
+        key="current_station",
+        live=True,
+        entity_registry_enabled_default=False,
+        value_fn=lambda _f, l: l.get("current_station"),
+    ),
+    NSFocusSensorDescription(
+        key="speed",
+        live=True,
+        device_class=SensorDeviceClass.SPEED,
+        native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+        value_fn=lambda _f, l: l.get("speed"),
+    ),
+    NSFocusSensorDescription(
+        key="heading",
+        live=True,
+        native_unit_of_measurement=DEGREE,
+        entity_registry_enabled_default=False,
+        value_fn=lambda _f, l: l.get("heading"),
+    ),
+    NSFocusSensorDescription(
+        key="progress",
+        live=True,
+        native_unit_of_measurement=PERCENTAGE,
+        suggested_display_precision=0,
+        value_fn=lambda _f, l: l.get("progress"),
+    ),
+    NSFocusSensorDescription(
+        key="remaining_distance",
+        live=True,
+        device_class=SensorDeviceClass.DISTANCE,
+        native_unit_of_measurement=UnitOfLength.KILOMETERS,
+        suggested_display_precision=1,
+        entity_registry_enabled_default=False,
+        value_fn=lambda _f, l: l.get("remaining_km"),
+    ),
+)
+
+
+class NSFocusSensor(NSFocusEntity, SensorEntity):
+    """One fact about the route's focus trip."""
+
+    entity_description: NSFocusSensorDescription
+
+    def __init__(
+        self,
+        coordinator: NSUpdateCoordinator,
+        description: NSFocusSensorDescription,
+        *,
+        route_unique_id: str,
+        route_object_id: str,
+    ) -> None:
+        self._live = description.live
+        self._last_train = description.source == "last"
+        super().__init__(
+            coordinator, description.key,
+            route_unique_id=route_unique_id, route_object_id=route_object_id,
+        )
+        self.entity_description = description
+
+    @property
+    def _facts(self) -> dict[str, Any]:
+        source = self.entity_description.source
+        if source == "following":
+            return self.coordinator.following or {}
+        if source == "last":
+            return self.coordinator.last_train or {}
+        return self.focus
+
+    @property
+    def native_value(self) -> Any:
+        return self.entity_description.value_fn(self._facts, self.live)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Which trip this is about, where a notification needs it.
+
+        The departure sensor carries the focus trip's context, the
+        "train after" and "last train" sensors their own, and the
+        transfer and arrival-platform sensors what they are about.
+        Repeating it on every sensor would only fill the database.
+        """
+        if self.entity_description.source in ("following", "last"):
+            facts = self._facts
+            if not facts:
+                return None
+            return {
+                "train": facts.get("train"),
+                "train_number": facts.get("train_number"),
+                "platform": facts.get("platform"),
+                "delay": facts.get("departure_delay"),
+                "arrival": (
+                    arrival.isoformat()
+                    if isinstance(arrival := facts.get("arrival"), datetime) else None
+                ),
+                "transfers": facts.get("transfers"),
+            }
+        if self._key == "arrival_platform":
+            return {
+                "planned_platform": self.focus.get("planned_arrival_platform"),
+                "changed": self.focus.get("arrival_platform_changed"),
+                "station": self.focus.get("destination"),
+            }
+        if self._key == "transfer_margin":
+            return {"transfers": self.focus.get("transfer_list") or []}
+        if self._key == "leave_at":
+            return {"minutes_to_station": self.coordinator.minutes_to_station}
+        if self._key != "departure":
+            return None
+        focus = self.focus
+        return {
+            "focus": self.coordinator.focus_source,
+            "train": focus.get("train"),
+            "train_number": focus.get("train_number"),
+            "direction": focus.get("direction"),
+            "origin": focus.get("origin"),
+            "destination": focus.get("destination"),
+            "delay": focus.get("departure_delay"),
+            "platform": focus.get("platform"),
+            "cancelled": focus.get("cancelled"),
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
+class NSRouteCountDescription(SensorEntityDescription):
+    """A count read straight off the coordinator."""
+
+    value_fn: Callable[[NSUpdateCoordinator], Any]
+
+
+ROUTE_DISRUPTION_SENSORS: tuple[NSRouteCountDescription, ...] = (
+    NSRouteCountDescription(
+        key="unplanned_disruptions",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_disruptions_of("DISRUPTION"),
+    ),
+    NSRouteCountDescription(
+        key="engineering_works",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_registry_enabled_default=False,
+        value_fn=_disruptions_of("MAINTENANCE"),
+    ),
+    NSRouteCountDescription(
+        key="extra_travel_time",
+        entity_registry_enabled_default=False,
+        value_fn=lambda c: next(
+            (item.get("extra_travel_time") for item in c.route_disruptions
+             if item.get("extra_travel_time")),
+            None,
+        ),
+    ),
+)
+
+
+class NSRouteDisruptionDetailSensor(NSFocusEntity, SensorEntity):
+    """A detail of the disruptions on this route."""
+
+    entity_description: NSRouteCountDescription
+
+    def __init__(
+        self,
+        coordinator: NSUpdateCoordinator,
+        description: NSRouteCountDescription,
+        *,
+        route_unique_id: str,
+        route_object_id: str,
+    ) -> None:
+        super().__init__(
+            coordinator, description.key,
+            route_unique_id=route_unique_id, route_object_id=route_object_id,
+        )
+        self.entity_description = description
+
+    async def async_added_to_hass(self) -> None:
+        # Read straight off the refresh; no minute tick needed.
+        await CoordinatorEntity.async_added_to_hass(self)
+
+    @property
+    def native_value(self) -> Any:
+        return self.entity_description.value_fn(self.coordinator)

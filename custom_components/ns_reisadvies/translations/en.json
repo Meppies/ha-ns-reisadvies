@@ -53,12 +53,14 @@
           "data": {
             "route_name": "Route name (optional)",
             "act_station": "Departure station",
-            "arr_station": "Arrival station"
+            "arr_station": "Arrival station",
+            "minutes_to_station": "Time to get to the station (optional)"
           },
           "data_description": {
             "route_name": "Optional. Give this route a short, recognisable name (e.g. \"Werk\", \"Weekend\"). When set, it becomes the sensor's friendly name and entity_id slug — and it lets you have multiple routes between the same stations with different filters.",
             "act_station": "The station where this route starts.",
-            "arr_station": "The station where this route ends."
+            "arr_station": "The station where this route ends.",
+            "minutes_to_station": "Minutes it takes to get to the departure station — on foot, by bike, bus or car. With this set, the route gets a 'leave at' sensor and a 'time to leave' binary sensor, worked out from the expected departure so a delay gives you the minutes back. Leave at 0 to do without."
           },
           "sections": {
             "filters": {
@@ -87,12 +89,14 @@
           "data": {
             "route_name": "Route name (optional)",
             "act_station": "Departure station",
-            "arr_station": "Arrival station"
+            "arr_station": "Arrival station",
+            "minutes_to_station": "Time to get to the station (optional)"
           },
           "data_description": {
             "route_name": "Optional. Give this route a short, recognisable name (e.g. \"Werk\", \"Weekend\"). When set, it becomes the sensor's friendly name and entity_id slug — and it lets you have multiple routes between the same stations with different filters.",
             "act_station": "The station where this route starts.",
-            "arr_station": "The station where this route ends."
+            "arr_station": "The station where this route ends.",
+            "minutes_to_station": "Minutes it takes to get to the departure station — on foot, by bike, bus or car. With this set, the route gets a 'leave at' sensor and a 'time to leave' binary sensor, worked out from the expected departure so a delay gives you the minutes back. Leave at 0 to do without."
           },
           "sections": {
             "filters": {
@@ -143,7 +147,8 @@
           "favourite_track_seconds": "Favourite position interval (seconds)",
           "disruptions": "Follow disruptions",
           "dienstkaartje": "Follow railway staff (Dienstkaartje)",
-          "dienstkaartje_users": "Dienstkaartje usernames"
+          "dienstkaartje_users": "Dienstkaartje usernames",
+          "live_sensors": "Live sensors (speed, next station, progress)"
         },
         "data_description": {
           "api_key": "Your NS API subscription key. Replace if it has been rotated.",
@@ -157,7 +162,8 @@
           "favourite_track_seconds": "How often the position of a pinned favourite is refreshed while it is en route. Shorter means a zone is less likely to be missed by a fast train. Range: 15 to 120 seconds.",
           "disruptions": "Fetches NS's current disruptions and engineering works on every refresh — one national request shared by all routes. Gives each route a sensor counting the disruptions that touch it, adds one for the country as a whole, and feeds the disruptions card.",
           "dienstkaartje": "Shows which train the people you follow are working, from dienstkaartje.nl — a project by Dutchbeard where railway staff publish their own shift. Off by default. Only the usernames below are ever looked up, and only what each person chooses to publish is shown: no train numbers where they hide them, no times where they hide those.",
-          "dienstkaartje_users": "Usernames on dienstkaartje.nl, separated by commas; at most ten. A name may carry your own label after a colon — machinist_jan:machinist — because the site publishes no roles itself. Each name costs one request to their server per refresh."
+          "dienstkaartje_users": "Usernames on dienstkaartje.nl, separated by commas; at most ten. A name may carry your own label after a colon — machinist_jan:machinist — because the site publishes no roles itself. Each name costs one request to their server per refresh.",
+          "live_sensors": "Adds sensors about where each route's train is right now: speed, next station, whether it is at a station, and how far along your stretch it is. They follow your pinned favourite, or else the next departure. NS is asked at most once a minute, only from half an hour before that train leaves until it arrives, and only while one of those sensors is enabled."
         }
       }
     },
@@ -248,6 +254,136 @@
       },
       "staff_shift": {
         "name": "Dienstkaartje shift"
+      },
+      "departure": {
+        "name": "Departure"
+      },
+      "planned_departure": {
+        "name": "Planned departure"
+      },
+      "arrival": {
+        "name": "Arrival"
+      },
+      "minutes_to_departure": {
+        "name": "Minutes to departure"
+      },
+      "platform": {
+        "name": "Platform"
+      },
+      "travel_time": {
+        "name": "Travel time"
+      },
+      "transfers": {
+        "name": "Transfers"
+      },
+      "train_type": {
+        "name": "Train type"
+      },
+      "crowd": {
+        "name": "Crowding",
+        "state": {
+          "low": "Quiet",
+          "medium": "Busy",
+          "high": "Very busy"
+        }
+      },
+      "carriages": {
+        "name": "Carriages"
+      },
+      "next_station": {
+        "name": "Next station"
+      },
+      "current_station": {
+        "name": "Current station"
+      },
+      "speed": {
+        "name": "Speed"
+      },
+      "heading": {
+        "name": "Heading"
+      },
+      "progress": {
+        "name": "Progress"
+      },
+      "remaining_distance": {
+        "name": "Distance to go"
+      },
+      "unplanned_disruptions": {
+        "name": "Unplanned disruptions"
+      },
+      "engineering_works": {
+        "name": "Engineering works"
+      },
+      "extra_travel_time": {
+        "name": "Extra travel time"
+      },
+      "arrival_platform": {
+        "name": "Arrival platform"
+      },
+      "leave_at": {
+        "name": "Leave at"
+      },
+      "transfer_margin": {
+        "name": "Transfer time"
+      },
+      "following_departure": {
+        "name": "Train after"
+      },
+      "last_departure": {
+        "name": "Last train today"
+      }
+    },
+    "binary_sensor": {
+      "cancelled": {
+        "name": "Cancelled"
+      },
+      "platform_changed": {
+        "name": "Platform changed"
+      },
+      "delayed": {
+        "name": "Delayed"
+      },
+      "at_station": {
+        "name": "At a station"
+      },
+      "moving": {
+        "name": "Moving"
+      },
+      "route_disruption": {
+        "name": "Disruption on route"
+      },
+      "calamity": {
+        "name": "Calamity"
+      },
+      "arrival_platform_changed": {
+        "name": "Arrival platform changed"
+      },
+      "time_to_leave": {
+        "name": "Time to leave"
+      },
+      "transfer_at_risk": {
+        "name": "Transfer at risk"
+      },
+      "shorter_train": {
+        "name": "Shorter train"
+      }
+    },
+    "event": {
+      "journey": {
+        "name": "Journey events",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "platform_changed": "Platform changed",
+              "delay_changed": "Delay changed",
+              "cancelled": "Cancelled",
+              "departed": "Departed",
+              "arrived": "Arrived",
+              "disruption_started": "Disruption started",
+              "disruption_ended": "Disruption ended"
+            }
+          }
+        }
       }
     }
   }

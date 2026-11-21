@@ -55,6 +55,8 @@ def _coord(hass, data):
     coord.hass = hass
     coord.data = data
     coord.last_update_success = True
+    coord.minutes_to_station = 0
+    coord.fetch_composition = False
     return coord
 
 
@@ -88,10 +90,14 @@ async def test_setup_adds_the_route_sensors(hass: HomeAssistant) -> None:
     routes = [entry for entry in added if entry[1].get("config_subentry_id")]
     assert len(routes) == 2
     for entities, kwargs in routes:
-        assert [type(e) for e in entities] == [
+        assert [type(e) for e in entities[:4]] == [
             NSReisadviesSensor, NSReisadviesDelaySensor, NSReisadviesNextTrainSensor,
             NSReisadviesRouteDisruptionSensor,
         ]
+        # v2.28.0: then the disruption details and the focus-trip sensors.
+        assert {type(e).__name__ for e in entities[4:]} == {
+            "NSRouteDisruptionDetailSensor", "NSFocusSensor",
+        }
         route_uid = entities[0].unique_id
         assert entities[1].unique_id == f"{route_uid}_delay"
         assert entities[2].unique_id == f"{route_uid}_next_train"
@@ -138,7 +144,13 @@ async def test_setup_leaves_disruptions_out_when_switched_off(
             hass, entry, lambda ents, **kw: added.append((list(ents), kw))
         )
     assert len(added) == 1
-    assert len(added[0][0]) == 3
+    # The three departure sensors and the focus-trip sensors; no
+    # disruption sensor of any kind.
+    names = [type(e).__name__ for e in added[0][0]]
+    assert names[:3] == [
+        "NSReisadviesSensor", "NSReisadviesDelaySensor", "NSReisadviesNextTrainSensor",
+    ]
+    assert set(names[3:]) == {"NSFocusSensor"}
 
 
 async def test_route_disruption_sensor_counts_and_explains(

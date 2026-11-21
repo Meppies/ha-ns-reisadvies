@@ -53,12 +53,14 @@
           "data": {
             "route_name": "Naam voor deze route (optioneel)",
             "act_station": "Vertrekstation",
-            "arr_station": "Aankomststation"
+            "arr_station": "Aankomststation",
+            "minutes_to_station": "Tijd om op het station te komen (optioneel)"
           },
           "data_description": {
             "route_name": "Optioneel. Geef deze route een korte, herkenbare naam (bv. \"Werk\", \"Weekend\"). Met een naam wordt dat de sensor-naam en entity_id-slug — en kun je meerdere routes tussen dezelfde stations hebben met verschillende filters.",
             "act_station": "Het station waar deze route begint.",
-            "arr_station": "Het station waar deze route eindigt."
+            "arr_station": "Het station waar deze route eindigt.",
+            "minutes_to_station": "Hoeveel minuten je nodig hebt om op het vertrekstation te komen — lopend, met de fiets, bus of auto. Als je dit invult, krijgt de route een sensor 'vertrek van huis' en een aan/uit-sensor 'tijd om te gaan', berekend op de verwachte vertrektijd, dus bij vertraging krijg je die minuten terug. Laat op 0 staan als je dat niet wilt."
           },
           "sections": {
             "filters": {
@@ -87,12 +89,14 @@
           "data": {
             "route_name": "Naam voor deze route (optioneel)",
             "act_station": "Vertrekstation",
-            "arr_station": "Aankomststation"
+            "arr_station": "Aankomststation",
+            "minutes_to_station": "Tijd om op het station te komen (optioneel)"
           },
           "data_description": {
             "route_name": "Optioneel. Geef deze route een korte, herkenbare naam (bv. \"Werk\", \"Weekend\"). Met een naam wordt dat de sensor-naam en entity_id-slug — en kun je meerdere routes tussen dezelfde stations hebben met verschillende filters.",
             "act_station": "Het station waar deze route begint.",
-            "arr_station": "Het station waar deze route eindigt."
+            "arr_station": "Het station waar deze route eindigt.",
+            "minutes_to_station": "Hoeveel minuten je nodig hebt om op het vertrekstation te komen — lopend, met de fiets, bus of auto. Als je dit invult, krijgt de route een sensor 'vertrek van huis' en een aan/uit-sensor 'tijd om te gaan', berekend op de verwachte vertrektijd, dus bij vertraging krijg je die minuten terug. Laat op 0 staan als je dat niet wilt."
           },
           "sections": {
             "filters": {
@@ -143,7 +147,8 @@
           "favourite_track_seconds": "Interval favorietpositie (seconden)",
           "disruptions": "Storingen bijhouden",
           "dienstkaartje": "Spoormedewerkers volgen (Dienstkaartje)",
-          "dienstkaartje_users": "Dienstkaartje-gebruikersnamen"
+          "dienstkaartje_users": "Dienstkaartje-gebruikersnamen",
+          "live_sensors": "Live-sensoren (snelheid, volgend station, voortgang)"
         },
         "data_description": {
           "api_key": "Je NS API-sleutel. Vervang deze als hij geroteerd is.",
@@ -157,7 +162,8 @@
           "favourite_track_seconds": "Hoe vaak de positie van een vastgezette favoriet wordt ververst terwijl de trein rijdt. Korter betekent dat een snelle trein een zone minder snel mist. Bereik: 15 tot 120 seconden.",
           "disruptions": "Haalt bij elke verversing de actuele storingen en werkzaamheden bij NS op — één landelijk verzoek dat alle routes delen. Geeft elke route een sensor met het aantal storingen dat dat traject raakt, plus één sensor voor het hele land, en vult de storingenkaart.",
           "dienstkaartje": "Laat zien welke trein de mensen die je volgt rijden, via dienstkaartje.nl — een project van Dutchbeard waar spoormedewerkers hun eigen dienst publiceren. Standaard uit. Alleen de gebruikersnamen hieronder worden opgevraagd, en alleen wat iemand zelf publiceert wordt getoond: geen ritnummers als die verborgen zijn, geen tijden als die verborgen zijn.",
-          "dienstkaartje_users": "Gebruikersnamen op dienstkaartje.nl, gescheiden door komma's; maximaal tien. Achter een dubbele punt mag je eigen label: machinist_jan:machinist — de site publiceert zelf geen functies. Elke naam kost één verzoek aan hun server per verversing."
+          "dienstkaartje_users": "Gebruikersnamen op dienstkaartje.nl, gescheiden door komma's; maximaal tien. Achter een dubbele punt mag je eigen label: machinist_jan:machinist — de site publiceert zelf geen functies. Elke naam kost één verzoek aan hun server per verversing.",
+          "live_sensors": "Voegt sensoren toe over waar de trein van elke route nu is: snelheid, volgend station, of hij op een station staat en hoe ver hij op jouw stuk is. Ze volgen je vastgepinde favoriet, anders het eerstvolgende vertrek. NS wordt hooguit eens per minuut bevraagd, alleen vanaf een half uur voor vertrek tot aankomst, en alleen als één van die sensoren aan staat."
         }
       }
     },
@@ -248,6 +254,136 @@
       },
       "staff_shift": {
         "name": "Dienstkaartje dienst"
+      },
+      "departure": {
+        "name": "Vertrek"
+      },
+      "planned_departure": {
+        "name": "Geplande vertrektijd"
+      },
+      "arrival": {
+        "name": "Aankomst"
+      },
+      "minutes_to_departure": {
+        "name": "Minuten tot vertrek"
+      },
+      "platform": {
+        "name": "Spoor"
+      },
+      "travel_time": {
+        "name": "Reistijd"
+      },
+      "transfers": {
+        "name": "Overstappen"
+      },
+      "train_type": {
+        "name": "Treinsoort"
+      },
+      "crowd": {
+        "name": "Drukte",
+        "state": {
+          "low": "Rustig",
+          "medium": "Gemiddeld",
+          "high": "Druk"
+        }
+      },
+      "carriages": {
+        "name": "Rijtuigen"
+      },
+      "next_station": {
+        "name": "Volgend station"
+      },
+      "current_station": {
+        "name": "Huidig station"
+      },
+      "speed": {
+        "name": "Snelheid"
+      },
+      "heading": {
+        "name": "Rijrichting"
+      },
+      "progress": {
+        "name": "Voortgang"
+      },
+      "remaining_distance": {
+        "name": "Resterende afstand"
+      },
+      "unplanned_disruptions": {
+        "name": "Storingen"
+      },
+      "engineering_works": {
+        "name": "Werkzaamheden"
+      },
+      "extra_travel_time": {
+        "name": "Extra reistijd"
+      },
+      "arrival_platform": {
+        "name": "Aankomstspoor"
+      },
+      "leave_at": {
+        "name": "Vertrek van huis"
+      },
+      "transfer_margin": {
+        "name": "Overstaptijd"
+      },
+      "following_departure": {
+        "name": "Trein erna"
+      },
+      "last_departure": {
+        "name": "Laatste trein vandaag"
+      }
+    },
+    "binary_sensor": {
+      "cancelled": {
+        "name": "Vervallen"
+      },
+      "platform_changed": {
+        "name": "Spoorwijziging"
+      },
+      "delayed": {
+        "name": "Vertraagd"
+      },
+      "at_station": {
+        "name": "Op een station"
+      },
+      "moving": {
+        "name": "Rijdt"
+      },
+      "route_disruption": {
+        "name": "Storing op route"
+      },
+      "calamity": {
+        "name": "Calamiteit"
+      },
+      "arrival_platform_changed": {
+        "name": "Aankomstspoor gewijzigd"
+      },
+      "time_to_leave": {
+        "name": "Tijd om te gaan"
+      },
+      "transfer_at_risk": {
+        "name": "Overstap in gevaar"
+      },
+      "shorter_train": {
+        "name": "Kortere trein"
+      }
+    },
+    "event": {
+      "journey": {
+        "name": "Reisgebeurtenissen",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "platform_changed": "Spoorwijziging",
+              "delay_changed": "Vertraging gewijzigd",
+              "cancelled": "Vervallen",
+              "departed": "Vertrokken",
+              "arrived": "Aangekomen",
+              "disruption_started": "Storing begonnen",
+              "disruption_ended": "Storing voorbij"
+            }
+          }
+        }
       }
     }
   }

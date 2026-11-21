@@ -70,7 +70,7 @@ async def test_sensor_setup_skips_subentry_without_coord():
 
 async def test_sensor_setup_happy_path_creates_sensor():
     hass = MagicMock()
-    coord = MagicMock()
+    coord = MagicMock(); coord.minutes_to_station = 0; coord.fetch_composition = False
     runtime = MagicMock(); runtime.coordinators = {"sub1": coord}
     sub = MagicMock(); sub.subentry_type = SUBENTRY_TYPE_ROUTE
     sub.data = {CONF_FROM_STATION: "Hilversum", CONF_TO_STATION: "Duivendrecht"}
@@ -88,7 +88,13 @@ async def test_sensor_setup_happy_path_creates_sensor():
     assert add_entities.call_count == 2
     args, kwargs = add_entities.call_args_list[0]
     assert kwargs.get("config_subentry_id") == "sub1"
-    assert len(args[0]) == 4
+    # Trips, delay, next train, disruptions — then (v2.28.0) the
+    # disruption details and the focus-trip sensors.
+    assert [type(e).__name__ for e in args[0][:4]] == [
+        "NSReisadviesSensor", "NSReisadviesDelaySensor",
+        "NSReisadviesNextTrainSensor", "NSReisadviesRouteDisruptionSensor",
+    ]
+    assert len(args[0]) > 4
     assert "config_subentry_id" not in add_entities.call_args_list[1].kwargs
 
 
@@ -98,7 +104,7 @@ async def test_sensor_setup_with_route_name_uses_name_slug():
     rather than from the station pair."""
     from custom_components.ns_reisadvies.const import CONF_ROUTE_NAME
     hass = MagicMock()
-    coord = MagicMock()
+    coord = MagicMock(); coord.minutes_to_station = 0; coord.fetch_composition = False
     runtime = MagicMock(); runtime.coordinators = {"sub1": coord}
     sub = MagicMock(); sub.subentry_type = SUBENTRY_TYPE_ROUTE
     sub.data = {
@@ -130,7 +136,7 @@ async def test_sensor_setup_with_route_name_uses_name_slug():
 async def test_sensor_setup_falls_back_on_typeerror():
     """Old HA without config_subentry_id support -> TypeError -> fallback call."""
     hass = MagicMock()
-    coord = MagicMock()
+    coord = MagicMock(); coord.minutes_to_station = 0; coord.fetch_composition = False
     runtime = MagicMock(); runtime.coordinators = {"sub1": coord}
     sub = MagicMock(); sub.subentry_type = SUBENTRY_TYPE_ROUTE
     sub.data = {CONF_FROM_STATION: "Hilversum", CONF_TO_STATION: "Duivendrecht"}

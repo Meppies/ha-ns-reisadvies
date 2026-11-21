@@ -137,3 +137,25 @@ async def test_user_step_two_named_routes_same_stations_both_succeed():
     })
     # No duplicate error → entry created.
     f.async_create_entry.assert_called_once()
+
+
+async def test_time_to_the_station_is_stored_only_when_set():
+    """v2.28.0: by foot, bike, bus or car — minutes, capped at two
+    hours, and left out entirely at 0 so older routes stay identical."""
+    from custom_components.ns_reisadvies.const import CONF_MINUTES_TO_STATION
+
+    f = _mk()
+    await f.async_step_user(user_input={
+        CONF_FROM_STATION: "Hilversum",
+        CONF_TO_STATION: "Duivendrecht",
+        CONF_MINUTES_TO_STATION: 12,
+    })
+    assert f.async_create_entry.call_args.kwargs["data"][CONF_MINUTES_TO_STATION] == 12
+
+    f = _mk()
+    await f.async_step_user(user_input={
+        CONF_FROM_STATION: "Hilversum",
+        CONF_TO_STATION: "Duivendrecht",
+        CONF_MINUTES_TO_STATION: 0,
+    })
+    assert CONF_MINUTES_TO_STATION not in f.async_create_entry.call_args.kwargs["data"]

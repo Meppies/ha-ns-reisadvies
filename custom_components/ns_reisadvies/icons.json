@@ -18,11 +18,138 @@
       },
       "staff_shift": {
         "default": "mdi:badge-account-horizontal-outline"
+      },
+      "departure": {
+        "default": "mdi:train-car"
+      },
+      "planned_departure": {
+        "default": "mdi:calendar-clock"
+      },
+      "arrival": {
+        "default": "mdi:flag-checkered"
+      },
+      "minutes_to_departure": {
+        "default": "mdi:timer-sand"
+      },
+      "platform": {
+        "default": "mdi:sign-direction"
+      },
+      "travel_time": {
+        "default": "mdi:timer-outline"
+      },
+      "transfers": {
+        "default": "mdi:transit-transfer"
+      },
+      "train_type": {
+        "default": "mdi:train"
+      },
+      "crowd": {
+        "default": "mdi:account-group"
+      },
+      "carriages": {
+        "default": "mdi:train-car-passenger"
+      },
+      "next_station": {
+        "default": "mdi:map-marker-right"
+      },
+      "current_station": {
+        "default": "mdi:map-marker"
+      },
+      "speed": {
+        "default": "mdi:speedometer"
+      },
+      "heading": {
+        "default": "mdi:compass-outline"
+      },
+      "progress": {
+        "default": "mdi:progress-check"
+      },
+      "remaining_distance": {
+        "default": "mdi:map-marker-distance"
+      },
+      "unplanned_disruptions": {
+        "default": "mdi:alert-octagon-outline"
+      },
+      "engineering_works": {
+        "default": "mdi:hammer-wrench"
+      },
+      "extra_travel_time": {
+        "default": "mdi:clock-plus-outline"
+      },
+      "arrival_platform": {
+        "default": "mdi:sign-direction"
+      },
+      "leave_at": {
+        "default": "mdi:home-export-outline"
+      },
+      "transfer_margin": {
+        "default": "mdi:transit-transfer"
+      },
+      "following_departure": {
+        "default": "mdi:train-variant"
+      },
+      "last_departure": {
+        "default": "mdi:weather-night"
       }
     },
     "device_tracker": {
       "favourite": {
         "default": "mdi:train"
+      }
+    },
+    "binary_sensor": {
+      "cancelled": {
+        "default": "mdi:cancel"
+      },
+      "platform_changed": {
+        "default": "mdi:swap-horizontal",
+        "state": {
+          "on": "mdi:swap-horizontal-bold"
+        }
+      },
+      "delayed": {
+        "default": "mdi:clock-alert-outline"
+      },
+      "at_station": {
+        "default": "mdi:train",
+        "state": {
+          "on": "mdi:train-car"
+        }
+      },
+      "moving": {
+        "default": "mdi:train"
+      },
+      "route_disruption": {
+        "default": "mdi:alert-octagon-outline"
+      },
+      "calamity": {
+        "default": "mdi:alert"
+      },
+      "arrival_platform_changed": {
+        "default": "mdi:swap-horizontal"
+      },
+      "time_to_leave": {
+        "default": "mdi:door",
+        "state": {
+          "on": "mdi:door-open"
+        }
+      },
+      "transfer_at_risk": {
+        "default": "mdi:transit-transfer",
+        "state": {
+          "on": "mdi:run-fast"
+        }
+      },
+      "shorter_train": {
+        "default": "mdi:train-car",
+        "state": {
+          "on": "mdi:train-car-passenger-variant"
+        }
+      }
+    },
+    "event": {
+      "journey": {
+        "default": "mdi:bell-ring-outline"
       }
     }
   }

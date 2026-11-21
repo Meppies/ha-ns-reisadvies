@@ -99,18 +99,23 @@ rules:
       overrides the DIAGNOSTIC default that BaseTrackerEntity applies
       to every device_tracker.
   entity-device-class:
-    status: exempt
+    status: done
     comment: >-
-      The state value is an ISO timestamp string ("planned departure
-      of next trip"). HA has no SensorDeviceClass that fits this
-      semantic exactly. SensorDeviceClass.TIMESTAMP would force a
-      datetime conversion and lose the "Data available" / "No trips"
-      placeholder states.
+      Every entity where a device class fits has one (v2.28.0):
+      timestamp, duration, speed, distance and enum sensors; problem,
+      moving and safety binary sensors. The route's summary sensor
+      keeps a string state, because its "No trips" placeholder is not
+      a timestamp.
   entity-disabled-by-default:
-    status: exempt
+    status: done
     comment: >-
-      One entity per user-configured route — none of them are
-      noisy or niche enough to default-disable.
+      v2.28.0: the focus-trip sensors used most (departure, arrival,
+      platform, next station, speed, progress, cancelled, platform
+      changed, at a station, disruption on route) are enabled; the
+      rest — planned departure, countdown, travel time, transfers,
+      train type, crowding, carriages, current station, heading,
+      distance to go, delayed, moving and the disruption details —
+      are created disabled.
   entity-translations: done
   exception-translations: done
   icon-translations: done

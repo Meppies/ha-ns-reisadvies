@@ -52,9 +52,11 @@ from .const import (
     CONF_TRACK_FAVOURITES,
     CONF_DIENSTKAARTJE,
     CONF_DIENSTKAARTJE_USERS,
+    CONF_LIVE_SENSORS,
     CONF_DISRUPTIONS,
     DEFAULT_DIENSTKAARTJE,
     DEFAULT_DIENSTKAARTJE_USERS,
+    DEFAULT_LIVE_SENSORS,
     DIENSTKAARTJE_AVAILABLE,
     DEFAULT_DISRUPTIONS,
     CONF_FAV_TRACK_SECONDS,
@@ -65,6 +67,7 @@ from .const import (
     CONF_FILTER_TRAIN_TYPES,
     CONF_FIRST_WEEKDAY,
     CONF_ROUTE_NAME,
+    CONF_MINUTES_TO_STATION,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_FAV_HOURS,
     DEFAULT_FETCH_COMPOSITION,
@@ -465,6 +468,11 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 }
                 if _route_name:
                     route_data[CONF_ROUTE_NAME] = _route_name
+                # Stored only when set, so routes saved before v2.28.0
+                # stay byte-identical when they are re-saved untouched.
+                _to_station = int(user_input.get(CONF_MINUTES_TO_STATION) or 0)
+                if _to_station > 0:
+                    route_data[CONF_MINUTES_TO_STATION] = min(120, _to_station)
                 _filter_days = src.get(CONF_FILTER_DAYS) or []
                 if _filter_days:
                     route_data[CONF_FILTER_DAYS] = [int(d) for d in _filter_days]
@@ -560,6 +568,19 @@ class NSRouteSubentryFlowHandler(ConfigSubentryFlow):
                 CONF_TO_STATION,
                 default=defaults.get(CONF_TO_STATION, vol.UNDEFINED),
             ): _station_selector(),
+            # v2.28.0: how long it takes to get to the departure station —
+            # walking, cycling, bus or car — for the "leave at" and "time
+            # to leave" entities. 0 = off.
+            vol.Optional(
+                CONF_MINUTES_TO_STATION,
+                default=int(defaults.get(CONF_MINUTES_TO_STATION, 0) or 0),
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=0, max=120, step=1,
+                    unit_of_measurement="min",
+                    mode=NumberSelectorMode.BOX,
+                ),
+            ),
             vol.Required("filters"): section(
                 vol.Schema({
                     vol.Optional(
@@ -765,6 +786,14 @@ class NSReisadviesOptionsFlowHandler(config_entries.OptionsFlow):
             vol.Required(
                 CONF_DISRUPTIONS,
                 default=bool(self._read(CONF_DISRUPTIONS, DEFAULT_DISRUPTIONS)),
+            ): bool,
+            # Live automation sensors (v2.28.0): speed, next station,
+            # progress and the like for each route's focus trip. NS is
+            # asked at most once a minute, only around that train's own
+            # journey, and only while one of those sensors is enabled.
+            vol.Required(
+                CONF_LIVE_SENSORS,
+                default=bool(self._read(CONF_LIVE_SENSORS, DEFAULT_LIVE_SENSORS)),
             ): bool,
 
             # First day of week (v2.15.2). Display-only — controls the

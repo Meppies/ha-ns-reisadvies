@@ -13,6 +13,7 @@ from datetime import (
 )
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import aiohttp
 import async_timeout
@@ -47,6 +48,16 @@ from ._disruptions import (
     parse_disruptions,
     station_keys_of,
 )
+from ._focus import (
+    departure_facts,
+    disruption_events,
+    focus_trip,
+    following_trip,
+    journey_events,
+    last_trip,
+    live_facts,
+    summary,
+)
 from ._live import parse_journey, run_window, vehicle_index
 from .const import (
     API_URL,
@@ -62,6 +73,11 @@ from .const import (
     DIENSTKAARTJE_SWEEP_MAX_PEOPLE,
     DISRUPTIONS_API_URL,
     DISRUPTIONS_CACHE_SECONDS,
+    FOCUS_TICK_SECONDS,
+    LAST_TRAIN_REFRESH_MINUTES,
+    SERVICE_DAY_ROLLOVER_HOUR,
+    LIVE_GRACE_MINUTES,
+    LIVE_LEAD_MINUTES,
     FAV_RUN_LOOKAROUND_HOURS,
     JOURNEY_CACHE_SECONDS,
     VEHICLE_CACHE_SECONDS,
@@ -88,6 +104,9 @@ if TYPE_CHECKING:
     from .types import NSConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
+
+# NS keeps Dutch time; the service day rolls over on the Dutch clock.
+_DUTCH_CLOCK = ZoneInfo("Europe/Amsterdam")
 
 
 def _parse_time(value: str | None) -> _dt_time | None:
@@ -226,6 +245,8 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         disruptions: bool = True,
         dienstkaartje: bool = False,
         dienstkaartje_users: list[str] | str | None = None,
+        live_sensors: bool = True,
+        minutes_to_station: int = 0,
         filter_days: list[int] | None = None,
         filter_time: str | None = None,
         filter_window_minutes: int = 0,
@@ -270,6 +291,29 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
             entry["username"] for entry in self.dienstkaartje_follow
         ]
         self.dienstkaartje: list[dict[str, Any]] = []
+        # v2.28.0: the one trip the automation sensors describe — a
+        # pinned favourite, else the next departure — and what is known
+        # about its train right now. ``focus`` comes from the planner,
+        # ``focus_live`` from NS's vehicle feed and the train's own run.
+        self.watch_live = bool(live_sensors)
+        self.minutes_to_station = max(0, min(120, int(minutes_to_station or 0)))
+        # The trip after the focus (what to take if you miss yours) and
+        # the last trip of the service day.
+        self.following: dict[str, Any] = {}
+        self.last_train: dict[str, Any] = {}
+        self._last_train_at: float | None = None
+        self._last_train_day: str | None = None
+        self._last_consumers = 0
+        self.focus: dict[str, Any] = {}
+        self.focus_source: str | None = None
+        self.focus_live: dict[str, Any] = {}
+        self._focus_consumers = 0
+        self._live_consumers = 0
+        self._focus_unsub: Any = None
+        self._events_fired: set[str] = set()
+        self._focus_primed = False
+        self._route_disruption_ids: set[str] | None = None
+        self._event_listeners: list[Any] = []
         self.favourite_track_seconds = max(
             FAV_TRACK_SECONDS_MIN,
             min(FAV_TRACK_SECONDS_MAX, int(favourite_track_seconds or DEFAULT_FAV_TRACK_SECONDS)),
@@ -669,6 +713,236 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         """Interval callback — kept thin so it is trivially testable."""
         await self.async_refresh_favourite_positions(now)
 
+    # ---- the focus trip: automation sensors and events (v2.28.0) ----
+
+    @callback
+    def async_add_focus_consumer(
+        self, *, live: bool = False, last_train: bool = False,
+    ) -> Any:
+        """Register an entity that reads the focus trip.
+
+        The minute tick only runs while something is listening, and NS
+        is only asked for a position while something that shows one is
+        enabled: a live sensor switched off in the entity settings is
+        never added to Home Assistant, never registers here, and so
+        never costs a request.
+        """
+        self._focus_consumers += 1
+        if live:
+            self._live_consumers += 1
+        if last_train:
+            self._last_consumers += 1
+        self._async_schedule_focus_tick()
+
+        @callback
+        def _remove() -> None:
+            self._focus_consumers = max(0, self._focus_consumers - 1)
+            if live:
+                self._live_consumers = max(0, self._live_consumers - 1)
+            if last_train:
+                self._last_consumers = max(0, self._last_consumers - 1)
+            if self._focus_consumers == 0:
+                self.async_stop_focus_tick()
+
+        return _remove
+
+    @callback
+    def _async_schedule_focus_tick(self) -> None:
+        if self._focus_unsub is not None or self._focus_consumers == 0:
+            return
+        self._focus_unsub = async_track_time_interval(
+            self.hass, self._async_focus_tick, timedelta(seconds=FOCUS_TICK_SECONDS),
+        )
+
+    @callback
+    def async_stop_focus_tick(self) -> None:
+        """Cancel the minute tick (on unload, or when nobody listens)."""
+        if self._focus_unsub is not None:
+            self._focus_unsub()
+            self._focus_unsub = None
+
+    @callback
+    def async_add_event_listener(self, update: Any) -> Any:
+        """Register a callback for journey and disruption events."""
+        self._event_listeners.append(update)
+
+        @callback
+        def _remove() -> None:
+            if update in self._event_listeners:
+                self._event_listeners.remove(update)
+
+        return _remove
+
+    @callback
+    def _fire(self, kind: str, data: dict[str, Any]) -> None:
+        """Tell automations: on the bus, and to the route's event entity."""
+        payload = {
+            **data,
+            "type": kind,
+            "route": f"{self.from_station} → {self.to_station}",
+            "from_station": self.from_station,
+            "to_station": self.to_station,
+        }
+        self.hass.bus.async_fire(f"{DOMAIN}_event", payload)
+        for listener in list(self._event_listeners):
+            listener(kind, payload)
+
+    def _refresh_focus(
+        self, trips: list[dict[str, Any]] | None, now: datetime,
+        live: dict[str, Any] | None = None,
+    ) -> None:
+        """Choose the focus trip, describe it, and fire what changed.
+
+        When the focus moves on — the next train left, so the one after
+        it is next now — the trip it moved away from is looked at once
+        more with fresh data, so its departure is still reported.
+        """
+        previous = self.focus
+        previous_live = self.focus_live
+        trip, source = focus_trip(trips, list(self.tracked_trips or {}), now)
+        facts = departure_facts(trip, now, self.minutes_to_station)
+        self.following = summary(following_trip(trips, facts), now)
+        current_live = live if live is not None else (
+            previous_live if facts.get("identity") == previous.get("identity") else {}
+        )
+
+        if previous.get("identity") and previous.get("identity") != facts.get("identity"):
+            for old in trips or []:
+                old_facts = departure_facts(old, now)
+                if old_facts.get("identity") == previous.get("identity"):
+                    for kind, data in journey_events(
+                        previous, old_facts, previous_live, None,
+                        self._events_fired, now,
+                    ):
+                        self._fire(kind, data)
+                    break
+
+        happened = journey_events(
+            previous, facts, previous_live, current_live, self._events_fired, now,
+        )
+        # The first look after Home Assistant starts is not news: a
+        # train that already left while it was down is remembered as
+        # having left, but nobody is told it just did.
+        if self._focus_primed:
+            for kind, data in happened:
+                self._fire(kind, data)
+        self._focus_primed = True
+
+        self.focus = facts
+        self.focus_source = source
+        self.focus_live = current_live or {}
+        # Forget events for trips that are long gone; one day is plenty.
+        if len(self._events_fired) > 500:
+            self._events_fired.clear()
+
+    def _live_window_open(self, now: datetime) -> bool:
+        """Whether the focus train is close enough to be worth a request."""
+        departure = self.focus.get("departure")
+        arrival = self.focus.get("arrival")
+        if not isinstance(departure, datetime) or not isinstance(arrival, datetime):
+            return False
+        return (
+            departure - timedelta(minutes=LIVE_LEAD_MINUTES)
+            <= now
+            <= arrival + timedelta(minutes=LIVE_GRACE_MINUTES)
+        )
+
+    async def async_refresh_focus_live(self, now: datetime | None = None) -> None:
+        """One minute tick: recount the clock, and place the train.
+
+        The planner's facts are recomputed every time — that is what
+        makes "minutes to departure" count down and the clock-based
+        events fire on time — but NS is only asked where the train is
+        when a live entity is enabled, the option is on, and the train
+        is within half an hour of the traveller's departure or still on
+        their stretch.
+        """
+        moment = now or datetime.now(timezone.utc)
+        trips = self.data if isinstance(self.data, list) else []
+        self._refresh_focus(trips, moment)
+
+        live: dict[str, Any] = {}
+        number = self.focus.get("train_number")
+        if (
+            self.watch_live and self._live_consumers > 0 and number
+            and not self.focus.get("cancelled") and self._live_window_open(moment)
+        ):
+            departure = self.focus.get("departure")
+            position = await self.async_fetch_train_position(
+                str(number),
+                anchor_iso=departure.isoformat() if isinstance(departure, datetime) else None,
+            )
+            stops = await self.async_journey_stops(str(number)) if position else []
+            live = live_facts(stops, position, self.focus, moment)
+        self._refresh_focus(trips, moment, live)
+        self.async_update_listeners()
+
+    async def _async_focus_tick(self, now: datetime) -> None:
+        """Interval callback — kept thin so it is trivially testable."""
+        await self.async_refresh_focus_live(now)
+        await self.async_refresh_last_train(now)
+
+    @staticmethod
+    def service_day_end(now: datetime) -> datetime:
+        """When NS's current service day ends: four the next morning.
+
+        A train at half past midnight still belongs to the evening
+        before, so "today's last train" is the last one before the
+        rollover, on the Dutch clock whatever Home Assistant runs in.
+        """
+        local = now.astimezone(_DUTCH_CLOCK)
+        day = local.date()
+        if local.hour < SERVICE_DAY_ROLLOVER_HOUR:
+            day -= timedelta(days=1)
+        return datetime(
+            day.year, day.month, day.day, SERVICE_DAY_ROLLOVER_HOUR,
+            tzinfo=_DUTCH_CLOCK,
+        ) + timedelta(days=1)
+
+    async def async_refresh_last_train(self, now: datetime | None = None) -> None:
+        """Look up the last trip of the service day, at most hourly.
+
+        One planner request, "arrive by" the end of the service day, so
+        NS answers with the last trips that still get there — however
+        early a quiet line stops. The route's own train-type filter
+        applies, so a route kept to intercities gets the last
+        intercity. Only asked while the sensor that shows it is enabled.
+        """
+        if self._last_consumers == 0:
+            return
+        moment = now or datetime.now(timezone.utc)
+        ends = self.service_day_end(moment)
+        day = ends.date().isoformat()
+        fresh = (
+            self._last_train_at is not None
+            and time.monotonic() - self._last_train_at < LAST_TRAIN_REFRESH_MINUTES * 60
+            and self._last_train_day == day
+        )
+        if fresh:
+            return
+        trips, problem = await self.async_search_trips(
+            self.from_station, self.to_station,
+            when=(ends - timedelta(minutes=1)).isoformat(),
+            arrival=True,
+            train_types=list(self.filter_train_types or []) or None,
+            extras=False,
+        )
+        self._last_train_at = time.monotonic()
+        self._last_train_day = day
+        if problem is None or problem == "no_match":
+            self.last_train = summary(last_trip(trips, ends), moment)
+        self.async_update_listeners()
+
+    def _refresh_route_disruptions(self) -> None:
+        """Fire for disruptions that started or ended on this route."""
+        for kind, data in disruption_events(
+            self._route_disruption_ids, self.route_disruptions,
+        ):
+            self._fire(kind, data)
+        self._route_disruption_ids = {
+            str(item.get("id")) for item in self.route_disruptions if item.get("id")
+        }
+
     # ---- composition (train carriages) ----
 
     async def _fetch_journey_composition(self, train_number: str, headers: dict[str, Any]) -> dict[str, Any] | None:
@@ -740,13 +1014,36 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         stops = payload.get("stops") or []
         origin_stop = next((s for s in stops if s.get("status") == "ORIGIN"), None) or (stops[0] if stops else {})
         stock = origin_stop.get("actualStock") or origin_stop.get("plannedStock") or {}
+        planned_stock = origin_stop.get("plannedStock") or {}
         train_parts = stock.get("trainParts") or []
+        # v2.28.0: the stock NS planned and the stock it runs, at every
+        # stop. A train is shortened or lengthened along its run, so
+        # what matters to a traveller is the stop where they board;
+        # this map lets each leg read its own, and stays off the
+        # attributes (it is dropped when the leg is annotated).
+        by_uic: dict[str, dict[str, Any]] = {}
+        for stop in stops:
+            actual = stop.get("actualStock") or {}
+            planned = stop.get("plannedStock") or {}
+            uic = str((stop.get("stop") or {}).get("uicCode") or "")
+            if uic and (actual or planned):
+                by_uic[uic] = {
+                    "numberOfParts": actual.get("numberOfParts") or planned.get("numberOfParts"),
+                    "numberOfSeats": actual.get("numberOfSeats") or planned.get("numberOfSeats"),
+                    "plannedNumberOfParts": planned.get("numberOfParts"),
+                    "plannedNumberOfSeats": planned.get("numberOfSeats"),
+                    "significantChange": bool(actual.get("hasSignificantChange")),
+                }
         slim = {
             "trainType": stock.get("trainType"),
             "numberOfParts": stock.get("numberOfParts") or len(train_parts) or None,
             "numberOfSeats": stock.get("numberOfSeats"),
             "numberOfFirstClassSeats": stock.get("numberOfFirstClassSeats"),
+            "plannedNumberOfParts": planned_stock.get("numberOfParts"),
+            "plannedNumberOfSeats": planned_stock.get("numberOfSeats"),
+            "significantChange": bool(stock.get("hasSignificantChange")),
             "shorter": bool(stock.get("hasSignificantChange")) or False,
+            "_by_uic": by_uic,
             "parts": [
                 {
                     "image": (p.get("image") or {}).get("uri"),
@@ -810,7 +1107,15 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                     continue
                 comp = results_map.get(str(num))
                 if comp:
-                    leg["composition"] = comp
+                    # The run's own figures, then the boarding stop's,
+                    # where NS gives them: that is the train the
+                    # traveller actually gets on.
+                    own = {k: v for k, v in comp.items() if k != "_by_uic"}
+                    uic = str((leg.get("origin") or {}).get("uicCode") or "")
+                    at_stop = (comp.get("_by_uic") or {}).get(uic)
+                    if at_stop:
+                        own.update({k: v for k, v in at_stop.items() if v is not None})
+                    leg["composition"] = own
 
     # ---- data fetch ----
 
@@ -1261,6 +1566,12 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
                     self.disruptions = []
                     self.route_disruptions = []
 
+                # v2.28.0: the focus trip and its events, and the
+                # disruptions that started or ended on this route.
+                self._refresh_focus(all_trips, datetime.now(timezone.utc))
+                if self.watch_disruptions:
+                    self._refresh_route_disruptions()
+
                 # v2.27.0: the people the user follows on Dienstkaartje,
                 # and which of this route's trains they are on. Only the
                 # named ones are asked after; nobody else is looked up
@@ -1620,6 +1931,7 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         when: str | None = None,
         arrival: bool = False,
         train_types: list[str] | None = None,
+        extras: bool = True,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """One-off journey search, for the search card.
 
@@ -1677,6 +1989,9 @@ class NSUpdateCoordinator(DataUpdateCoordinator[list[dict[str, Any]]]):
         # result should show what a route's own card shows. Filtering
         # comes first so nothing is fetched for a trip about to be
         # dropped.
+        if not extras:
+            # The last-train lookup wants times, not carriages.
+            return trips, None
         await self._annotate_compositions(trips, headers, reset=False)
         # And the people the user follows, on the same terms.
         if self.watch_dienstkaartje and self.dienstkaartje_users:

@@ -42,6 +42,13 @@ CONF_LIVE_MAP_REFRESH_SECONDS = "live_map_refresh_seconds"
 # and can drive zone triggers. Off by default: it is the only thing in
 # this integration that polls an external feed in the background.
 CONF_TRACK_FAVOURITES = "track_favourites_on_map"
+# Live automation sensors (v2.28.0): speed, next station, progress and
+# the rest, for the trip a route is focused on.
+CONF_LIVE_SENSORS = "live_sensors"
+# Per route (v2.28.0): minutes it takes to get to the departure station
+# — on foot, by bike, bus or car — for the "leave at" sensor and the
+# "time to leave" binary sensor.
+CONF_MINUTES_TO_STATION = "minutes_to_station"
 CONF_DISRUPTIONS = "disruptions"
 # Dienstkaartje (v2.27.0): off until the user asks for it, and then
 # only for the people they name.
@@ -103,6 +110,7 @@ DEFAULT_LIVE_MAP_REFRESH_SECONDS = 10  # poll cadence while modal is open
 
 # Favourite tracking (v2.18.0).
 DEFAULT_TRACK_FAVOURITES = False  # background polling — opt in
+DEFAULT_LIVE_SENSORS = True
 # One extra request per refresh, shared by every route, in exchange for
 # knowing when the line you travel is in trouble: on by default.
 DEFAULT_DISRUPTIONS = True
@@ -116,6 +124,22 @@ FAV_TRACK_SECONDS_MAX = 120
 # both sides: before departure the train is usually still finishing its
 # previous run, and after arrival the number is reused elsewhere.
 FAV_TRACK_LEAD_MINUTES = 5
+# The focus trip's sensors (v2.28.0) are recomputed once a minute, so
+# "minutes to departure" counts down and the clock-based events fire
+# on time. NS is only asked for a position inside a window around the
+# traveller's own train — from this long before it leaves until a few
+# minutes after it arrives — and only while a live entity is enabled.
+FOCUS_TICK_SECONDS = 60
+# A connection with less than this many minutes left counts as at risk.
+TRANSFER_RISK_MINUTES = 2
+# The last train of the day is looked up with one planner request from
+# this time on, at most once an hour. NS's service day runs past
+# midnight, so "today" ends at the rollover hour the next morning.
+LAST_TRAIN_SEARCH_FROM = "23:00"
+LAST_TRAIN_REFRESH_MINUTES = 60
+SERVICE_DAY_ROLLOVER_HOUR = 4
+LIVE_LEAD_MINUTES = 30
+LIVE_GRACE_MINUTES = 5
 FAV_TRACK_GRACE_MINUTES = 2
 
 # Live positions (v2.21.0). A favourite is followed for as long as its
